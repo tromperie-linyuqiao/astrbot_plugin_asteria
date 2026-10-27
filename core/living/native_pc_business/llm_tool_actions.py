@@ -1,0 +1,2947 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+import time
+import uuid
+from datetime import datetime, timedelta
+from typing import Any
+
+from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent
+from astrbot.api.event import MessageChain
+from astrbot.core.platform.message_session import MessageSession
+try:
+    from astrbot.api.message_components import At, Plain
+except ImportError:
+    from astrbot.api.message_components import At, Plain
+
+from .helpers import _missing_optional_model_dependency, _now_ts, _redact_outbound_secrets, _safe_float, _safe_int, _single_line
+from .memo_notes import apply_memo_note_action, memo_note_sort_key, normalize_memo_note
+from .qzone_selection import parse_qzone_post_selection
+
+
+class LlmToolActionsMixin:
+    """Implementation bodies for LLM tools registered in main.py."""
+
+    @staticmethod
+    def _character_photo_request_matches(text: Any) -> bool:
+        compact = re.sub(r"\s+", "", str(text or ""))
+        if not compact:
+            return False
+        if any(
+            marker in compact
+            for marker in (
+                "腿照",
+                "脚照",
+                "手照",
+                "全身照",
+                "半身照",
+                "近照",
+                "生活照",
+                "穿搭照",
+            )
+        ):
+            return True
+        return bool(
+            re.search(
+                r"(?:看看|看下|看一下|想看|要看|让我看看|给我看看|发来看看).{0,10}"
+                r"(?:腿|脚|手|脸|全身|半身|穿搭|衣服|样子)",
+                compact,
+                flags=re.I,
+            )
+        )
+
+    def _photo_generation_instruction_matches(self, text: Any) -> bool:
+        compact = re.sub(r"\s+", "", str(text or ""))
+        if not compact:
+            return False
+        if self._character_photo_request_matches(compact):
+            return True
+        return any(
+            token in compact
+            for token in (
+                "生图",
+                "画图",
+                "绘图",
+                "生成图片",
+                "出图",
+                "画一张",
+                "画张",
+                "来张图",
+                "来一张图",
+                "自拍",
+                "拍照",
+                "照片",
+                "相片",
+                "头像",
+                "表情包",
+                "贴纸",
+                "壁纸",
+                "改图",
+                "修图",
+                "重绘",
+                "P图",
+                "p图",
+                "参考图",
+                "穿搭图",
+                "COS",
+                "cosplay",
+            )
+        )
+
+    def _plaintext_photo_recovery_intent_matches(self, text: Any) -> bool:
+        compact = re.sub(r"\s+", "", str(text or ""))
+        if not compact:
+            return False
+        explicit_request = bool(
+            re.search(
+                r"(?:帮我|给我|替我|想要|想看|要看|拍|生成|画|绘制|做|来|发).{0,10}"
+                r"(?:照片|图片|自拍|头像|表情包|贴纸|壁纸|穿搭|腿|脚|手|脸|全身|半身)",
+                compact,
+                flags=re.I,
+            )
+        ) or any(token in compact for token in ("改图", "修图", "重绘", "P图", "p图"))
+        explanatory = any(token in compact for token in ("解释", "分析", "日志", "代码", "JSON", "json", "工具调用", "为什么"))
+        if explanatory and not explicit_request:
+            return False
+        return explicit_request or self._character_photo_request_matches(compact)
+
+    def _media_delivery_truth_instruction(self) -> str:
+        if not (self.enabled and getattr(self, "enable_photo_text_action", False)):
+            return ""
+        return (
+            "【媒体真实性硬规则】只有本轮消息链实际包含图片，或媒体工具明确返回 `sent=true`，"
+            "才能说“已经发了/给你看了/图片在上面”。其他情况必须承认未发送；人格和角色扮演不能覆盖真实发送状态。"
+        )
+
+    def _photo_tool_call_timeout_seconds(self) -> float:
+        context = getattr(self, "context", None)
+        getter = getattr(context, "get_config", None)
+        if not callable(getter):
+            return 120.0
+        try:
+            cfg = getter()
+        except Exception:
+            return 120.0
+        provider_settings = cfg.get("provider_settings", {}) if isinstance(cfg, dict) else {}
+        if not isinstance(provider_settings, dict):
+            return 120.0
+        return _safe_float(provider_settings.get("tool_call_timeout"), 120.0, 1.0, 3600.0)
+
+    def _cross_user_memory_query_instruction(self) -> str:
+        if not (self.enabled and getattr(self, "enable_cross_user_memory_bridge", False)):
+            return ""
+        return """
+【跨用户记忆互通】
+用户在私聊里问“你和某人聊了什么”“最近和某群互动怎样”“某人在群里说过什么”时，可以用 `pc_query_interaction` 读取近期互动摘要。
+- 只用于查询，不发送消息。
+- 优先传 scope=private/group、user_hint 或 group_hint；不确定时传原始称呼给 hint。
+- “最近和他私聊说了什么”传 scope=private,user_hint=对象；“他在群里说了什么”传 scope=group,user_hint=对象，有具体群再加 group_hint。
+- 回答时概括最近互动和重点即可，不要大段复述原文。
+""".strip()
+
+    def _relation_lookup_instruction(self) -> str:
+        if not (self.enabled and getattr(self, "enable_worldbook_member_recognition", False)):
+            return ""
+        return """
+【关系网查询】
+用户明确要求“查一下关系网/帮我查某个 QQ 或昵称”时，可以用 `pc_query_relation_person` 查询关系网。
+- 如果刚用 LivingMemory/长期记忆召回到某个人名、昵称、QQ 或群成员别名,并且需要判断 TA 是谁、和用户什么关系、能不能套用某段关系时,也可以先查关系网再回答。
+- 只用于确认是否认识和读取稳定称呼、别名、简短身份备注；不要发送消息。
+- 参数用 keyword 传 QQ 号、昵称、别名或用户原话里最像名字的部分。
+- 查不到就自然说明没在关系网里确认过，不要编造。
+""".strip()
+
+    def _qzone_tool_instruction(self) -> str:
+        if not (self.enabled and self.enable_qzone_integration):
+            return ""
+        instruction = """
+【QQ 空间动态工具】
+当用户明确要求你查看说说、QQ 空间动态、点赞/评论说说,或要求你发一条说说时,可以使用 Private Companion 的 QQ 空间工具。
+- 查看说说：使用 `pc_qzone_view_feed`。不知道目标 QQ 时默认当前用户；可用 `selector` 传“最新”“第2条”“最后”或 fid。
+- 发布说说：使用 `pc_qzone_publish_feed`。必须把最终要发布的正文放进 `text` 参数,例如 `{"text":"今天想慢一点。"}`；如需带图,可传 `{"text":"配图说说","images":["本地图片路径或图片URL"]}`；如果用户明确要求“发布刚才/最近生成的生活说说草稿”,可传 `{"use_latest_draft":true}`；不要空调用,不要把草稿当作已发布。
+- 用户说“你发的说说/你刚发了什么/我看到你发的动态”时，“你”指 Bot 自己，不是当前用户。优先直接依据下方 Bot 自己的发布记录回答，不要反问用户内容，不要让用户自己去看，也不要用默认目标为当前用户的查看工具偷换对象。
+- 发布内容必须服从当前人格与世界观,但不要泄露私聊隐私、内部状态数值、关系网资料或插件实现。
+- 工具失败时简短说明失败原因,不要假装已经发布或点赞。
+""".strip()
+        context_getter = getattr(self, "_qzone_recent_self_publish_chat_context", None)
+        recent_context = context_getter() if callable(context_getter) else ""
+        return f"{instruction}\n\n{recent_context}".strip() if recent_context else instruction
+
+    def _photo_generation_tool_instruction(self) -> str:
+        if not (self.enabled and getattr(self, "enable_photo_text_action", False)):
+            return ""
+        mode = _single_line(getattr(self, "natural_language_photo_generation_mode", "tool_first"), 40).lower()
+        if mode == "off":
+            return ""
+        return """
+【生图/自拍工具】
+当用户明确要求你生成图片、画图、出图、自拍、拍照、头像、表情包，或要求基于参考图改图时，可以使用 `pc_generate_photo`。
+- 普通场景/物件/风景：传 `{"prompt":"画面描述","kind":"text2img"}`，可用 `scene_preset` 指定“可拍画面/房间日常”。纯梗图或无角色贴纸才用 `text2img + scene_preset="表情包场景"`。
+- 角色本人出镜、自拍、拍照、头像、穿搭、COS、人像：传 `{"prompt":"画面要求","kind":"selfie"}`，可用 `scene_preset` 指定“角色自拍/COS自拍/日常穿搭/镜前穿搭/头像特写”；普通穿搭优先日常穿搭，只有明确“镜前/对镜/镜子”时才用镜前穿搭；只有开启参考图一致性时，未传参考图才会自动使用配置的人设参考图或今日穿搭参考图。
+- 角色表情包/贴纸：传 `{"prompt":"表情和画面要求","kind":"sticker"}`；默认走自拍/人像链路并使用“表情包场景”预设，让角色仍可识别。
+- 人物图必须保留当前明确穿着和用户指定服装；围裙必须作为实际可见衣物保留。没有可信穿着信息时使用完整日常服装，不能凭亲密语气、身体兴奋或场景地点推断脱衣。
+- 改图/重绘：传 `{"prompt":"修改要求","kind":"edit","reference_image_path":"本地图片路径或图片URL"}`；没有参考图时不要调用改图。
+- 默认 `send=true`，工具会把生成图片发送到当前会话；如果只想拿路径再决定，可传 `send=false`。
+- 在实际调用本工具并得到结果前，绝对不能声称“已经发了/给你看了/图片在上面”。角色扮演不能覆盖真实工具状态。
+- 只有工具返回 `sent=true` 时才表示图片已经发出；后续只需要很短地承接，不要复述本地路径或再假装发送一次。
+- 工具返回 `sent=false` 时，无论图片是否生成，都表示用户没有收到图片；必须按 `message/actual_error` 如实说明，绝对不能说已经发送。
+- 如果工具返回失败，按失败原因说明，不要假装图片已生成或已发送。
+""".strip()
+
+    def _creative_work_tool_instruction(self) -> str:
+        if not (self.enabled and getattr(self, "enable_creative_writing", False)):
+            return ""
+        return """
+【自己的创作读取工具】
+当用户询问你自己的某篇创作写了什么、某一部分/片段的内容、你如何看待这篇创作、为什么这样写，或要求你结合原文讲讲时，必须先调用 `pc_view_creative_work` 读取真实创作，再依据工具结果回答。
+- 按标题读取：action=get，selector 传用户提到的作品标题；只有用户明确指定“第 N 部分/第 N 段”时才传 part=N。
+- 不确定有哪些作品或用户泛问“最近写了什么”：先 action=list；拿到准确标题后，如需正文再 action=get。
+- 讨论整篇作品时 part=0，工具会按顺序返回预算内的正文；结果若 truncated=true，可继续用 next_part 读取。
+- 工具返回 success 前，不要说“我看过了/我刚检查了”；也不要先发送“我先去看看”等准备动作。直接调用工具，取得结果后一次性自然回答。
+- 不得把被动提示中的短片段、长期记忆或聊天印象冒充完整原文；找不到作品或部分时如实说明，并可根据 candidates 请用户进一步说明。
+- 这是只读工具，不能修改、续写或删除创作。
+""".strip()
+
+    def _creative_work_query_instruction_matches(self, text: Any) -> bool:
+        normalized = _single_line(text, 260)
+        if not normalized:
+            return False
+        work_terms = (
+            "创作", "作品", "写作", "札记", "随笔", "散文", "小说", "故事",
+            "诗", "歌词", "剧本", "手稿", "草稿", "正文", "片段", "章节",
+        )
+        query_terms = (
+            "讲讲", "说说", "看看", "看一下", "读", "回顾", "总结", "内容",
+            "写了什么", "写的什么", "怎么看", "看待", "觉得", "想法", "为什么",
+            "第", "部分", "哪一段", "这一段", "那一段", "原文", "全文",
+        )
+        return any(token in normalized for token in work_terms) and any(
+            token in normalized for token in query_terms
+        )
+
+    @staticmethod
+    def _record_creative_work_tool_result(
+        event: AstrMessageEvent,
+        tool: Any,
+        tool_args: Any,
+        tool_result: Any,
+    ) -> bool:
+        if _single_line(getattr(tool, "name", ""), 80) != "pc_view_creative_work":
+            return False
+        try:
+            setattr(event, "private_companion_creative_work_tool_attempted", True)
+            action = _single_line(
+                (tool_args or {}).get("action") if isinstance(tool_args, dict) else "",
+                20,
+            ).lower() or "get"
+            payload: dict[str, Any] = {}
+            if isinstance(tool_result, dict):
+                payload = dict(tool_result)
+            elif isinstance(tool_result, str):
+                try:
+                    parsed = json.loads(tool_result)
+                    payload = parsed if isinstance(parsed, dict) else {}
+                except Exception:
+                    payload = {}
+            success = bool(
+                action == "get"
+                and _single_line(payload.get("status"), 24).lower() == "success"
+            )
+            setattr(event, "private_companion_creative_work_read_success", success)
+            setattr(event, "private_companion_creative_work_tool_status", _single_line(payload.get("status"), 24))
+        except Exception:
+            pass
+        return True
+
+    @staticmethod
+    def _guard_unread_creative_work_response(event: AstrMessageEvent, text: Any) -> str:
+        raw = str(text or "")
+        if not raw.strip() or not bool(
+            getattr(event, "private_companion_creative_work_tool_required", False)
+        ):
+            return raw
+        if bool(getattr(event, "private_companion_creative_work_tool_attempted", False)):
+            return raw
+        logger.warning(
+            "[PrivateCompanion] 指定创作问答未实际调用读取工具，已阻止凭片段作答: session=%s",
+            _single_line(getattr(event, "unified_msg_origin", ""), 120) or "unknown",
+        )
+        return "我这次还没能实际读取到对应的创作原文，先不凭印象乱讲。你可以再告诉我准确标题或第几部分，我读到后再认真和你说。"
+
+    @staticmethod
+    def _plaintext_tool_call_from_object(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        function = value.get("function")
+        source = function if isinstance(function, dict) else value
+        name = _single_line(source.get("name") or value.get("tool_name"), 80)
+        known_names = {
+            "pc_qzone_view_feed",
+            "pc_qzone_publish_feed",
+            "pc_generate_photo",
+            "pc_manage_memo",
+            "pc_view_creative_work",
+            "pc_get_group_id_by_name",
+            "pc_get_user_id_by_name",
+            "pc_query_relation_person",
+            "pc_get_specified_group_members",
+            "pc_query_interaction",
+            "pc_relay_message",
+            "pc_send_to_group",
+            "pc_send_to_private_user",
+            "pc_send_to_groups",
+            "pc_send_to_private_users",
+            "pc_schedule_group_relay",
+            "future_task",
+            "send_message_to_user",
+        }
+        if name not in known_names:
+            return None
+        parameters = source.get("parameters")
+        if parameters is None:
+            parameters = source.get("arguments")
+        if parameters is None:
+            parameters = source.get("args")
+        if parameters is None:
+            parameters = value.get("parameters", value.get("arguments", value.get("args", {})))
+        if isinstance(parameters, str):
+            try:
+                parameters = json.loads(parameters)
+            except Exception:
+                return None
+        if not isinstance(parameters, dict):
+            return None
+        return {"name": name, "parameters": dict(parameters)}
+
+    @staticmethod
+    def _creative_work_project_candidates(
+        projects: list[dict[str, Any]],
+        selector: Any,
+    ) -> list[dict[str, Any]]:
+        eligible = [
+            item
+            for item in projects
+            if isinstance(item, dict)
+            and str(item.get("status") or "") in {"drafting", "finished"}
+            and isinstance(item.get("draft_chunks"), list)
+            and any(
+                isinstance(chunk, dict) and str(chunk.get("text") or "").strip()
+                for chunk in item.get("draft_chunks", [])
+            )
+        ]
+        value = _single_line(selector, 120)
+        if not value:
+            return eligible
+        folded = value.casefold()
+        exact = [
+            item
+            for item in eligible
+            if folded
+            in {
+                _single_line(item.get("id"), 40).casefold(),
+                _single_line(item.get("title"), 80).casefold(),
+            }
+        ]
+        if exact:
+            return exact
+        contains = [
+            item
+            for item in eligible
+            if folded in _single_line(item.get("title"), 80).casefold()
+            or _single_line(item.get("title"), 80).casefold() in folded
+        ]
+        if contains:
+            return contains
+        number_match = re.fullmatch(r"(?:第\s*)?(\d+)(?:\s*(?:个|篇|项))?", value)
+        if number_match:
+            index = _safe_int(number_match.group(1), 0) - 1
+            if 0 <= index < len(eligible):
+                return [eligible[index]]
+        return []
+
+    @staticmethod
+    def _creative_work_project_summary(project: dict[str, Any], index: int = 0) -> dict[str, Any]:
+        chunks = project.get("draft_chunks") if isinstance(project.get("draft_chunks"), list) else []
+        valid_chunks = [
+            chunk
+            for chunk in chunks
+            if isinstance(chunk, dict) and str(chunk.get("text") or "").strip()
+        ]
+        return {
+            "index": index,
+            "id": _single_line(project.get("id"), 40),
+            "title": _single_line(project.get("title"), 80) or "未定标题",
+            "work_type": _single_line(project.get("work_type"), 40) or "文本作品",
+            "status": _single_line(project.get("status"), 24),
+            "part_count": len(valid_chunks),
+            "current_chars": _safe_int(project.get("current_chars"), 0, 0),
+        }
+
+    async def _pc_view_creative_work_impl(
+        self,
+        event: AstrMessageEvent,
+        *,
+        action: str = "get",
+        selector: str = "",
+        part: int = 0,
+        max_chars: int = 6000,
+    ) -> str:
+        if not getattr(self, "enable_creative_writing", False):
+            return json.dumps(
+                {"status": "disabled", "message": "创作功能未启用。"},
+                ensure_ascii=False,
+            )
+        try:
+            is_private = bool(getattr(event, "is_private_chat", lambda: False)())
+        except Exception:
+            is_private = ":FriendMessage:" in str(getattr(event, "unified_msg_origin", "") or "")
+        if not is_private:
+            return json.dumps(
+                {"status": "forbidden", "message": "创作正文只允许在私聊中读取。"},
+                ensure_ascii=False,
+            )
+
+        normalized_action = _single_line(action, 20).lower() or "get"
+        if normalized_action not in {"list", "get"}:
+            return json.dumps(
+                {"status": "invalid_action", "message": "action 仅支持 list/get。"},
+                ensure_ascii=False,
+            )
+        async with self._data_lock:
+            raw_projects = self.data.get("creative_projects")
+            projects = list(raw_projects) if isinstance(raw_projects, list) else []
+            eligible = self._creative_work_project_candidates(projects, "")
+            if normalized_action == "list":
+                summaries = [
+                    self._creative_work_project_summary(project, index)
+                    for index, project in enumerate(eligible, start=1)
+                ]
+                return json.dumps(
+                    {
+                        "status": "success",
+                        "action": "list",
+                        "count": len(summaries),
+                        "projects": summaries[-20:],
+                    },
+                    ensure_ascii=False,
+                )
+
+            matches = self._creative_work_project_candidates(projects, selector)
+            if not _single_line(selector, 120):
+                matches = eligible[-1:] if eligible else []
+            if not matches:
+                candidates = [
+                    self._creative_work_project_summary(project, index)
+                    for index, project in enumerate(eligible[-10:], start=max(1, len(eligible) - 9))
+                ]
+                return json.dumps(
+                    {
+                        "status": "not_found",
+                        "message": "没有找到对应的创作。",
+                        "selector": _single_line(selector, 120),
+                        "candidates": candidates,
+                    },
+                    ensure_ascii=False,
+                )
+            if len(matches) > 1:
+                return json.dumps(
+                    {
+                        "status": "ambiguous",
+                        "message": "匹配到多篇创作，请使用准确标题或 id 再读取。",
+                        "candidates": [
+                            self._creative_work_project_summary(project, index)
+                            for index, project in enumerate(matches[:10], start=1)
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+
+            project = matches[0]
+            chunks = [
+                chunk
+                for chunk in project.get("draft_chunks", [])
+                if isinstance(chunk, dict) and str(chunk.get("text") or "").strip()
+            ]
+            requested_part = _safe_int(part, 0, 0)
+            if part and not (1 <= requested_part <= len(chunks)):
+                return json.dumps(
+                    {
+                        "status": "part_not_found",
+                        "message": f"这篇创作目前只有 {len(chunks)} 个正文部分。",
+                        "title": _single_line(project.get("title"), 80) or "未定标题",
+                        "part_count": len(chunks),
+                    },
+                    ensure_ascii=False,
+                )
+
+            budget = _safe_int(max_chars, 6000, 600, 12000)
+            selected_parts: list[dict[str, Any]] = []
+            used_chars = 0
+            start_index = requested_part - 1 if requested_part > 0 else 0
+            for index in range(start_index, len(chunks)):
+                if requested_part > 0 and index != start_index:
+                    break
+                text_value = str(chunks[index].get("text") or "").strip()
+                remaining = budget - used_chars
+                if remaining <= 0:
+                    break
+                shown_text = text_value[:remaining]
+                selected_parts.append(
+                    {
+                        "part": index + 1,
+                        "text": shown_text,
+                        "chars": len(text_value),
+                        "truncated": len(shown_text) < len(text_value),
+                    }
+                )
+                used_chars += len(shown_text)
+                if len(shown_text) < len(text_value):
+                    break
+            last_part = selected_parts[-1]["part"] if selected_parts else 0
+            truncated = bool(
+                selected_parts
+                and (
+                    selected_parts[-1].get("truncated")
+                    or (requested_part == 0 and last_part < len(chunks))
+                )
+            )
+            payload = {
+                "status": "success",
+                "action": "get",
+                "project": self._creative_work_project_summary(project),
+                "premise": _single_line(project.get("premise"), 500),
+                "tone": _single_line(project.get("tone"), 120),
+                "parts": selected_parts,
+                "truncated": truncated,
+                "next_part": last_part + 1 if truncated and last_part < len(chunks) else 0,
+                "instruction": "只能依据返回的真实正文讨论，不要补写未读取内容。",
+            }
+            return json.dumps(payload, ensure_ascii=False)
+
+    def _strip_plaintext_tool_call_envelopes(self, text: Any) -> tuple[str, list[dict[str, Any]]]:
+        raw = str(text or "")
+        if not raw or "{" not in raw:
+            return raw, []
+        decoder = json.JSONDecoder()
+        calls: list[dict[str, Any]] = []
+        ranges: list[tuple[int, int]] = []
+        cursor = 0
+        while cursor < len(raw):
+            start = raw.find("{", cursor)
+            if start < 0:
+                break
+            try:
+                value, consumed = decoder.raw_decode(raw[start:])
+            except Exception:
+                cursor = start + 1
+                continue
+            end = start + consumed
+            call = self._plaintext_tool_call_from_object(value)
+            if call is None:
+                cursor = start + 1
+                continue
+            calls.append(call)
+            ranges.append((start, end))
+            cursor = end
+        if not ranges:
+            return raw, []
+        pieces: list[str] = []
+        cursor = 0
+        for start, end in ranges:
+            pieces.append(raw[cursor:start])
+            cursor = end
+        pieces.append(raw[cursor:])
+        cleaned = "".join(pieces)
+        cleaned = re.sub(r"</?(?:tool_call|function_call)\b[^>]*>", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"(?im)^[ \t]*```(?:json)?[ \t]*$", "", cleaned)
+        cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+        return cleaned, calls
+
+    async def _recover_plaintext_photo_tool_call(
+        self,
+        event: AstrMessageEvent,
+        resp: Any,
+        text: Any,
+    ) -> tuple[str, dict[str, Any] | None]:
+        raw = str(text or "")
+        if bool(getattr(event, "_private_companion_plaintext_tool_checked", False)):
+            previous = getattr(event, "_private_companion_plaintext_tool_recovery", None)
+            return raw, previous if isinstance(previous, dict) else None
+        cleaned, calls = self._strip_plaintext_tool_call_envelopes(raw)
+        if not calls:
+            return raw, None
+        setattr(event, "_private_companion_plaintext_tool_checked", True)
+        logger.warning(
+            "[PrivateCompanion] 检测到模型将工具调用写入普通正文，已阻止外发: session=%s tools=%s",
+            _single_line(getattr(event, "unified_msg_origin", ""), 120) or "unknown",
+            ",".join(call.get("name", "") for call in calls),
+        )
+        recovery: dict[str, Any] = {
+            "status": "sanitized_only",
+            "sent": False,
+            "tools": [call.get("name", "") for call in calls],
+        }
+        setattr(event, "_private_companion_plaintext_tool_recovery", recovery)
+        photo_calls = [call for call in calls if call.get("name") == "pc_generate_photo"]
+        if len(calls) != 1 or len(photo_calls) != 1:
+            return cleaned, recovery
+        try:
+            called_names = getattr(resp, "tools_call_name", None)
+            if isinstance(called_names, str) and called_names.strip() == "pc_generate_photo":
+                recovery["status"] = "already_called"
+                return cleaned, recovery
+            if isinstance(called_names, (list, tuple, set)) and "pc_generate_photo" in {str(item) for item in called_names}:
+                recovery["status"] = "already_called"
+                return cleaned, recovery
+            if self._proactive_only_blocks_passive_event(event, "pc_tools"):
+                recovery["status"] = "blocked"
+                return cleaned, recovery
+        except Exception:
+            pass
+        inbound_text = str(getattr(event, "message_str", "") or "")
+        if not self._plaintext_photo_recovery_intent_matches(inbound_text):
+            recovery["status"] = "intent_mismatch"
+            return cleaned, recovery
+
+        raw_parameters = photo_calls[0].get("parameters")
+        parameters = dict(raw_parameters) if isinstance(raw_parameters, dict) else {}
+        allowed_keys = {
+            "prompt",
+            "kind",
+            "reference_image_path",
+            "image_size",
+            "caption",
+            "scene_preset",
+        }
+        parameters = {key: value for key, value in parameters.items() if key in allowed_keys}
+        parameters["send"] = True
+        try:
+            result_raw = await self._pc_generate_photo_impl(event, **parameters)
+            try:
+                result = json.loads(result_raw) if isinstance(result_raw, str) else dict(result_raw or {})
+            except Exception:
+                result = {"status": "error", "sent": False, "message": "生图工具返回无法解析"}
+        except Exception as exc:
+            logger.error(
+                "[PrivateCompanion] 明文生图工具调用恢复失败: session=%s error=%s",
+                _single_line(getattr(event, "unified_msg_origin", ""), 120) or "unknown",
+                _single_line(exc, 160),
+                exc_info=True,
+            )
+            result = {"status": "error", "sent": False, "message": "图片生成调用失败"}
+        sent = bool(result.get("sent"))
+        recovery.update({"status": "recovered" if sent else "failed", "sent": sent, "result": result})
+        setattr(event, "_private_companion_plaintext_tool_recovery", recovery)
+        if sent:
+            setattr(event, "_private_companion_plaintext_photo_sent", True)
+            logger.info(
+                "[PrivateCompanion] 已恢复并执行明文生图工具调用: session=%s",
+                _single_line(getattr(event, "unified_msg_origin", ""), 120) or "unknown",
+            )
+            return cleaned, recovery
+        failure = _single_line(result.get("message") or result.get("actual_error") or "图片没有生成成功", 180)
+        failure = _redact_outbound_secrets(failure, self)
+        failure_text = f"这次图片没能发出来：{failure}" if failure else "这次图片没能发出来。"
+        cleaned = "\n".join(part for part in (cleaned, failure_text) if str(part or "").strip()).strip()
+        return cleaned, recovery
+
+    @staticmethod
+    def _memo_management_instruction_matches(text: Any) -> bool:
+        value = str(text or "")
+        return bool(
+            re.search(
+                r"便签|便笺|备忘录?|待办|帮我记(?:一下|下来)?|记(?:一下|下来)|"
+                r"(?:确认|确定|取消)(?:删除|删掉|移除)|"
+                r"(?:完成|恢复|置顶|取消置顶|删除|删掉).{0,4}(?:第?\s*\d+|这张|那张)|"
+                r"第?\s*\d+(?:张|条|个)?.{0,8}(?:完成|恢复|置顶|删除|删掉|改到|改成)|"
+                r"(?:只看|查看|看看).{0,4}(?:已完成|进行中|全部)",
+                value,
+                flags=re.I,
+            )
+        )
+
+    def _remove_future_task_for_memo_request(self, req: Any, text: Any) -> bool:
+        """明确的便签操作只保留便签工具，避免同轮再创建官方定时任务。"""
+        if not self._memo_management_instruction_matches(text):
+            return False
+        tool_set = getattr(req, "func_tool", None)
+        if tool_set is None:
+            return False
+        has_future_task = False
+        get_tool = getattr(tool_set, "get_tool", None)
+        if callable(get_tool):
+            try:
+                has_future_task = get_tool("future_task") is not None
+            except Exception:
+                pass
+        tools = getattr(tool_set, "tools", None)
+        if not has_future_task and isinstance(tools, list):
+            has_future_task = any(
+                _single_line(getattr(tool, "name", ""), 120) == "future_task"
+                for tool in tools
+            )
+        if not has_future_task:
+            return False
+        remove_tool = getattr(tool_set, "remove_tool", None)
+        try:
+            if callable(remove_tool):
+                remove_tool("future_task")
+            elif isinstance(tools, list):
+                tool_set.tools = [
+                    tool
+                    for tool in tools
+                    if _single_line(getattr(tool, "name", ""), 120) != "future_task"
+                ]
+            else:
+                return False
+        except Exception as exc:
+            logger.warning("[PrivateCompanion] 便签请求移除 future_task 失败: %s", _single_line(exc, 160))
+            return False
+        return True
+
+    @staticmethod
+    def _mark_memo_request_tool_boundary(event: AstrMessageEvent, req: Any) -> None:
+        try:
+            setattr(event, "private_companion_explicit_memo_request", True)
+            setattr(event, "_private_companion_memo_provider_request", req)
+        except Exception:
+            pass
+
+    def _finalize_memo_request_tool_boundary(self, event: AstrMessageEvent) -> bool:
+        """在 AstrBot 补齐内置工具后再次执行便签/定时工具互斥。"""
+        if not bool(getattr(event, "private_companion_explicit_memo_request", False)):
+            return False
+        req = getattr(event, "_private_companion_memo_provider_request", None)
+        get_extra = getattr(event, "get_extra", None)
+        if callable(get_extra):
+            try:
+                final_req = get_extra("provider_request")
+            except Exception:
+                final_req = None
+            if final_req is not None:
+                req = final_req
+        if req is None:
+            return False
+        return self._remove_future_task_for_memo_request(
+            req,
+            getattr(event, "message_str", ""),
+        )
+
+    def _memo_management_tool_instruction(self) -> str:
+        return """
+【备忘便签工具】
+主要用户在私聊里要求新增、查看、修改、完成、恢复、置顶或删除便签时，使用 `pc_manage_memo`，不要只用口头承诺代替实际操作。
+- 只有用户明确说“便签/便笺/备忘/待办/帮我记一下/记下来”或正在继续操作已有便签时，才把请求路由到本工具。普通“提醒我/叫醒我/定时/半小时后通知我/别忘了”属于临时提醒，不要擅自建成便签。
+- 新增：action=create，title/content 至少传一项；提醒时间传 due_at，可传 `2026-07-15 09:00`，也支持“明早9点”“两小时后”“周五下午3点”等常见表达。
+- 查看：action=list；默认 status=active，可用 status=completed/all 查看已完成或全部便签，query 可按标题/正文筛选。列表正文只是预览，需要完整正文时用 action=get + selector。后续用编号操作时要传回相同 status，优先使用返回的 id。
+- 修改/完成/恢复/置顶：action=update/complete/reopen/pin/unpin，并用 selector 传便签标题、编号或工具返回的 id。匹配到多张时必须让用户进一步指定，不能自行选择。
+- 删除：首次 action=delete 只会返回 confirmation_required，必须让用户回复“确认删除”或“取消删除”；确认时把 confirmation_token 原样传给下一次 delete，取消时 action=cancel_delete。不能绕过确认。
+- 含 due_at 且开启提醒的便签，其提醒已经由便签自身负责；成功保存后不得再调用 `future_task`，也不得再输出 `<timer>`，否则会重复提醒。
+- 只有工具明确返回 `saved=true`，才能说便签已经新增、修改、完成、恢复、置顶或删除；cancel_delete 返回 `cancelled=true` 时才能说已取消删除。其他 `saved=false`、失败、歧义或等待确认必须如实说明。
+- 便签是待办，不是已经发生的经历；不要把未完成事项说成用户已经做过。
+""".strip()
+
+    def _memo_tool_authorization(self, event: AstrMessageEvent) -> tuple[bool, str]:
+        try:
+            is_private = bool(getattr(event, "is_private_chat", lambda: False)())
+        except Exception:
+            is_private = ":FriendMessage:" in str(getattr(event, "unified_msg_origin", "") or "")
+        try:
+            requester_id = self._permission_identity_id(event.get_sender_id())
+        except Exception:
+            requester_id = ""
+        allowed = bool(is_private and requester_id and self._is_private_companion_owner_user_id(requester_id))
+        if not allowed:
+            logger.info(
+                "[PrivateCompanion] 便签管理权限未通过: private=%s sender=%s umo=%s",
+                is_private,
+                requester_id or "-",
+                _single_line(getattr(event, "unified_msg_origin", ""), 120),
+            )
+        return allowed, requester_id
+
+    def _parse_memo_due_time(self, value: Any, *, now: float) -> tuple[float, str]:
+        if value is None or value == "":
+            return 0.0, ""
+        if isinstance(value, (int, float)):
+            timestamp = float(value)
+            if timestamp > 10_000_000_000:
+                timestamp /= 1000.0
+            return (timestamp, "") if timestamp > 0 else (0.0, "提醒时间无效")
+
+        text = _single_line(value, 100).strip()
+        if not text:
+            return 0.0, ""
+        if re.fullmatch(r"\d+(?:\.\d+)?", text):
+            timestamp = float(text)
+            if timestamp > 10_000_000_000:
+                timestamp /= 1000.0
+            return (timestamp, "") if timestamp > 0 else (0.0, "提醒时间无效")
+
+        base = self._environment_fromtimestamp(now)
+        normalized = text.replace("／", "/").replace("：", ":").strip()
+        try:
+            parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+            if parsed.tzinfo is None and base.tzinfo is not None:
+                parsed = parsed.replace(tzinfo=base.tzinfo)
+            if re.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", normalized):
+                parsed = parsed.replace(hour=9)
+            return parsed.timestamp(), ""
+        except ValueError:
+            pass
+        for fmt in ("%Y/%m/%d %H:%M", "%Y-%m-%d %H:%M", "%Y/%m/%d", "%Y-%m-%d"):
+            try:
+                parsed = datetime.strptime(normalized, fmt)
+            except ValueError:
+                continue
+            if parsed.tzinfo is None and base.tzinfo is not None:
+                parsed = parsed.replace(tzinfo=base.tzinfo)
+            if fmt in {"%Y/%m/%d", "%Y-%m-%d"}:
+                parsed = parsed.replace(hour=9)
+            return parsed.timestamp(), ""
+
+        def natural_number(raw: str) -> float:
+            if re.fullmatch(r"\d+(?:\.\d+)?", raw):
+                return float(raw)
+            digits = {
+                "零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+                "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+            }
+            if raw == "十":
+                return 10.0
+            if "十" in raw:
+                left, right = raw.split("十", 1)
+                return float((digits.get(left, 1) * 10) + digits.get(right, 0))
+            return float(digits.get(raw, 0))
+
+        relative_day_offset: int | None = None
+        duration_match = re.search(r"(\d+(?:\.\d+)?|[一二两三四五六七八九十]+)\s*(分钟|小时|天|周)后", normalized)
+        if duration_match:
+            amount = natural_number(duration_match.group(1))
+            unit = duration_match.group(2)
+            seconds = amount * {"分钟": 60, "小时": 3600, "天": 86400, "周": 7 * 86400}[unit]
+            has_clock = bool(re.search(r"点|时|:\d|早上|上午|中午|下午|傍晚|晚上|凌晨", normalized))
+            if unit in {"天", "周"} and has_clock and amount.is_integer():
+                relative_day_offset = int(amount) * (7 if unit == "周" else 1)
+            else:
+                return now + seconds, ""
+        if "半小时后" in normalized:
+            return now + 1800, ""
+
+        day_offset: int | None = relative_day_offset
+        if "大后天" in normalized:
+            day_offset = 3
+        elif "后天" in normalized:
+            day_offset = 2
+        elif any(token in normalized for token in ("明天", "明早", "明晚", "明日下午", "明日上午")):
+            day_offset = 1
+        elif any(token in normalized for token in ("今天", "今早", "今晚", "今夜", "今日")):
+            day_offset = 0
+
+        target_date = (base + timedelta(days=day_offset or 0)).date()
+        weekday_match = re.search(r"(下|本|这)?\s*(?:周|星期)([一二三四五六日天])", normalized)
+        if weekday_match:
+            target_weekday = "一二三四五六日".index("日" if weekday_match.group(2) == "天" else weekday_match.group(2))
+            prefix = weekday_match.group(1) or ""
+            if prefix == "下":
+                days = 7 - base.weekday() + target_weekday
+            else:
+                days = target_weekday - base.weekday()
+                if days < 0:
+                    days += 7
+            target_date = (base + timedelta(days=days)).date()
+            day_offset = days
+        else:
+            month_day_match = re.search(r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})(?:日|号)?", normalized)
+            if month_day_match:
+                year = int(month_day_match.group(1) or base.year)
+                month = int(month_day_match.group(2))
+                day = int(month_day_match.group(3))
+                try:
+                    candidate = base.replace(year=year, month=month, day=day).date()
+                except ValueError:
+                    return 0.0, "提醒日期无效"
+                if not month_day_match.group(1) and candidate < base.date():
+                    try:
+                        candidate = base.replace(year=base.year + 1, month=month, day=day).date()
+                    except ValueError:
+                        return 0.0, "提醒日期无效"
+                target_date = candidate
+                day_offset = (candidate - base.date()).days
+
+        clock_number = r"(?:\d{1,2}|[零〇一二两三四五六七八九十]{1,3})"
+        time_match = re.search(
+            rf"(?<!\d)({clock_number})\s*(?:点|时|:)(?:\s*({clock_number})\s*分?)?",
+            normalized,
+        )
+        has_half = bool(re.search(r"(?:点|时)\s*半", normalized))
+        quarter_match = re.search(r"(?:点|时)\s*([一三])刻", normalized)
+        if time_match:
+            hour = int(natural_number(time_match.group(1)))
+            if has_half:
+                minute = 30
+            elif quarter_match:
+                minute = 15 if quarter_match.group(1) == "一" else 45
+            else:
+                minute = int(natural_number(time_match.group(2) or "0"))
+            if hour > 23 or minute > 59:
+                return 0.0, "提醒时间无效"
+        elif day_offset is not None:
+            if "凌晨" in normalized:
+                hour, minute = 0, 0
+            elif "中午" in normalized:
+                hour, minute = 12, 0
+            elif "下午" in normalized:
+                hour, minute = 15, 0
+            elif "傍晚" in normalized:
+                hour, minute = 18, 0
+            elif any(token in normalized for token in ("晚上", "今晚", "今夜", "明晚")):
+                hour, minute = 20, 0
+            else:
+                hour, minute = 9, 0
+        else:
+            return 0.0, "无法识别提醒时间，请提供例如“明早9点”或“2026-07-15 09:00”"
+
+        evening = any(token in normalized for token in ("晚上", "今晚", "今夜", "明晚"))
+        if evening and hour in {0, 12}:
+            hour = 0
+            target_date += timedelta(days=1)
+        elif any(token in normalized for token in ("下午", "傍晚")) and hour < 12:
+            hour += 12
+        elif evening and hour < 12:
+            hour += 12
+        elif "中午" in normalized and hour < 11:
+            hour += 12
+        elif "凌晨" in normalized and hour == 12:
+            hour = 0
+        try:
+            parsed = base.replace(
+                year=target_date.year,
+                month=target_date.month,
+                day=target_date.day,
+                hour=hour,
+                minute=minute,
+                second=0,
+                microsecond=0,
+            )
+        except ValueError:
+            return 0.0, "提醒时间无效"
+        if weekday_match and parsed.timestamp() <= now:
+            parsed += timedelta(days=7)
+        elif day_offset is None and parsed.timestamp() <= now:
+            parsed += timedelta(days=1)
+        return parsed.timestamp(), ""
+
+    def _memo_tool_note_view(
+        self,
+        note: dict[str, Any],
+        *,
+        number: int = 0,
+        content_limit: int = 240,
+    ) -> dict[str, Any]:
+        due_at = _safe_float(note.get("due_at"), 0.0)
+        due_text = ""
+        if due_at > 0:
+            try:
+                due_text = self._environment_fromtimestamp(due_at).strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                due_text = datetime.fromtimestamp(due_at).strftime("%Y-%m-%d %H:%M")
+        raw_content = str(note.get("content") or "")
+        result = {
+            "id": _single_line(note.get("id"), 64),
+            "title": _single_line(note.get("title"), 60),
+            "content": raw_content[:content_limit],
+            "content_truncated": len(raw_content) > content_limit,
+            "status": _single_line(note.get("status"), 20) or "active",
+            "due_at": due_at,
+            "due_text": due_text,
+            "repeat": _single_line(note.get("repeat"), 20) or "none",
+            "remind_enabled": bool(note.get("remind_enabled")),
+            "pinned": bool(note.get("pinned")),
+            "color": _single_line(note.get("color"), 20) or "yellow",
+        }
+        if number > 0:
+            result["number"] = number
+        return result
+
+    def _memo_tool_find_matches(
+        self,
+        notes: list[dict[str, Any]],
+        selector: Any,
+        *,
+        status: str = "",
+    ) -> list[dict[str, Any]]:
+        eligible = [item for item in notes if not status or item.get("status") == status]
+        value = _single_line(selector, 100).strip(" \t\r\n‘’“”'\"《》【】[]")
+        if not value:
+            return []
+        exact_id = [item for item in eligible if str(item.get("id") or "") == value]
+        if exact_id:
+            return exact_id
+        number_match = re.fullmatch(r"第?\s*(\d+)\s*(?:张|条|个)?", value)
+        if number_match:
+            index = int(number_match.group(1)) - 1
+            return [eligible[index]] if 0 <= index < len(eligible) else []
+        folded = value.casefold()
+        exact_title = [item for item in eligible if _single_line(item.get("title"), 60).casefold() == folded]
+        if exact_title:
+            return exact_title
+        return [
+            item
+            for item in eligible
+            if folded in f"{item.get('title', '')}\n{item.get('content', '')}".casefold()
+        ]
+
+    async def _pc_manage_memo_impl(
+        self,
+        event: AstrMessageEvent,
+        *,
+        action: str = "list",
+        title: str = "",
+        content: str = "",
+        selector: str = "",
+        due_at: Any = "",
+        repeat: str = "",
+        color: str = "",
+        remind_enabled: bool | None = None,
+        include_completed: bool = False,
+        status: str = "",
+        query: str = "",
+        clear_due: bool = False,
+        clear_content: bool = False,
+        confirmation_token: str = "",
+    ) -> str:
+        allowed, requester_id = self._memo_tool_authorization(event)
+        if not allowed:
+            return json.dumps(
+                {"status": "forbidden", "saved": False, "message": "便签只允许配置的主要用户在私聊中管理。"},
+                ensure_ascii=False,
+            )
+        from .tls_memo_tool_adapter import dispatch_memo_tool
+        return await dispatch_memo_tool(self, event, dict(action=action, title=title, content=content, selector=selector, due_at=due_at, repeat=repeat, color=color, remind_enabled=remind_enabled, include_completed=include_completed, status=status, query=query, clear_due=clear_due, clear_content=clear_content, confirmation_token=confirmation_token),
+                                        self._tls_legacy_pc_manage_memo_impl)
+
+    async def _tls_legacy_pc_manage_memo_impl(
+        self,
+        event: AstrMessageEvent,
+        *,
+        action: str = "list",
+        title: str = "",
+        content: str = "",
+        selector: str = "",
+        due_at: Any = "",
+        repeat: str = "",
+        color: str = "",
+        remind_enabled: bool | None = None,
+        include_completed: bool = False,
+        status: str = "",
+        query: str = "",
+        clear_due: bool = False,
+        clear_content: bool = False,
+        confirmation_token: str = "",
+    ) -> str:
+        allowed, requester_id = self._memo_tool_authorization(event)
+        if not allowed:
+            return json.dumps(
+                {"status": "forbidden", "saved": False, "message": "便签只允许配置的主要用户在私聊中管理。"},
+                ensure_ascii=False,
+            )
+        action_key = _single_line(action, 30).lower()
+        aliases = {
+            "": "list", "查看": "list", "列表": "list", "查询": "list", "list": "list",
+            "详情": "get", "查看详情": "get", "get": "get",
+            "新增": "create", "添加": "create", "创建": "create", "记录": "create", "create": "create", "add": "create",
+            "修改": "update", "编辑": "update", "update": "update", "edit": "update",
+            "完成": "complete", "办完": "complete", "complete": "complete", "done": "complete",
+            "恢复": "reopen", "重新打开": "reopen", "reopen": "reopen",
+            "删除": "delete", "delete": "delete", "remove": "delete",
+            "取消删除": "cancel_delete", "cancel_delete": "cancel_delete", "cancel": "cancel_delete",
+            "置顶": "pin", "pin": "pin", "取消置顶": "unpin", "unpin": "unpin",
+        }
+        action_key = aliases.get(action_key, action_key)
+        if action_key not in {"list", "get", "create", "update", "complete", "reopen", "delete", "cancel_delete", "pin", "unpin"}:
+            return json.dumps({"status": "invalid_action", "saved": False, "message": "不支持的便签操作"}, ensure_ascii=False)
+
+        now = time.time()
+        status_key = _single_line(status, 20).lower()
+        status_aliases = {
+            "": "all" if include_completed else "active",
+            "active": "active", "进行中": "active", "未完成": "active", "待办": "active",
+            "completed": "completed", "完成": "completed", "已完成": "completed", "历史": "completed",
+            "all": "all", "全部": "all",
+        }
+        status_key = status_aliases.get(status_key, status_key)
+        if status_key not in {"active", "completed", "all"}:
+            return json.dumps({"status": "invalid_status", "saved": False, "message": "便签状态只支持 active/completed/all"}, ensure_ascii=False)
+        if action_key == "list":
+            async with self._data_lock:
+                raw_notes = self.data.get("memo_notes")
+                source_notes = raw_notes if isinstance(raw_notes, list) else []
+                notes = [item for item in (normalize_memo_note(raw, now=now) for raw in source_notes) if item]
+            if status_key != "all":
+                notes = [item for item in notes if item.get("status") == status_key]
+            query_text = _single_line(query, 100).casefold()
+            if query_text:
+                notes = [
+                    item for item in notes
+                    if query_text in f"{item.get('title', '')}\n{item.get('content', '')}".casefold()
+                ]
+            notes.sort(key=lambda item: memo_note_sort_key(item, now=now))
+            items = [self._memo_tool_note_view(item, number=index) for index, item in enumerate(notes[:20], start=1)]
+            return json.dumps(
+                {
+                    "status": "success",
+                    "saved": False,
+                    "action": "list",
+                    "view": status_key,
+                    "query": query_text,
+                    "count": len(notes),
+                    "shown_count": len(items),
+                    "truncated": len(notes) > len(items),
+                    "items": items,
+                    "message": "当前没有便签" if not notes else f"找到 {len(notes)} 张便签",
+                },
+                ensure_ascii=False,
+            )
+
+        due_timestamp = 0.0
+        if action_key == "create" or due_at not in (None, ""):
+            due_timestamp, due_error = self._parse_memo_due_time(due_at, now=now)
+            if due_error:
+                return json.dumps({"status": "invalid_time", "saved": False, "message": due_error}, ensure_ascii=False)
+
+        pending_store = getattr(self, "_memo_delete_confirmations", None)
+        if not isinstance(pending_store, dict):
+            pending_store = {}
+            setattr(self, "_memo_delete_confirmations", pending_store)
+        for token, pending in list(pending_store.items()):
+            if not isinstance(pending, dict) or _safe_float(pending.get("expires_at"), 0.0) <= now:
+                pending_store.pop(token, None)
+
+        token = _single_line(confirmation_token, 100)
+        if action_key == "cancel_delete":
+            removable = [
+                key for key, pending in pending_store.items()
+                if isinstance(pending, dict)
+                and pending.get("requester_id") == requester_id
+                and (not token or key == token)
+            ]
+            for key in removable:
+                pending_store.pop(key, None)
+            return json.dumps(
+                {
+                    "status": "success" if removable else "nothing_pending",
+                    "saved": False,
+                    "cancelled": bool(removable),
+                    "action": "cancel_delete",
+                    "message": "已取消删除，便签没有变化。" if removable else "当前没有等待确认的便签删除。",
+                },
+                ensure_ascii=False,
+            )
+
+        confirmed_delete_id = ""
+        confirmed_pending: dict[str, Any] | None = None
+        if action_key == "delete" and token:
+            pending = pending_store.get(token)
+            if not isinstance(pending, dict) or pending.get("requester_id") != requester_id:
+                return json.dumps({"status": "confirmation_expired", "saved": False, "message": "删除确认已失效，请重新指定便签。"}, ensure_ascii=False)
+            confirmed_pending = pending
+            confirmed_delete_id = _single_line(pending.get("note_id"), 64)
+
+        try:
+            async with self._data_lock:
+                raw_notes = self.data.get("memo_notes")
+                source_notes = raw_notes if isinstance(raw_notes, list) else []
+                notes = [item for item in (normalize_memo_note(raw, now=now) for raw in source_notes) if item]
+                notes.sort(key=lambda item: memo_note_sort_key(item, now=now))
+                if action_key == "create":
+                    payload: dict[str, Any] = {
+                        "action": "save",
+                        "title": title,
+                        "content": content,
+                        "due_at": due_timestamp,
+                        "repeat": repeat or "none",
+                        "color": color or "yellow",
+                        "pinned": False,
+                        "remind_enabled": True if remind_enabled is None else remind_enabled,
+                    }
+                    updated_notes, affected = apply_memo_note_action(
+                        raw_notes,
+                        payload,
+                        now=now,
+                        fromtimestamp=self._environment_fromtimestamp,
+                    )
+                else:
+                    match_status = "" if status_key == "all" else status_key
+                    if not status:
+                        match_status = "completed" if action_key == "reopen" else "active" if action_key == "complete" else ""
+                    matches = self._memo_tool_find_matches(
+                        notes,
+                        confirmed_delete_id or selector,
+                        status=match_status,
+                    )
+                    if not matches:
+                        return json.dumps({"status": "not_found", "saved": False, "message": "没有找到匹配的便签"}, ensure_ascii=False)
+                    if len(matches) > 1:
+                        return json.dumps(
+                            {
+                                "status": "ambiguous",
+                                "saved": False,
+                                "message": "匹配到多张便签，请用编号、完整标题或 id 进一步指定。",
+                                "matches": [self._memo_tool_note_view(item) for item in matches[:8]],
+                            },
+                            ensure_ascii=False,
+                        )
+                    target = matches[0]
+                    if action_key == "get":
+                        return json.dumps(
+                            {
+                                "status": "success",
+                                "saved": False,
+                                "action": "get",
+                                "note": self._memo_tool_note_view(target, content_limit=800),
+                            },
+                            ensure_ascii=False,
+                        )
+                    if confirmed_pending is not None and _safe_float(target.get("updated_at"), 0.0) != _safe_float(confirmed_pending.get("updated_at"), 0.0):
+                        pending_store.pop(token, None)
+                        return json.dumps(
+                            {
+                                "status": "confirmation_stale",
+                                "saved": False,
+                                "message": "便签在确认前发生了变化，请重新发起删除并确认。",
+                                "note": self._memo_tool_note_view(target),
+                            },
+                            ensure_ascii=False,
+                        )
+                    if action_key == "delete" and not confirmed_delete_id:
+                        token = uuid.uuid4().hex
+                        pending_store[token] = {
+                            "requester_id": requester_id,
+                            "note_id": target.get("id"),
+                            "updated_at": _safe_float(target.get("updated_at"), 0.0),
+                            "expires_at": now + 180,
+                        }
+                        return json.dumps(
+                            {
+                                "status": "confirmation_required",
+                                "saved": False,
+                                "message": "这张便签尚未删除，请让用户回复“确认删除”或“取消删除”。",
+                                "note": self._memo_tool_note_view(target),
+                                "confirmation_token": token,
+                                "expires_in_seconds": 180,
+                            },
+                            ensure_ascii=False,
+                        )
+                    payload = {"action": action_key, "id": target.get("id")}
+                    partial = False
+                    if action_key == "update":
+                        payload["action"] = "save"
+                        partial = True
+                        if title:
+                            payload["title"] = title
+                        if content or clear_content:
+                            payload["content"] = "" if clear_content else content
+                        if due_at not in (None, "") or clear_due:
+                            payload["due_at"] = 0.0 if clear_due else due_timestamp
+                        if repeat:
+                            payload["repeat"] = repeat
+                        elif clear_due:
+                            payload["repeat"] = "none"
+                        if color:
+                            payload["color"] = color
+                        if remind_enabled is not None:
+                            payload["remind_enabled"] = remind_enabled
+                        if len(payload) <= 2:
+                            return json.dumps({"status": "need_changes", "saved": False, "message": "没有提供要修改的内容"}, ensure_ascii=False)
+                    updated_notes, affected = apply_memo_note_action(
+                        raw_notes,
+                        payload,
+                        now=now,
+                        fromtimestamp=self._environment_fromtimestamp,
+                        partial=partial,
+                    )
+
+                previous_notes = raw_notes
+                self.data["memo_notes"] = updated_notes
+                try:
+                    self._save_data_sync()
+                except Exception:
+                    self.data["memo_notes"] = previous_notes
+                    raise
+            if action_key == "delete" and token:
+                pending_store.pop(token, None)
+            if (
+                action_key in {"create", "update"}
+                and isinstance(affected, dict)
+                and _single_line(affected.get("status"), 20) == "active"
+                and _safe_float(affected.get("due_at"), 0.0) > 0
+                and bool(affected.get("remind_enabled", True))
+            ):
+                try:
+                    setattr(event, "private_companion_memo_reminder_saved", True)
+                except Exception as exc:
+                    logger.warning(
+                        "[PrivateCompanion] 便签提醒已保存但无法写入本轮去重标记: user=%s error=%s",
+                        requester_id,
+                        _single_line(exc, 160),
+                    )
+                else:
+                    logger.info(
+                        "[PrivateCompanion] 便签提醒已保存,本轮将抑制重复临时定时: user=%s note=%s action=%s",
+                        requester_id,
+                        _single_line(affected.get("id"), 64) or "-",
+                        action_key,
+                    )
+            return json.dumps(
+                {
+                    "status": "success",
+                    "saved": True,
+                    "action": action_key,
+                    "message": {
+                        "create": "便签已新增",
+                        "update": "便签已更新",
+                        "complete": "便签已完成",
+                        "reopen": "便签已恢复",
+                        "delete": "便签已删除",
+                        "pin": "便签已置顶",
+                        "unpin": "已取消便签置顶",
+                    }[action_key],
+                    "note": self._memo_tool_note_view(affected),
+                },
+                ensure_ascii=False,
+            )
+        except ValueError as exc:
+            return json.dumps({"status": "invalid", "saved": False, "message": str(exc)}, ensure_ascii=False)
+        except Exception as exc:
+            logger.error("[PrivateCompanion] 聊天便签操作失败: %s", _single_line(exc, 160), exc_info=True)
+            return json.dumps({"status": "error", "saved": False, "message": f"便签操作失败: {_single_line(exc, 120)}"}, ensure_ascii=False)
+
+    async def _pc_generate_photo_impl(
+        self,
+        event: AstrMessageEvent,
+        prompt: str = "",
+        kind: str = "text2img",
+        reference_image_path: str = "",
+        image_size: str = "",
+        send: bool = True,
+        caption: str = "",
+        scene_preset: str = "",
+        **kwargs,
+    ) -> str:
+        tool_started_at = time.monotonic()
+        mode = _single_line(getattr(self, "natural_language_photo_generation_mode", "tool_first"), 40).lower()
+        if mode == "off":
+            return json.dumps({"status": "disabled", "message": "非指令生图/改图已关闭；显式指令仍可使用“陪伴 生图/自拍/改图”。"}, ensure_ascii=False)
+        if not getattr(self, "enable_photo_text_action", False):
+            return json.dumps({"status": "disabled", "message": "主动拍照/生图能力未启用"}, ensure_ascii=False)
+        if not callable(getattr(self, "_generate_photo_image", None)):
+            return json.dumps({"status": "disabled", "message": "缺少生图入口 _generate_photo_image"}, ensure_ascii=False)
+        if not self._photo_text_available():
+            return json.dumps({"status": "unavailable", "message": "当前没有可用生图后端，或已被负载/token 保护临时延后"}, ensure_ascii=False)
+
+        clothing_request_text = str(prompt or kwargs.get("text") or kwargs.get("description") or kwargs.get("prompt_text") or "")
+        content = _single_line(clothing_request_text, 900)
+        raw_kind = _single_line(kind or kwargs.get("workflow_kind") or kwargs.get("type"), 40).lower()
+        if raw_kind in {"sticker", "emoji", "meme", "表情包", "贴纸"}:
+            workflow_kind = "selfie"
+            intent_kind = "sticker"
+        elif raw_kind in {"selfie", "portrait", "自拍", "人像", "拍照", "头像", "avatar", "cos", "cosplay", "穿搭"}:
+            workflow_kind = "selfie"
+            intent_kind = "selfie"
+        elif raw_kind in {"edit", "改图", "修图", "重绘", "p图", "P图"}:
+            workflow_kind = "selfie"
+            intent_kind = "edit"
+        else:
+            workflow_kind = "text2img"
+            intent_kind = "text2img"
+        if not content:
+            return json.dumps(
+                {
+                    "status": "need_prompt",
+                    "message": "缺少 prompt。请把要生成的画面或修改要求传入 prompt。",
+                },
+                ensure_ascii=False,
+            )
+        compact_prompt = re.sub(r"\s+", "", content)
+        if intent_kind == "text2img" and any(token in compact_prompt for token in ("表情包", "贴纸", "sticker", "meme")):
+            workflow_kind = "selfie"
+            intent_kind = "sticker"
+        elif intent_kind == "text2img" and (
+            self._character_photo_request_matches(content)
+            or any(
+                token in compact_prompt
+                for token in ("自拍", "拍照", "头像", "人像", "角色本人", "本人出镜", "露脸", "穿搭", "镜前", "cos", "COS", "cosplay")
+            )
+        ):
+            workflow_kind = "selfie"
+            intent_kind = "selfie"
+
+        def bool_arg(value: Any, default: bool = True) -> bool:
+            if isinstance(value, bool):
+                return value
+            if value is None:
+                return default
+            text = str(value).strip().lower()
+            if text in {"1", "true", "yes", "y", "on", "发送", "发出", "是"}:
+                return True
+            if text in {"0", "false", "no", "n", "off", "不发送", "否"}:
+                return False
+            return default
+
+        send_image = bool_arg(send, True)
+        reference_path = _single_line(
+            reference_image_path
+            or kwargs.get("reference")
+            or kwargs.get("image")
+            or kwargs.get("image_path")
+            or kwargs.get("image_url"),
+            1000,
+        ).strip().strip('"').strip("'")
+        if reference_path:
+            resolver = getattr(self, "_photo_reference_source_to_stable_path", None)
+            if callable(resolver):
+                try:
+                    stable = await resolver(reference_path, stem="tool", event=event)
+                    if stable:
+                        reference_path = stable
+                except Exception as exc:
+                    return json.dumps(
+                        {"status": "error", "message": f"参考图解析失败：{_single_line(exc, 160)}"},
+                        ensure_ascii=False,
+                    )
+        if intent_kind == "edit" and not reference_path:
+            context_resolver = getattr(self, "_photo_reference_image_from_command_context", None)
+            if callable(context_resolver):
+                try:
+                    try:
+                        user_id = str(event.get_sender_id())
+                    except Exception:
+                        user_id = ""
+                    resolved_path, resolved_label, saw_image = await context_resolver(event, user_id)
+                    if resolved_path:
+                        reference_path = resolved_path
+                    elif saw_image:
+                        return json.dumps(
+                            {
+                                "status": "need_reference",
+                                "message": "看到了图片，但没能保存成可用参考图；请让用户重新发送图片，或用“陪伴 参考图 查看”检查平台是否能取到原图。",
+                            },
+                            ensure_ascii=False,
+                        )
+                except Exception as exc:
+                    missing = _missing_optional_model_dependency(exc)
+                    if missing:
+                        return json.dumps(
+                            {
+                                "status": "need_reference",
+                                "message": f"改图参考图解析缺少可选依赖 {missing}，请让用户直接提供本地图片路径或图片 URL。",
+                            },
+                            ensure_ascii=False,
+                        )
+                    return json.dumps(
+                        {"status": "error", "message": f"改图参考图解析失败：{_single_line(exc, 160)}"},
+                        ensure_ascii=False,
+                    )
+            if not reference_path:
+                return json.dumps(
+                    {
+                        "status": "need_reference",
+                        "message": "改图/重绘需要参考图。可以让用户把图片和要求一起发，或引用近期图片再说“改成……”。",
+                    },
+                    ensure_ascii=False,
+                )
+        if not reference_path and intent_kind in {"selfie", "sticker"}:
+            wants_context_reference = any(
+                token in compact_prompt
+                for token in ("这张", "这图", "这幅", "这份", "参考图", "用图", "按图", "照着", "根据图", "根据这张", "用这张")
+            )
+            if wants_context_reference:
+                context_resolver = getattr(self, "_photo_reference_image_from_command_context", None)
+                if callable(context_resolver):
+                    try:
+                        try:
+                            user_id = str(event.get_sender_id())
+                        except Exception:
+                            user_id = ""
+                        resolved_path, resolved_label, saw_image = await context_resolver(event, user_id)
+                        if resolved_path:
+                            reference_path = resolved_path
+                        elif saw_image:
+                            return json.dumps(
+                                {
+                                    "status": "need_reference",
+                                    "message": "看到了图片，但没能保存成可用参考图；请让用户重新发送图片，或用“陪伴 参考图 查看”检查平台是否能取到原图。",
+                                },
+                                ensure_ascii=False,
+                            )
+                    except Exception as exc:
+                        missing = _missing_optional_model_dependency(exc)
+                        if missing:
+                            return json.dumps(
+                                {
+                                    "status": "need_reference",
+                                    "message": f"参考图解析缺少可选依赖 {missing}；如已开启参考图一致性，会改用已配置的人设参考图或今日穿搭图。",
+                                },
+                                ensure_ascii=False,
+                            )
+                        return json.dumps(
+                            {"status": "error", "message": f"参考图解析失败：{_single_line(exc, 160)}"},
+                            ensure_ascii=False,
+                        )
+        if reference_path and not os.path.exists(reference_path):
+            return json.dumps(
+                {"status": "error", "message": f"参考图路径不可用：{_single_line(reference_path, 180)}"},
+                ensure_ascii=False,
+            )
+
+        prompt_builder = getattr(self, "_build_natural_language_photo_prompt", None)
+        if callable(prompt_builder):
+            prompt_text = prompt_builder(
+                prompt=content,
+                kind="selfie" if intent_kind == "sticker" else intent_kind,
+                has_reference=bool(reference_path),
+                memory_context="",
+            )
+        else:
+            prompt_text = content
+        preset_text = _single_line(scene_preset or kwargs.get("preset") or kwargs.get("scene"), 80)
+        if intent_kind == "sticker" and not preset_text:
+            preset_text = "表情包场景"
+        if preset_text:
+            preset_lines = [preset_text]
+            preset_getter = getattr(self, "_photo_generation_scene_presets", None)
+            if callable(preset_getter):
+                try:
+                    presets = preset_getter()
+                    if isinstance(presets, dict):
+                        preset_detail = _single_line(presets.get(preset_text), 900)
+                        if preset_detail:
+                            preset_lines.append(preset_detail)
+                except Exception:
+                    pass
+            prompt_text = _single_line(
+                f"{prompt_text}\n\n【指定生图场景预设】\n" + "\n".join(preset_lines),
+                6500,
+            )
+
+        session_key = _single_line(getattr(event, "unified_msg_origin", ""), 120) or "tool_photo"
+        generation_session_key = f"tool_photo_{session_key}"
+        outer_timeout = self._photo_tool_call_timeout_seconds()
+        timeout_margin = max(2.0, min(8.0, outer_timeout * 0.1))
+        generation_timeout = outer_timeout - (time.monotonic() - tool_started_at) - timeout_margin
+        if generation_timeout <= 0:
+            generation_timeout = 0.01
+        try:
+            backend_name, image_path, note = await asyncio.wait_for(
+                self._generate_photo_image(
+                    workflow_kind=workflow_kind,
+                    prompt_text=prompt_text,
+                    session_key=generation_session_key,
+                    reference_image_path=reference_path,
+                    image_size=_single_line(image_size or kwargs.get("size"), 40),
+                    clothing_request_text=clothing_request_text,
+                ),
+                timeout=generation_timeout,
+            )
+        except asyncio.TimeoutError:
+            actual_error = (
+                f"生图未能在 AstrBot 工具调用时限 {outer_timeout:g} 秒内完成；"
+                "本次工具调用没有生成或发送图片。"
+            )
+            logger.warning(
+                "[PrivateCompanion] pc_generate_photo 在外层工具超时前主动结束: session=%s timeout=%.1fs budget=%.1fs",
+                session_key,
+                outer_timeout,
+                generation_timeout,
+            )
+            return json.dumps(
+                {
+                    "status": "timeout",
+                    "success": False,
+                    "generated": False,
+                    "send_requested": send_image,
+                    "sent": False,
+                    "message": actual_error,
+                    "actual_error": actual_error,
+                    "actionable_hint": "请如实告诉用户本次没有出图、没有发送；不要声称已经发出。可稍后重试，或让管理员提高 AstrBot tool_call_timeout/缩短生图后端超时。",
+                    "must_not_claim_sent": True,
+                    "retryable": True,
+                },
+                ensure_ascii=False,
+            )
+        ok = bool(image_path and os.path.exists(image_path))
+        annotator = getattr(self, "_annotate_recent_photo_generation", None)
+        if callable(annotator):
+            annotator(
+                image_path=image_path,
+                session_key=generation_session_key,
+                trigger="llm_tool",
+                intent_kind=intent_kind,
+                sent=False,
+                caption=caption,
+                scene_preset=preset_text,
+                tool_name="pc_generate_photo",
+            )
+        if ok:
+            try:
+                user_id = str(event.get_sender_id())
+            except Exception:
+                user_id = ""
+            if user_id and callable(getattr(self, "_command_photo_quota_left", None)):
+                async with self._data_lock:
+                    user = self._get_user(user_id)
+                    if self._is_target_private_user(user_id, user):
+                        self._note_command_photo_generation_attempt(user, image_path=image_path)
+                        self._save_data_sync()
+        sent = False
+        delivery: dict[str, Any] = {}
+        if ok and send_image:
+            message = _single_line(caption, 120) or ("" if intent_kind == "sticker" else "生成好了。")
+            try:
+                delivery = await self._deliver_generated_image_to_event(
+                    event,
+                    image_path=image_path,
+                    caption=message,
+                )
+            except Exception as exc:
+                delivery = {
+                    "sent": False,
+                    "destination": "error",
+                    "message": f"图片发送失败：{_single_line(exc, 180) or '未知错误'}",
+                }
+                logger.warning(
+                    "[PrivateCompanion] pc_generate_photo 图片投递异常: session=%s err=%s",
+                    session_key,
+                    _single_line(exc, 180),
+                )
+            sent = bool(delivery.get("sent"))
+        if callable(annotator):
+            annotator(
+                image_path=image_path,
+                session_key=generation_session_key,
+                trigger="llm_tool",
+                intent_kind=intent_kind,
+                sent=sent,
+                caption=caption,
+                scene_preset=preset_text,
+                tool_name="pc_generate_photo",
+            )
+        if ok:
+            memory_recorder = getattr(self, "_memory_companion_record_photo_generation", None)
+            if callable(memory_recorder):
+                await memory_recorder(
+                    event,
+                    prompt=content,
+                    kind=workflow_kind,
+                    intent_kind=intent_kind,
+                    backend=backend_name,
+                    image_path=image_path,
+                    note=note,
+                    sent=sent,
+                    trigger="llm_tool",
+                    scene_preset=preset_text,
+                    reference_image_path=reference_path,
+                )
+        overall_success = bool(ok and (not send_image or sent))
+        result_payload = {
+            "status": "success" if overall_success else ("delivery_failed" if ok else "error"),
+            "success": overall_success,
+            "generated": ok,
+            "send_requested": send_image,
+            "message": (
+                _single_line(delivery.get("message"), 220)
+                if ok and send_image and delivery
+                else ("图片已生成但按请求未发送" if ok and not send_image else (_single_line(note, 220) or "生图失败"))
+            ),
+            "backend": _single_line(backend_name, 80),
+            "path": _single_line(image_path, 260),
+            "kind": workflow_kind,
+            "intent_kind": intent_kind,
+            "used_reference": bool(reference_path and "已使用" in str(note or "")),
+            "reference_image_path": _single_line(reference_path, 260),
+            "sent": sent,
+            "delivery": _single_line(delivery.get("destination"), 30),
+            "safety_review": _single_line(delivery.get("review_label"), 30),
+            "note": _single_line(note, 220),
+            "must_not_claim_sent": not sent,
+        }
+        if ok and send_image and not sent:
+            delivery_error = _single_line(delivery.get("message"), 360) or "图片发送失败"
+            result_payload.update(
+                {
+                    "failure_stage": "delivery",
+                    "delivery_error": delivery_error,
+                    "actual_error": delivery_error,
+                    "actionable_hint": "图片文件已经生成，但用户没有收到图片。请明确说发送失败，绝对不能说已经发出。",
+                    "retryable": True,
+                }
+            )
+        elif not ok:
+            note_text = _single_line(note, 360) or "生图失败"
+            lowered_note = note_text.lower()
+            hint = "请按 actual_error 里的真实原因回复用户，不要改写成未出现的超时、排队或权限问题。"
+            if "404" in note_text or "not found" in lowered_note or "未找到" in note_text:
+                hint = "在线生图接口返回 404，通常是 API 地址端点不对或缺少 /v1；请让用户检查在线图片 API 地址是否支持 /images/generations。"
+            elif "图片模型" in note_text or "image model" in lowered_note:
+                hint = "当前模型可能不是生图模型；请让用户把在线图片模型改成对应平台的图片模型。"
+            elif "api key" in lowered_note or "unauthorized" in lowered_note or "401" in note_text or "403" in note_text:
+                hint = "请让用户检查在线图片 API Key、权限和额度。"
+            result_payload.update(
+                {
+                    "failure_reason": note_text,
+                    "actual_error": note_text,
+                    "actionable_hint": hint,
+                    "do_not_claim_timeout": "超时" not in note_text and "timeout" not in lowered_note,
+                    "must_not_claim_sent": True,
+                }
+            )
+        return json.dumps(result_payload, ensure_ascii=False)
+
+    async def _pc_qzone_view_feed_impl(
+        self,
+        event: AstrMessageEvent,
+        user_id: str = "",
+        pos: int = 0,
+        like: bool = False,
+        reply: bool = False,
+        selector: str = "",
+        fid: str = "",
+    ) -> str:
+        if not self.enable_qzone_integration:
+            return json.dumps({"status": "disabled", "message": "QQ 空间动态层未启用"}, ensure_ascii=False)
+        target = _single_line(user_id, 40)
+        if not target:
+            try:
+                target = str(event.get_sender_id())
+            except Exception:
+                target = ""
+        try:
+            selection = parse_qzone_post_selection(user_id=target, selector=selector, pos=pos, fid=fid)
+            if selection.fid:
+                candidates = await self._qzone_query_feeds(event, target_id=selection.target_id or None, pos=0, num=20, with_detail=True)
+                posts = [
+                    item for item in candidates
+                    if str(getattr(item, "tid", "") or "") == selection.fid
+                    or str(self._qzone_post_value(item, "fid", "") or "") == selection.fid
+                ][:1]
+            elif selection.is_last:
+                candidates = await self._qzone_query_feeds(event, target_id=selection.target_id or None, pos=0, num=10, with_detail=True)
+                posts = candidates[-1:] if candidates else []
+            else:
+                posts = await self._qzone_query_feeds(event, target_id=selection.target_id or None, pos=max(0, int(selection.pos or 0)), num=1, with_detail=True)
+            if not posts:
+                return json.dumps({"status": "empty", "message": "查询结果为空"}, ensure_ascii=False)
+            post = posts[0]
+            action_msg = ""
+            if reply:
+                comment = await self._qzone_comment_post(event, post)
+                action_msg = f"已评论：{comment}"
+            like_result: dict[str, Any] | None = None
+            if like:
+                like_result = await self._qzone_like_post(event, post)
+                like_text = "已点赞" if like_result.get("verified") else "点赞请求已受理，等待 QQ 空间同步"
+                action_msg = (action_msg + f"；{like_text}") if action_msg else like_text
+            return json.dumps(
+                {
+                    "status": "success",
+                    "action": action_msg,
+                    "like_result": like_result or {},
+                    "author": _single_line(getattr(post, "name", ""), 60),
+                    "uin": str(getattr(post, "uin", "") or ""),
+                    "text": _single_line(getattr(post, "text", "") or getattr(post, "rt_con", ""), 300),
+                    "images": list(getattr(post, "images", []) or [])[:6],
+                },
+                ensure_ascii=False,
+            )
+        except Exception as exc:
+            return json.dumps({"status": "error", "message": _single_line(exc, 160)}, ensure_ascii=False)
+
+    async def _pc_qzone_publish_feed_impl(self, event: AstrMessageEvent, text: str = "", **kwargs) -> str:
+        content = _single_line(text or kwargs.get("content") or kwargs.get("message") or kwargs.get("draft"), 300)
+        images: list[str] = []
+        for key in ("images", "image_paths", "image_urls"):
+            value = kwargs.get(key)
+            if isinstance(value, (list, tuple)):
+                images.extend(str(item).strip() for item in value if str(item or "").strip())
+            elif isinstance(value, str) and value.strip():
+                images.append(value.strip())
+        for key in ("image", "image_path", "image_url", "path"):
+            value = kwargs.get(key)
+            if isinstance(value, str) and value.strip():
+                images.append(value.strip())
+        images = list(dict.fromkeys(images))[:9]
+        if not content and kwargs.get("use_latest_draft"):
+            state = self.data.get("qzone_integration") if isinstance(self.data.get("qzone_integration"), dict) else {}
+            content = _single_line(state.get("last_life_publish_draft") or state.get("last_life_publish_text"), 300)
+        if not content and not images:
+            return json.dumps(
+                {
+                    "status": "need_text",
+                    "success": False,
+                    "message": "缺少 text 或 images 参数。请把要发布的说说正文作为 text 传入；如需带图,传 images；若要发布最近自动生成的生活草稿,传 use_latest_draft=true。",
+                    "required_args": {"text": "要发布到 QQ 空间的说说正文", "images": "可选，本地图片路径或图片URL列表"},
+                },
+                ensure_ascii=False,
+            )
+        result = await self._publish_qzone_text(content, event, images=images, auto_generate_image=True)
+        return json.dumps({"status": "success" if result.get("success") else "error", **result}, ensure_ascii=False)
+
+    def _interaction_query_platform(self, event: AstrMessageEvent) -> str:
+        origin = str(getattr(event, "unified_msg_origin", "") or "")
+        platform = origin.split(":", 1)[0] if ":" in origin else ""
+        return platform or getattr(self, "target_platform", "") or "aiocqhttp"
+
+    def _interaction_query_private_targets(self, hint: str = "") -> list[dict[str, str]]:
+        query = _single_line(hint, 128)
+        users = self.data.get("users") if isinstance(self.data.get("users"), dict) else {}
+        profiles = self.data.get("worldbook_member_profiles") if isinstance(self.data.get("worldbook_member_profiles"), dict) else {}
+        targets: dict[str, dict[str, str]] = {}
+
+        def add(user_id: str, label: str = "", source: str = "") -> None:
+            user_id = _single_line(user_id, 128)
+            if not user_id:
+                return
+            existing = targets.setdefault(user_id, {"user_id": user_id, "label": "", "source": ""})
+            if label and (not existing.get("label") or existing.get("label") == user_id):
+                existing["label"] = label
+            if source and not existing.get("source"):
+                existing["source"] = source
+
+        if query and query.isdigit():
+            add(query, query, "qq")
+        configured_ids = set(self._configured_target_ids()) if callable(getattr(self, "_configured_target_ids", None)) else set()
+        for configured_id in configured_ids:
+            uid = _single_line(configured_id, 128)
+            if uid and (not query or query == uid or query in uid):
+                add(uid, uid, "target_config")
+        for user_id, user in users.items():
+            if not isinstance(user, dict):
+                continue
+            uid = _single_line(user.get("user_id") or user_id, 128)
+            try:
+                uid = self._canonical_private_user_id(uid)
+            except Exception:
+                pass
+            if not uid or not self._is_target_private_user(uid, user) or not bool(user.get("enabled", True)):
+                continue
+            tokens = [
+                uid,
+                user.get("nickname"),
+                user.get("display_name"),
+                user.get("last_display_name"),
+                user.get("stable_name"),
+                *(user.get("observed_display_names") if isinstance(user.get("observed_display_names"), list) else []),
+                *(user.get("aliases") if isinstance(user.get("aliases"), list) else []),
+            ]
+            clean_tokens = [_single_line(token, 60) for token in tokens if _single_line(token, 60)]
+            if not query or any(query == token or (query and query in token) for token in clean_tokens):
+                label = next((token for token in clean_tokens if token and token != uid), uid)
+                add(uid, label, "private_user")
+        for user_id, profile in profiles.items():
+            if not isinstance(profile, dict):
+                continue
+            uid = _single_line(profile.get("linked_qq_user_id") or profile.get("user_id") or user_id, 40)
+            if not uid or not uid.isdigit():
+                continue
+            try:
+                uid = self._canonical_private_user_id(uid)
+            except Exception:
+                pass
+            linked_user = users.get(uid) if isinstance(users, dict) else None
+            configured_target = uid in configured_ids
+            if not configured_target and not (
+                isinstance(linked_user, dict)
+                and self._is_target_private_user(uid, linked_user)
+                and bool(linked_user.get("enabled", True))
+            ):
+                continue
+            tokens = [
+                uid,
+                profile.get("name"),
+                *(profile.get("aliases") if isinstance(profile.get("aliases"), list) else []),
+                *(profile.get("observed_names") if isinstance(profile.get("observed_names"), list) else []),
+            ]
+            clean_tokens = [_single_line(token, 60) for token in tokens if _single_line(token, 60)]
+            if not query or any(query == token or (query and query in token) for token in clean_tokens):
+                label = next((token for token in clean_tokens if token and token != uid), uid)
+                add(uid, label, "worldbook")
+        return list(targets.values())[:12]
+
+    async def _interaction_query_group_targets(self, event: AstrMessageEvent, hint: str = "") -> list[dict[str, str]]:
+        query = _single_line(hint, 80)
+        targets: dict[str, dict[str, str]] = {}
+
+        def group_allowed(group_id: str) -> bool:
+            checker = getattr(self, "_group_enabled_for_event", None)
+            if not callable(checker):
+                return False
+            try:
+                return bool(checker(group_id))
+            except Exception:
+                return False
+
+        def add(group_id: str, label: str = "", source: str = "") -> None:
+            group_id = _single_line(group_id, 40)
+            if not group_id or not group_allowed(group_id):
+                return
+            existing = targets.setdefault(group_id, {"group_id": group_id, "label": "", "source": ""})
+            if label and (not existing.get("label") or existing.get("label") == group_id):
+                existing["label"] = label
+            if source and not existing.get("source"):
+                existing["source"] = source
+
+        if query and query.isdigit():
+            add(query, query, "group_id")
+        groups = self.data.get("groups") if isinstance(self.data.get("groups"), dict) else {}
+        for group_id, group in groups.items():
+            if not isinstance(group, dict):
+                continue
+            gid = _single_line(group.get("group_id") or group_id, 40)
+            tokens = [
+                gid,
+                group.get("name"),
+                group.get("group_name"),
+                group.get("display_name"),
+                group.get("nickname"),
+            ]
+            clean_tokens = [_single_line(token, 80) for token in tokens if _single_line(token, 80)]
+            if not query or any(query == token or (query and query in token) for token in clean_tokens):
+                label = next((token for token in clean_tokens if token and token != gid), gid)
+                add(gid, label, "plugin_group")
+        profiles = self.data.get("worldbook_group_profiles") if isinstance(self.data.get("worldbook_group_profiles"), dict) else {}
+        for group_id, profile in profiles.items():
+            if not isinstance(profile, dict):
+                continue
+            gid = _single_line(profile.get("group_id") or group_id, 40)
+            tokens = [gid, profile.get("name"), profile.get("title"), profile.get("display_name")]
+            clean_tokens = [_single_line(token, 80) for token in tokens if _single_line(token, 80)]
+            if not query or any(query == token or (query and query in token) for token in clean_tokens):
+                label = next((token for token in clean_tokens if token and token != gid), gid)
+                add(gid, label, "worldbook_group")
+        return list(targets.values())[:12]
+
+    async def _interaction_query_read_history(self, umo: str, *, limit: int = 40, hours: int = 72) -> list[dict[str, Any]]:
+        getter = getattr(self, "_get_current_conversation_safely", None)
+        try:
+            if callable(getter):
+                conv = await getter(umo, label="cross_user_memory_query")
+            else:
+                conv_id = await self.context.conversation_manager.get_curr_conversation_id(umo)
+                if not conv_id:
+                    return []
+                conv = await self.context.conversation_manager.get_conversation(umo, conv_id)
+        except Exception:
+            return []
+        history = self._load_conversation_history_items(conv)
+        if not history:
+            return []
+        max_items = max(5, min(120, _safe_int(limit, 40, 5)))
+        cutoff = _now_ts() - max(1, min(24 * 30, _safe_int(hours, 72, 1))) * 3600
+        dated: list[dict[str, Any]] = []
+        undated: list[dict[str, Any]] = []
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+            if not self._history_item_content_text(item):
+                continue
+            ts = self._history_item_timestamp(item)
+            if ts is None:
+                undated.append(item)
+            elif ts >= cutoff:
+                dated.append(item)
+        selected = dated[-max_items:]
+        return [item for item in selected if isinstance(item, dict)][-max_items:]
+
+    def _interaction_query_lines(self, history: list[dict[str, Any]], *, limit: int = 24) -> list[str]:
+        lines: list[str] = []
+        for item in history[-max(1, limit):]:
+            line = self._format_history_item_for_summary(item)
+            if not line:
+                continue
+            line = re.sub(r"\s+", " ", line).strip()
+            if line and line not in lines:
+                lines.append(line)
+        return lines
+
+    def _interaction_query_user_filter_tokens(self, user_hint: str = "") -> tuple[set[str], set[str]]:
+        user_hint = _single_line(user_hint, 128)
+        ids: set[str] = set()
+        names: set[str] = set()
+        if user_hint:
+            if user_hint.isdigit():
+                ids.add(user_hint)
+            else:
+                names.add(user_hint)
+        for target in self._interaction_query_private_targets(user_hint):
+            user_id = _single_line(target.get("user_id"), 40)
+            label = _single_line(target.get("label"), 60)
+            if user_id:
+                ids.add(user_id)
+            if label and label != user_id:
+                names.add(label)
+        return ids, names
+
+    def _interaction_query_group_recent_lines(self, group_id: str, *, limit: int = 24, user_hint: str = "", hours: int = 72) -> list[str]:
+        groups = self.data.get("groups") if isinstance(self.data.get("groups"), dict) else {}
+        group = groups.get(str(group_id))
+        if not isinstance(group, dict):
+            return []
+        checker = getattr(self, "_group_enabled_for_event", None)
+        if not callable(checker):
+            return []
+        try:
+            if not checker(str(group_id)):
+                return []
+        except Exception:
+            return []
+        recent = group.get("recent_messages") if isinstance(group.get("recent_messages"), list) else []
+        filter_ids, filter_names = self._interaction_query_user_filter_tokens(user_hint)
+        cutoff = _now_ts() - max(1, min(24 * 30, _safe_int(hours, 72, 1))) * 3600
+        lines: list[str] = []
+        for item in recent[-max(1, limit):]:
+            if not isinstance(item, dict):
+                continue
+            sender_id = _single_line(item.get("sender_id") or item.get("user_id"), 40)
+            speaker = _single_line(item.get("identity_name") or item.get("name") or item.get("sender_name") or sender_id, 40) or "群友"
+            if user_hint:
+                speaker_hit = any(token and (token == speaker or token in speaker) for token in filter_names)
+                if not ((sender_id and sender_id in filter_ids) or speaker_hit):
+                    continue
+            text = _single_line(item.get("text") or item.get("message"), 220)
+            if not text:
+                continue
+            ts = _safe_float(item.get("ts") or item.get("time") or item.get("timestamp"), 0)
+            if ts > 10_000_000_000:
+                ts /= 1000
+            if ts <= 0 or ts < cutoff:
+                continue
+            prefix = ""
+            if ts > 0:
+                try:
+                    prefix = self._environment_fromtimestamp(ts).strftime("%m-%d %H:%M") + " "
+                except Exception:
+                    prefix = ""
+            lines.append(f"{prefix}{speaker}: {text}")
+        return lines
+
+    def _interaction_query_group_user_recent_lines(self, user_hint: str, *, limit: int = 36, hours: int = 72) -> list[str]:
+        user_hint = _single_line(user_hint, 128)
+        if not user_hint:
+            return []
+        groups = self.data.get("groups") if isinstance(self.data.get("groups"), dict) else {}
+        lines: list[str] = []
+        per_group_limit = max(4, min(12, limit // 3 or 8))
+        for group_id, group in groups.items():
+            if not isinstance(group, dict):
+                continue
+            group_label = _single_line(group.get("name") or group.get("group_name") or group_id, 60)
+            group_lines = self._interaction_query_group_recent_lines(
+                str(group_id),
+                limit=per_group_limit,
+                user_hint=user_hint,
+                hours=hours,
+            )
+            for line in group_lines:
+                lines.append(f"{group_label}｜{line}")
+        return lines[-max(1, limit):]
+
+    async def _pc_query_interaction_impl(self, event: AstrMessageEvent, **kwargs) -> str:
+        if not getattr(self, "enable_cross_user_memory_bridge", False):
+            return json.dumps({"status": "disabled", "message": "跨用户记忆互通未启用"}, ensure_ascii=False)
+        try:
+            is_private = bool(getattr(event, "is_private_chat", lambda: False)())
+        except Exception:
+            is_private = ":FriendMessage:" in str(getattr(event, "unified_msg_origin", "") or "")
+        try:
+            requester_id = self._permission_identity_id(event.get_sender_id())
+        except Exception:
+            requester_id = ""
+        owner_only = bool(getattr(self, "cross_user_memory_owner_only", True))
+        owner_allowed = bool(requester_id and self._is_private_companion_owner_user_id(requester_id))
+        admin_allowed = bool(requester_id and self._is_configured_admin_user_id(requester_id))
+        allowed = owner_allowed or (not owner_only and admin_allowed)
+        forbidden_message = "只有配置的主要用户可以查询 Bot 与其他人的互动。" if owner_only else "只有配置的主要用户或 AstrBot 全局管理员可以查询 Bot 与其他人的互动。"
+        if not is_private or not allowed:
+            logger.info(
+                "[PrivateCompanion] 跨用户互动查询权限未通过: sender=%s owner=%s admin=%s owner_only=%s umo=%s",
+                requester_id or "-",
+                owner_allowed,
+                admin_allowed,
+                owner_only,
+                _single_line(getattr(event, "unified_msg_origin", ""), 120),
+            )
+            return json.dumps({"status": "forbidden", "message": forbidden_message}, ensure_ascii=False)
+        scope = _single_line(kwargs.get("scope") or kwargs.get("type") or "auto", 20).lower()
+        user_hint = _single_line(kwargs.get("user_hint") or kwargs.get("user") or kwargs.get("user_id") or kwargs.get("target_user") or "", 128)
+        group_hint = _single_line(kwargs.get("group_hint") or kwargs.get("group") or kwargs.get("group_id") or kwargs.get("target_group") or "", 80)
+        hint = _single_line(kwargs.get("hint") or kwargs.get("target") or kwargs.get("name") or "", 80)
+        hours = max(1, min(24 * 30, _safe_int(kwargs.get("hours"), 72, 1)))
+        limit = max(5, min(80, _safe_int(kwargs.get("limit"), 36, 5)))
+        if scope in {"群", "群聊", "group_message"}:
+            scope = "group"
+        elif scope in {"私聊", "好友", "friend", "private_message", "user"}:
+            scope = "private"
+        elif scope not in {"auto", "private", "group"}:
+            scope = "auto"
+        if scope == "auto":
+            if group_hint:
+                scope = "group"
+            elif user_hint:
+                scope = "private"
+            elif hint and "群" in hint:
+                scope = "group"
+            else:
+                scope = "private"
+        platform = self._interaction_query_platform(event)
+        target_hint = user_hint or group_hint or hint
+        if scope == "private":
+            targets = self._interaction_query_private_targets(user_hint or hint)
+            if not targets:
+                return json.dumps({"status": "not_found", "message": "没有找到匹配的私聊对象", "hint": target_hint}, ensure_ascii=False)
+            if len(targets) > 1 and not (user_hint or hint).isdigit():
+                return json.dumps({"status": "ambiguous", "message": "匹配到多个私聊对象，需要补充用户 ID 或更明确称呼", "matches": targets[:8]}, ensure_ascii=False)
+            target = targets[0]
+            user_id = target.get("user_id", "")
+            umo = f"{platform}:FriendMessage:{user_id}"
+            history = await self._interaction_query_read_history(umo, limit=limit, hours=hours)
+            lines = self._interaction_query_lines(history, limit=min(limit, 28))
+            return json.dumps(
+                {
+                    "status": "success" if lines else "empty",
+                    "scope": "private",
+                    "target": target,
+                    "session": umo,
+                    "hours": hours,
+                    "message_count": len(lines),
+                    "recent_lines": lines,
+                    "reply_hint": "请用自然口吻向主要用户概括最近互动；可以提到对象和大致话题，不要大段复述原文。",
+                },
+                ensure_ascii=False,
+            )
+        if user_hint and not (group_hint or hint):
+            lines = self._interaction_query_group_user_recent_lines(user_hint, limit=min(limit, 36), hours=hours)
+            return json.dumps(
+                {
+                    "status": "success" if lines else "empty",
+                    "scope": "group_user",
+                    "target": {"user_hint": user_hint},
+                    "hours": hours,
+                    "message_count": len(lines),
+                    "recent_lines": lines,
+                    "reply_hint": "请概括这个人最近在群里的发言和互动；如果线索不足，就说明目前只看到这些近期群聊记录。",
+                },
+                ensure_ascii=False,
+            )
+        targets = await self._interaction_query_group_targets(event, group_hint or hint)
+        if not targets:
+            return json.dumps({"status": "not_found", "message": "没有找到匹配的群聊", "hint": target_hint}, ensure_ascii=False)
+        if len(targets) > 1 and not (group_hint or hint).isdigit():
+            return json.dumps({"status": "ambiguous", "message": "匹配到多个群聊，需要补充群号或更明确群名", "matches": targets[:8]}, ensure_ascii=False)
+        target = targets[0]
+        group_id = target.get("group_id", "")
+        umo = f"{platform}:GroupMessage:{group_id}"
+        if user_hint:
+            history = []
+            lines = self._interaction_query_group_recent_lines(group_id, limit=min(limit, 28), user_hint=user_hint, hours=hours)
+        else:
+            history = await self._interaction_query_read_history(umo, limit=limit, hours=hours)
+            lines = self._interaction_query_lines(history, limit=min(limit, 28))
+            if not lines:
+                lines = self._interaction_query_group_recent_lines(group_id, limit=min(limit, 28), hours=hours)
+        return json.dumps(
+            {
+                "status": "success" if lines else "empty",
+                "scope": "group",
+                "target": target,
+                "user_hint": user_hint,
+                "session": umo,
+                "hours": hours,
+                "message_count": len(lines),
+                "recent_lines": lines,
+                "reply_hint": "请用自然口吻向主要用户概括 Bot 最近在这个群里的互动；不要把群聊原文整段搬出来。",
+            },
+            ensure_ascii=False,
+        )
+
+    async def _pc_get_group_id_by_name_impl(self, event: AstrMessageEvent, **kwargs) -> str:
+        if not self.enable_atrelay_tools:
+            return json.dumps({"status": "disabled", "message": "跨群转述工具未启用"}, ensure_ascii=False)
+        group_name = kwargs.get("group_name") or kwargs.get("name") or kwargs.get("keyword") or kwargs.get("group_id") or ""
+        keyword = _single_line(group_name, 80)
+        cached = self._atrelay_cached_group_matches(keyword)
+        if cached:
+            return json.dumps(
+                {
+                    "status": "success",
+                    "count": len(cached),
+                    "groups": cached[:20],
+                    "source": "local_cache",
+                    "message": "已从插件群缓存/关系网群档案匹配，未依赖平台群列表。",
+                },
+                ensure_ascii=False,
+            )
+        bot = getattr(event, "bot", None)
+        api = getattr(bot, "api", None)
+        call_action = getattr(api, "call_action", None)
+        if not callable(call_action):
+            return json.dumps({"status": "error", "message": "当前平台不支持获取群列表，本地群缓存/关系网群档案也未命中"}, ensure_ascii=False)
+        try:
+            groups = await call_action("get_group_list")
+            matches = []
+            for item in groups if isinstance(groups, list) else []:
+                group_id = str(item.get("group_id") or "")
+                name = _single_line(item.get("group_name") or item.get("group_remark"), 100)
+                if not keyword or keyword in name or keyword in group_id:
+                    matches.append({"group_id": group_id, "group_name": name})
+            return json.dumps({"status": "success", "count": len(matches), "groups": matches[:20]}, ensure_ascii=False)
+        except Exception as exc:
+            return json.dumps({"status": "error", "message": f"获取群列表失败: {_single_line(exc, 120)}"}, ensure_ascii=False)
+
+    def _relation_lookup_authorized(self, event: AstrMessageEvent) -> bool:
+        try:
+            is_private = bool(getattr(event, "is_private_chat", lambda: False)())
+        except Exception:
+            is_private = ":FriendMessage:" in str(getattr(event, "unified_msg_origin", "") or "")
+        if not is_private:
+            return False
+        try:
+            requester_id = self._permission_identity_id(event.get_sender_id())
+        except Exception:
+            requester_id = ""
+        owner_allowed = bool(requester_id and self._is_private_companion_owner_user_id(requester_id))
+        admin_allowed = bool(requester_id and self._is_configured_admin_user_id(requester_id))
+        allowed = owner_allowed or admin_allowed
+        if not allowed:
+            logger.info(
+                "[PrivateCompanion] 关系网查询权限未通过: private=%s sender=%s owner=%s admin=%s umo=%s",
+                is_private,
+                requester_id or "-",
+                owner_allowed,
+                admin_allowed,
+                _single_line(getattr(event, "unified_msg_origin", ""), 120),
+            )
+        return allowed
+
+    def _relation_lookup_clean_keyword(self, value: Any) -> str:
+        text = _single_line(value, 120)
+        if not text:
+            return ""
+        match = re.search(r"\d{5,12}", text)
+        if match:
+            return match.group(0)
+        text = re.sub(r"(这个|那个|此人|这人|那人|用户|群友|qq号|QQ号|QQ|qq)", "", text, flags=re.I)
+        text = re.sub(r"(你认识吗|认识吗|认得吗|知道吗|是谁呀|是谁啊|是谁|什么人|哪位|吗|呀|啊|呢)", "", text)
+        return _single_line(text.strip(" ：:，,。？?"), 60)
+
+    async def _pc_query_relation_person_impl(self, event: AstrMessageEvent, **kwargs) -> str:
+        if not getattr(self, "enable_worldbook_member_recognition", False):
+            return json.dumps({"status": "disabled", "message": "关系网未启用"}, ensure_ascii=False)
+        if not self._relation_lookup_authorized(event):
+            return json.dumps({"status": "forbidden", "message": "关系网查询只允许主要用户/管理员在私聊中使用"}, ensure_ascii=False)
+        keyword = self._relation_lookup_clean_keyword(
+            kwargs.get("keyword")
+            or kwargs.get("name")
+            or kwargs.get("user")
+            or kwargs.get("user_id")
+            or kwargs.get("nickname")
+            or kwargs.get("query")
+            or ""
+        )
+        if not keyword:
+            return json.dumps({"status": "error", "message": "缺少要查询的 QQ 号、昵称或别名"}, ensure_ascii=False)
+
+        matches: list[dict[str, Any]] = []
+        if keyword.isdigit():
+            matches.extend(self._resolve_worldbook_member_by_name(keyword))
+            if not matches:
+                users = self.data.get("users") if isinstance(self.data.get("users"), dict) else {}
+                user = users.get(keyword) if isinstance(users, dict) else None
+                if isinstance(user, dict):
+                    label = _single_line(
+                        user.get("stable_name") or user.get("nickname") or user.get("display_name") or user.get("last_display_name"),
+                        60,
+                    )
+                    matches.append({"user_id": keyword, "name": label or keyword, "source": "private_user"})
+        else:
+            matches.extend(self._resolve_worldbook_member_by_name(keyword))
+            existing_ids = {str(item.get("user_id") or "") for item in matches}
+            for target in self._interaction_query_private_targets(keyword):
+                uid = _single_line(target.get("user_id"), 40)
+                if uid and uid not in existing_ids and target.get("source") != "qq":
+                    matches.append({
+                        "user_id": uid,
+                        "name": _single_line(target.get("label"), 60) or uid,
+                        "source": target.get("source") or "private_user",
+                    })
+                    existing_ids.add(uid)
+
+        if not matches:
+            logger.info("[PrivateCompanion] 关系网查询未命中: keyword=%s", keyword)
+            return json.dumps({"status": "not_found", "keyword": keyword, "message": "关系网里没有确认匹配对象"}, ensure_ascii=False)
+        status = "success" if len(matches) == 1 else "ambiguous"
+        logger.info("[PrivateCompanion] 关系网查询命中: keyword=%s count=%s", keyword, len(matches))
+        return json.dumps(
+            {
+                "status": status,
+                "keyword": keyword,
+                "count": len(matches),
+                "matches": matches[:8],
+            },
+            ensure_ascii=False,
+        )
+
+    async def _pc_get_user_id_by_name_impl(self, event: AstrMessageEvent, **kwargs) -> str:
+        if not self.enable_atrelay_tools:
+            return json.dumps({"status": "disabled", "message": "跨群转述工具未启用"}, ensure_ascii=False)
+        group_id = kwargs.get("group_id") or kwargs.get("group") or kwargs.get("group_name") or ""
+        nickname = kwargs.get("nickname") or kwargs.get("name") or kwargs.get("keyword") or kwargs.get("user_name") or kwargs.get("user") or ""
+        target_group = _single_line(group_id, 40) or self._extract_group_id_from_event(event)
+        query = _single_line(nickname, 128)
+        if not query:
+            return json.dumps({"status": "error", "message": "缺少 nickname/name 参数"}, ensure_ascii=False)
+        resolved = await self._resolve_atrelay_target_user(event, target_group, query)
+        if resolved.get("ambiguous"):
+            return json.dumps({"status": "ambiguous", "message": "匹配到多个群友,需要用户补充 QQ 或更明确称呼", "matches": resolved.get("matches", [])}, ensure_ascii=False)
+        if resolved.get("user_id"):
+            return json.dumps({"status": "success", **resolved}, ensure_ascii=False)
+        return json.dumps({"status": "not_found", "message": "未找到匹配群友"}, ensure_ascii=False)
+
+    async def _pc_get_specified_group_members_impl(self, event: AstrMessageEvent, **kwargs) -> str:
+        if not self.enable_atrelay_tools:
+            return json.dumps({"status": "disabled", "message": "跨群转述工具未启用"}, ensure_ascii=False)
+        group_id = kwargs.get("group_id") or kwargs.get("group") or kwargs.get("group_name") or ""
+        keyword = kwargs.get("keyword") or kwargs.get("name") or kwargs.get("nickname") or kwargs.get("user") or ""
+        target_group = _single_line(group_id, 40) or self._extract_group_id_from_event(event)
+        if not target_group:
+            return json.dumps({"status": "error", "message": "未指定群号且当前不在群聊环境中"}, ensure_ascii=False)
+        query = _single_line(keyword, 60)
+        try:
+            members = await self._get_group_member_list_for_tool(event, target_group)
+            formatted = [self._format_atrelay_member(item) for item in members]
+            if query:
+                formatted = [
+                    item for item in formatted
+                    if query in item.get("user_id", "")
+                    or query in item.get("nickname", "")
+                    or query in item.get("group_card", "")
+                    or query in item.get("relation_name", "")
+                ]
+            if self.enable_worldbook_member_recognition:
+                async with self._data_lock:
+                    self._save_data_sync()
+            return json.dumps({"status": "success", "group_id": target_group, "count": len(formatted), "members": formatted[:80]}, ensure_ascii=False)
+        except Exception as exc:
+            return json.dumps({"status": "error", "message": f"查询群成员失败: {_single_line(exc, 120)}"}, ensure_ascii=False)
+
+    def _atrelay_platform_prefix_candidates(self, event: AstrMessageEvent) -> list[str]:
+        prefixes: list[str] = []
+
+        def add(value: Any) -> None:
+            text = _single_line(value, 80)
+            if not text:
+                return
+            prefix = text.split(":", 1)[0] if ":" in text else text
+            if prefix and prefix not in prefixes:
+                prefixes.append(prefix)
+
+        add(getattr(event, "unified_msg_origin", ""))
+        try:
+            sender_id = str(event.get_sender_id())
+        except Exception:
+            sender_id = ""
+        users = self.data.get("users") if isinstance(self.data.get("users"), dict) else {}
+        user = users.get(sender_id) if sender_id and isinstance(users, dict) else None
+        if isinstance(user, dict):
+            add(user.get("umo"))
+        add(getattr(self, "target_platform", ""))
+        manager = getattr(getattr(self, "context", None), "platform_manager", None)
+        if manager is not None:
+            try:
+                platforms = list(manager.get_insts())
+            except Exception:
+                platforms = list(getattr(manager, "platform_insts", []) or [])
+            for platform in platforms:
+                try:
+                    meta = platform.meta()
+                except Exception:
+                    continue
+                add(getattr(meta, "id", ""))
+                add(getattr(meta, "name", ""))
+        return prefixes
+
+    def _atrelay_target_umo_candidates(self, event: AstrMessageEvent, message_type: str, target_id: str) -> list[str]:
+        message_type = "GroupMessage" if message_type == "group" else "FriendMessage"
+        target = _single_line(target_id, 40 if message_type == "GroupMessage" else 128)
+        if not target:
+            return []
+        candidates: list[str] = []
+
+        def add_umo(value: Any) -> None:
+            umo = _single_line(value, 160)
+            if not umo or f":{message_type}:{target}" not in umo:
+                return
+            if umo not in candidates:
+                candidates.append(umo)
+
+        if message_type == "GroupMessage":
+            groups = self.data.get("groups") if isinstance(self.data.get("groups"), dict) else {}
+            group = groups.get(target) if isinstance(groups, dict) else None
+            if isinstance(group, dict):
+                add_umo(group.get("umo"))
+        else:
+            users = self.data.get("users") if isinstance(self.data.get("users"), dict) else {}
+            user = users.get(target) if isinstance(users, dict) else None
+            if isinstance(user, dict):
+                add_umo(user.get("umo"))
+        for prefix in self._atrelay_platform_prefix_candidates(event):
+            add_umo(f"{prefix}:{message_type}:{target}")
+        return candidates
+
+    async def _send_atrelay_chain_to_target(
+        self,
+        event: AstrMessageEvent,
+        *,
+        message_type: str,
+        target_id: str,
+        chain: list[Any],
+    ) -> tuple[bool, str, str]:
+        errors: list[str] = []
+        candidates = self._atrelay_target_umo_candidates(event, message_type, target_id)
+        if not candidates:
+            return False, "没有可用目标会话", ""
+        for umo in candidates:
+            session = self._parse_message_session(umo)
+            platform = self._get_platform_for_session(session) if session else None
+            if session and platform:
+                try:
+                    session_obj = MessageSession(
+                        platform_name=str(getattr(session, "platform_id", "") or ""),
+                        message_type=self._message_type_for_session(session),
+                        session_id=str(getattr(session, "session_id", "") or ""),
+                    )
+                    await platform.send_by_session(session_obj, MessageChain(chain))
+                    logger.info("[PrivateCompanion] 转述已通过精确平台发送: umo=%s", _single_line(umo, 160))
+                    return True, "", umo
+                except Exception as exc:
+                    errors.append(f"{umo}: 精确发送失败 {self._format_send_exception(exc)}")
+                try:
+                    result = await self.context.send_message(umo, MessageChain(chain))
+                    if result is not False:
+                        logger.info("[PrivateCompanion] 转述已通过 AstrBot 核心发送: umo=%s", _single_line(umo, 160))
+                        return True, "", umo
+                    errors.append(f"{umo}: 核心发送返回 False")
+                except Exception as exc:
+                    errors.append(f"{umo}: 核心发送失败 {self._format_send_exception(exc)}")
+            elif session:
+                errors.append(f"{umo}: 未找到匹配平台，跳过 AstrBot 核心发送")
+            else:
+                errors.append(f"{umo}: UMO 无法解析，跳过 AstrBot 核心发送")
+            try:
+                direct_ok, direct_error = await self._send_chain_components_via_onebot_direct(umo, session, chain)
+            except Exception as exc:
+                direct_ok, direct_error = False, self._format_send_exception(exc)
+            if direct_ok:
+                return True, "", umo
+            if direct_error:
+                errors.append(f"{umo}: OneBot 兜底失败 {direct_error}")
+        return False, "；".join(errors[-5:]) or "所有发送链路都失败", candidates[0]
+
+    async def _pc_relay_message_impl(self, event: AstrMessageEvent, **kwargs) -> str:
+        if not self.enable_atrelay_tools:
+            return json.dumps({"status": "disabled", "message": "跨会话转述工具未启用"}, ensure_ascii=False)
+        destination_raw = _single_line(
+            kwargs.get("destination")
+            or kwargs.get("target_scope")
+            or kwargs.get("scope")
+            or kwargs.get("target_type")
+            or kwargs.get("type")
+            or "auto",
+            40,
+        ).lower()
+        group_hint = kwargs.get("group_hint") or kwargs.get("group_id") or kwargs.get("group") or kwargs.get("target_group") or ""
+        recipient_hint = (
+            kwargs.get("recipient_hint")
+            or kwargs.get("recipient")
+            or kwargs.get("to")
+            or kwargs.get("at_user")
+            or kwargs.get("target_user")
+            or kwargs.get("user_id")
+            or kwargs.get("nickname")
+            or kwargs.get("name")
+            or ""
+        )
+        message = kwargs.get("message") or kwargs.get("text") or kwargs.get("content") or kwargs.get("msg") or ""
+        relay_mode = kwargs.get("relay_mode") or kwargs.get("mode") or ""
+        sensitive_confirmed = kwargs.get("sensitive_confirmed", kwargs.get("confirmed", False))
+        delay_until_seen = self._atrelay_bool_flag(
+            kwargs.get("delay_until_recipient_seen", kwargs.get("delay", kwargs.get("wait_until_seen", False)))
+        )
+        need_receipt = self._atrelay_bool_flag(
+            kwargs.get("need_receipt", kwargs.get("wait_for_reply", kwargs.get("receipt", kwargs.get("report_back", False))))
+        )
+        confirm_before_report = self._atrelay_bool_flag(
+            kwargs.get("confirm_before_report", kwargs.get("require_reply_confirmation", kwargs.get("confirm_reply", False)))
+        )
+        at_recipient = self._atrelay_bool_flag(kwargs.get("at_recipient", kwargs.get("at", False)))
+        expire_hours = kwargs.get("expire_hours", kwargs.get("ttl_hours", 24))
+
+        text = self._normalize_atrelay_text(message, limit=800)
+        recipient = _single_line(recipient_hint, 128)
+        if not text:
+            return json.dumps({"status": "error", "message": "缺少 message/text 内容"}, ensure_ascii=False)
+
+        if destination_raw in {"group", "groups", "群", "群聊", "send_group", "to_group"}:
+            destination = "group"
+        elif destination_raw in {"private", "user", "friend", "私聊", "私发", "私信", "to_user", "dm"}:
+            destination = "private"
+        else:
+            if group_hint:
+                destination = "group"
+            elif recipient:
+                destination = "private"
+            else:
+                destination = "auto"
+
+        if destination == "auto":
+            return json.dumps({"status": "need_target", "message": "需要说明发到哪个群或私聊给谁"}, ensure_ascii=False)
+
+        boundary = self._atrelay_boundary_guard(text)
+        if boundary:
+            return json.dumps({"status": "error", "message": boundary}, ensure_ascii=False)
+        guard = self._atrelay_confirmation_guard(
+            text,
+            relay_mode=self._normalize_atrelay_relay_mode(relay_mode),
+            sensitive_confirmed=self._atrelay_bool_flag(sensitive_confirmed) or self._atrelay_event_confirms_sensitive_send(event),
+        )
+        if guard:
+            return json.dumps({"status": "need_confirm", "message": guard}, ensure_ascii=False)
+
+        if destination == "group":
+            group_result = {}
+            current_group_id = self._extract_group_id_from_event(event)
+            if not _single_line(group_hint, 80) and recipient:
+                group_result = await self._resolve_atrelay_active_group_for_recipient(
+                    event,
+                    recipient,
+                    exclude_current_group=bool(current_group_id),
+                )
+            if not _single_line(group_hint, 80) and current_group_id and not group_result:
+                return json.dumps(
+                    {
+                        "status": "need_group",
+                        "message": "需要补充要发到哪个群；群聊里不会默认发回当前群。",
+                    },
+                    ensure_ascii=False,
+                )
+            if not group_result:
+                group_result = await self._resolve_atrelay_target_group(event, group_hint)
+            if group_result.get("status") != "success":
+                return json.dumps(group_result, ensure_ascii=False)
+            group_id = _single_line(group_result.get("group_id"), 40)
+            send_text = await self._rewrite_atrelay_message_with_llm(
+                event,
+                destination="group",
+                recipient_hint=recipient,
+                text=text,
+                relay_mode=relay_mode,
+            )
+            send_text = self._normalize_atrelay_text(send_text, limit=800)
+            if delay_until_seen:
+                if not recipient:
+                    return json.dumps({"status": "need_recipient", "message": "延迟转述需要目标群友"}, ensure_ascii=False)
+                result = await self._pc_schedule_group_relay_impl(
+                    event,
+                    group_id=group_id,
+                    at_user=recipient,
+                    message=send_text,
+                    relay_mode=relay_mode,
+                    sensitive_confirmed=sensitive_confirmed,
+                    expire_hours=expire_hours,
+                )
+                return json.dumps({"status": "scheduled" if result.startswith("已挂起") else "error", "message": result}, ensure_ascii=False)
+            result = await self._pc_send_to_group_impl(
+                event,
+                group_id=group_id,
+                message=send_text,
+                at_user=recipient if (recipient and (at_recipient or recipient)) else "",
+                relay_mode=relay_mode,
+                sensitive_confirmed=sensitive_confirmed,
+            )
+            ok = result.startswith("消息已发送")
+            if ok:
+                setattr(
+                    event,
+                    "private_companion_atrelay_tool_result",
+                    {
+                        "status": "success",
+                        "destination": "group",
+                        "final_reply": "带到了。",
+                        "final_reply_reference": "参考意图：转述已经成功发到目标群；只给用户一个很短的成功回执，不要复述转述正文，也不要写工具执行状态。",
+                        "sent_text": send_text,
+                        "recipient": recipient,
+                        "group_id": group_id,
+                    },
+                )
+            return json.dumps(
+                {
+                    "status": "success" if ok else "error",
+                    "message": "带到了。" if ok else result,
+                    "final_reply": "带到了。" if ok else "",
+                    "final_reply_reference": "参考意图：转述已经成功发到目标群；只给用户一个很短的成功回执，不要复述转述正文，也不要写工具执行状态。" if ok else "",
+                    "sent_text": send_text if ok else "",
+                },
+                ensure_ascii=False,
+            )
+
+        target_user = recipient
+        if not target_user:
+            return json.dumps({"status": "need_recipient", "message": "需要补充私聊目标用户 ID 或称呼"}, ensure_ascii=False)
+        if not target_user.isdigit():
+            resolved = await self._resolve_atrelay_target_user(event, "", target_user)
+            if not resolved.get("user_id") and not resolved.get("ambiguous"):
+                group_result = await self._resolve_atrelay_target_group(event, group_hint)
+            else:
+                group_result = {}
+            group_id = _single_line(group_result.get("group_id"), 40) if group_result.get("status") == "success" else ""
+            if not group_id and self._extract_group_id_from_event(event):
+                group_id = self._extract_group_id_from_event(event)
+            if not resolved.get("user_id") and not resolved.get("ambiguous") and not group_id:
+                return json.dumps(
+                    {
+                        "status": "need_group_or_user_id",
+                        "message": "关系网里没有唯一确认这个称呼；请补充目标所在群号/群名，或直接提供用户 ID。",
+                    },
+                    ensure_ascii=False,
+                )
+            if not resolved.get("user_id") and not resolved.get("ambiguous"):
+                resolved = await self._resolve_atrelay_target_user(event, group_id, target_user)
+            if resolved.get("ambiguous"):
+                return json.dumps(
+                    {
+                        "status": "ambiguous",
+                        "message": "匹配到多个用户，请补充用户 ID",
+                        "matches": resolved.get("matches", [])[:8],
+                    },
+                    ensure_ascii=False,
+                )
+            target_user = _single_line(resolved.get("user_id"), 128)
+            if not target_user:
+                return json.dumps({"status": "not_found", "message": "未找到私聊目标"}, ensure_ascii=False)
+        send_text = await self._rewrite_atrelay_message_with_llm(
+            event,
+            destination="private",
+            recipient_hint=target_user,
+            text=text,
+            relay_mode=relay_mode,
+        )
+        send_text = self._normalize_atrelay_text(send_text, limit=800)
+        result = await self._pc_send_to_private_user_impl(
+            event,
+            user_id=target_user,
+            message=send_text,
+            relay_mode=relay_mode,
+            sensitive_confirmed=sensitive_confirmed,
+            need_receipt=need_receipt,
+            confirm_before_report=confirm_before_report,
+            receipt_expire_hours=expire_hours,
+        )
+        ok = result.startswith("已向")
+        if ok:
+            setattr(
+                event,
+                "private_companion_atrelay_tool_result",
+                {
+                        "status": "success",
+                        "destination": "private",
+                        "final_reply": "带到了。" if not need_receipt else "带到了，有回复我再告诉你。",
+                        "final_reply_reference": (
+                            "参考意图：转述已经成功发给目标私聊用户，并且如果对方回复会再告诉当前用户；只给一个很短的成功回执。"
+                            if need_receipt
+                            else "参考意图：转述已经成功发给目标私聊用户；只给用户一个很短的成功回执，不要复述转述正文，也不要写工具执行状态。"
+                        ),
+                        "sent_text": send_text,
+                        "recipient": target_user,
+                    },
+                )
+        return json.dumps(
+            {
+                "status": "success" if ok else "error",
+                "message": "带到了，有回复我再告诉你。" if ok and need_receipt else ("带到了。" if ok else result),
+                "final_reply": "带到了，有回复我再告诉你。" if ok and need_receipt else ("带到了。" if ok else ""),
+                "final_reply_reference": (
+                    "参考意图：转述已经成功发给目标私聊用户，并且如果对方回复会再告诉当前用户；只给一个很短的成功回执。"
+                    if ok and need_receipt
+                    else (
+                        "参考意图：转述已经成功发给目标私聊用户；只给用户一个很短的成功回执，不要复述转述正文，也不要写工具执行状态。"
+                        if ok
+                        else ""
+                    )
+                ),
+                "sent_text": send_text if ok else "",
+            },
+            ensure_ascii=False,
+        )
+
+    async def _pc_send_to_group_impl(self, event: AstrMessageEvent, **kwargs) -> str:
+        if not self.enable_atrelay_tools:
+            return "发送失败：跨群转述工具未启用"
+        group_id = kwargs.get("group_id") or kwargs.get("group") or kwargs.get("target_group") or ""
+        message = kwargs.get("message") or kwargs.get("text") or kwargs.get("content") or kwargs.get("msg") or ""
+        at_user = kwargs.get("at_user") or kwargs.get("at") or kwargs.get("target_user") or kwargs.get("user_id") or ""
+        at_qq_list = kwargs.get("at_qq_list") or kwargs.get("at_users") or kwargs.get("at_list")
+        if not at_user and isinstance(at_qq_list, list) and at_qq_list:
+            at_user = str(at_qq_list[0])
+        relay_mode = kwargs.get("relay_mode") or kwargs.get("mode") or ""
+        sensitive_confirmed = kwargs.get("sensitive_confirmed", kwargs.get("confirmed", False))
+        target_group = _single_line(group_id, 40)
+        text = self._normalize_atrelay_text(message, limit=800)
+        relay_mode_normalized = self._normalize_atrelay_relay_mode(relay_mode)
+        if not target_group.isdigit():
+            return "发送失败：群号格式不正确"
+        if not text:
+            return "发送失败：消息内容为空"
+        boundary = self._atrelay_boundary_guard(text)
+        if boundary:
+            return boundary
+        duplicate = self._atrelay_duplicate_guard("group", target_group, text, at_user)
+        if duplicate:
+            return duplicate
+        guard = self._atrelay_confirmation_guard(
+            text,
+            relay_mode=relay_mode_normalized,
+            sensitive_confirmed=self._atrelay_bool_flag(sensitive_confirmed) or self._atrelay_event_confirms_sensitive_send(event),
+        )
+        if guard:
+            return guard
+        at_qq = ""
+        at_label = ""
+        if _single_line(at_user, 60):
+            resolved = await self._resolve_atrelay_target_user(event, target_group, at_user)
+            if resolved.get("ambiguous"):
+                names = "、".join(_single_line(item.get("name") or item.get("relation_name") or item.get("nickname") or item.get("user_id"), 30) for item in resolved.get("matches", [])[:5] if isinstance(item, dict))
+                return f"发送失败：@ 对象不唯一，请补充 QQ。候选：{names or '多个成员'}"
+            at_qq = _single_line(resolved.get("user_id"), 40)
+            at_label = _single_line(resolved.get("name"), 60)
+            if not at_qq:
+                return "发送失败：未找到要 @ 的群友"
+            resting = self._atrelay_target_resting_reason(at_qq)
+            if resting:
+                return f"发送失败：{resting}，不会在群里继续 @ 打扰；可以改用延迟转述，等对方出现时再说。"
+        chain: list[Any] = []
+        if at_qq:
+            chain.extend([At(qq=at_qq), Plain(" ")])
+        chain.append(Plain(text))
+        ok, error, used_umo = await self._send_atrelay_chain_to_target(
+            event,
+            message_type="group",
+            target_id=target_group,
+            chain=chain,
+        )
+        if not ok:
+            logger.warning(
+                "[PrivateCompanion] 跨群转述发送失败: group=%s at=%s error=%s",
+                target_group,
+                at_qq or at_user or "-",
+                _single_line(error, 240),
+            )
+            return f"发送失败：{_single_line(error, 180)}"
+        self._note_atrelay_send("group", target_group, text, at_qq or at_user, event=event)
+        self._save_data_sync()
+        logger.info(
+            "[PrivateCompanion] 跨群转述发送完成: group=%s at=%s umo=%s",
+            target_group,
+            at_qq or at_user or "-",
+            _single_line(used_umo, 160),
+        )
+        return f"消息已发送到群 {target_group}" + (f", 已 @ {at_label or at_qq}" if at_qq else "")
+
+    async def _pc_send_to_private_user_impl(self, event: AstrMessageEvent, **kwargs) -> str:
+        if not self.enable_atrelay_tools:
+            return "发送失败：跨群转述工具未启用"
+        user_id = kwargs.get("user_id") or kwargs.get("qq") or kwargs.get("target_user") or kwargs.get("target") or ""
+        message = kwargs.get("message") or kwargs.get("text") or kwargs.get("content") or kwargs.get("msg") or ""
+        relay_mode = kwargs.get("relay_mode") or kwargs.get("mode") or ""
+        sensitive_confirmed = kwargs.get("sensitive_confirmed", kwargs.get("confirmed", False))
+        need_receipt = self._atrelay_bool_flag(
+            kwargs.get("need_receipt", kwargs.get("wait_for_reply", kwargs.get("receipt", kwargs.get("report_back", False))))
+        )
+        confirm_before_report = self._atrelay_bool_flag(
+            kwargs.get("confirm_before_report", kwargs.get("require_reply_confirmation", kwargs.get("confirm_reply", False)))
+        )
+        receipt_expire_hours = kwargs.get("receipt_expire_hours", kwargs.get("expire_hours", kwargs.get("ttl_hours", 12)))
+        target_user = self._normalize_atrelay_private_target_id(user_id)
+        text = self._normalize_atrelay_text(message, limit=800)
+        relay_mode_normalized = self._normalize_atrelay_relay_mode(relay_mode)
+        if not target_user:
+            return "发送失败：目标用户 ID 无效或尚未登记"
+        if not text:
+            return "发送失败：消息内容为空"
+        boundary = self._atrelay_boundary_guard(text)
+        if boundary:
+            return boundary
+        resting = self._atrelay_target_resting_reason(target_user)
+        if resting:
+            return f"私聊发送失败：{resting}，不会私聊叫醒；可以改成延迟转述或等对方醒来后再发。"
+        duplicate = self._atrelay_duplicate_guard("private", target_user, text)
+        if duplicate:
+            return duplicate
+        guard = self._atrelay_confirmation_guard(
+            text,
+            relay_mode=relay_mode_normalized,
+            sensitive_confirmed=self._atrelay_bool_flag(sensitive_confirmed) or self._atrelay_event_confirms_sensitive_send(event),
+        )
+        if guard:
+            return guard
+        ok, error, used_umo = await self._send_atrelay_chain_to_target(
+            event,
+            message_type="private",
+            target_id=target_user,
+            chain=[Plain(text)],
+        )
+        if not ok:
+            logger.warning(
+                "[PrivateCompanion] 私聊转述发送失败: user=%s error=%s",
+                target_user,
+                _single_line(error, 240),
+            )
+            return f"私聊发送失败：{_single_line(error, 180)}"
+        self._note_atrelay_send("private", target_user, text, event=event)
+        if need_receipt:
+            self._note_atrelay_private_receipt_task(
+                event,
+                target_user=target_user,
+                question=text,
+                sent_text=text,
+                confirm_before_report=confirm_before_report,
+                expire_hours=receipt_expire_hours,
+            )
+        self._save_data_sync()
+        logger.info(
+            "[PrivateCompanion] 私聊转述发送完成: user=%s umo=%s",
+            target_user,
+            _single_line(used_umo, 160),
+        )
+        return f"已向 {target_user} 发送私聊消息" + ("，会等待对方回复后带回回执" if need_receipt else "")
+
+    async def _pc_send_to_groups_impl(self, event: AstrMessageEvent, **kwargs) -> str:
+        group_ids = kwargs.get("group_ids") or kwargs.get("groups") or kwargs.get("group_id") or kwargs.get("targets") or ""
+        message = kwargs.get("message") or kwargs.get("text") or kwargs.get("content") or kwargs.get("msg") or ""
+        at_user = kwargs.get("at_user") or kwargs.get("at") or kwargs.get("target_user") or kwargs.get("user_id") or ""
+        relay_mode = kwargs.get("relay_mode") or kwargs.get("mode") or ""
+        sensitive_confirmed = kwargs.get("sensitive_confirmed", kwargs.get("confirmed", False))
+        targets = [item for item in self._parse_atrelay_target_list(group_ids, limit=self.atrelay_multi_target_limit) if item.isdigit()]
+        if not targets:
+            return "发送失败：没有有效群号"
+        results = []
+        for group_id in targets:
+            result = await self._pc_send_to_group_impl(
+                event,
+                group_id=group_id,
+                message=message,
+                at_user=at_user,
+                relay_mode=relay_mode,
+                sensitive_confirmed=sensitive_confirmed,
+            )
+            results.append(f"{group_id}: {result}")
+        return "多群通知完成：\n" + "\n".join(results[: self.atrelay_multi_target_limit])
+
+    async def _pc_send_to_private_users_impl(self, event: AstrMessageEvent, **kwargs) -> str:
+        user_ids = kwargs.get("user_ids") or kwargs.get("users") or kwargs.get("user_id") or kwargs.get("targets") or ""
+        message = kwargs.get("message") or kwargs.get("text") or kwargs.get("content") or kwargs.get("msg") or ""
+        relay_mode = kwargs.get("relay_mode") or kwargs.get("mode") or ""
+        sensitive_confirmed = kwargs.get("sensitive_confirmed", kwargs.get("confirmed", False))
+        targets = []
+        for item in self._parse_atrelay_target_list(user_ids, limit=self.atrelay_multi_target_limit):
+            target = self._normalize_atrelay_private_target_id(item)
+            if target and target not in targets:
+                targets.append(target)
+        if not targets:
+            return "发送失败：没有有效私聊目标用户 ID"
+        results = []
+        for user_id in targets:
+            result = await self._pc_send_to_private_user_impl(
+                event,
+                user_id=user_id,
+                message=message,
+                relay_mode=relay_mode,
+                sensitive_confirmed=sensitive_confirmed,
+            )
+            results.append(f"{user_id}: {result}")
+        return "多人转述完成：\n" + "\n".join(results[: self.atrelay_multi_target_limit])
+
+    async def _pc_schedule_group_relay_impl(self, event: AstrMessageEvent, **kwargs) -> str:
+        if not self.enable_atrelay_tools:
+            return "挂起失败：跨群转述工具未启用"
+        group_id = kwargs.get("group_id") or kwargs.get("group") or kwargs.get("target_group") or ""
+        at_user = kwargs.get("at_user") or kwargs.get("target_user") or kwargs.get("user_id") or kwargs.get("name") or kwargs.get("nickname") or ""
+        message = kwargs.get("message") or kwargs.get("text") or kwargs.get("content") or kwargs.get("msg") or ""
+        relay_mode = kwargs.get("relay_mode") or kwargs.get("mode") or ""
+        sensitive_confirmed = kwargs.get("sensitive_confirmed", kwargs.get("confirmed", False))
+        expire_hours = kwargs.get("expire_hours", kwargs.get("ttl_hours", 24))
+        target_group = _single_line(group_id, 40) or self._extract_group_id_from_event(event)
+        text = self._normalize_atrelay_text(message, limit=800)
+        if not target_group.isdigit():
+            return "挂起失败：群号格式不正确"
+        if not text:
+            return "挂起失败：消息内容为空"
+        boundary = self._atrelay_boundary_guard(text)
+        if boundary:
+            return boundary.replace("发送失败", "挂起失败", 1)
+        relay_mode_normalized = self._normalize_atrelay_relay_mode(relay_mode)
+        guard = self._atrelay_confirmation_guard(
+            text,
+            relay_mode=relay_mode_normalized,
+            sensitive_confirmed=self._atrelay_bool_flag(sensitive_confirmed) or self._atrelay_event_confirms_sensitive_send(event),
+        )
+        if guard:
+            return guard.replace("不能直接转述", "不能直接挂起转述")
+        resolved = await self._resolve_atrelay_target_user(event, target_group, at_user)
+        if resolved.get("ambiguous"):
+            names = "、".join(
+                _single_line(item.get("name") or item.get("relation_name") or item.get("nickname") or item.get("user_id"), 30)
+                for item in resolved.get("matches", [])[:5]
+                if isinstance(item, dict)
+            )
+            return f"挂起失败：目标不唯一，请补充 QQ。候选：{names or '多个成员'}"
+        target_user = _single_line(resolved.get("user_id"), 40)
+        target_name = _single_line(resolved.get("name"), 60) or target_user
+        if not target_user:
+            return "挂起失败：未找到目标群友"
+        now = _now_ts()
+        expire_seconds = max(1, min(168, _safe_int(expire_hours, 24, 1, 168))) * 3600
+        source_user, source_name = self._atrelay_source_snapshot_for_event(event)
+        async with self._data_lock:
+            group = self._get_group(target_group)
+            tasks = group.setdefault("pending_atrelay_tasks", [])
+            if not isinstance(tasks, list):
+                tasks = []
+                group["pending_atrelay_tasks"] = tasks
+            signature = self._atrelay_send_signature("delayed_group", target_group, text, target_user)
+            for task in tasks:
+                if isinstance(task, dict) and task.get("signature") == signature and _safe_float(task.get("expires_at"), 0) > now:
+                    return f"已存在相同延迟转述：等 {target_name} 在群 {target_group} 出现时发送"
+            tasks.append(
+                {
+                    "id": uuid.uuid4().hex[:12],
+                    "created_at": now,
+                    "expires_at": now + expire_seconds,
+                    "target_user_id": target_user,
+                    "target_name": target_name,
+                    "message": text,
+                    "source_user": source_user,
+                    "source_name": source_name,
+                    "relay_mode": relay_mode_normalized,
+                    "sensitive_confirmed": self._atrelay_bool_flag(sensitive_confirmed) or self._atrelay_event_confirms_sensitive_send(event),
+                    "signature": signature,
+                }
+            )
+            del tasks[:-30]
+            self._save_data_sync()
+        return f"已挂起：等 {target_name} 在群 {target_group} 出现时转述"

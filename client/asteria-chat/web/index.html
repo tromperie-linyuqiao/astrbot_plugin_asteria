@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f8f5">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Asteria Chat</title>
+  <link rel="icon" href="brand.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="chat-compose.css">
+  <link rel="stylesheet" href="chat-perception-status.css">
+  <script src="brand-config.js" defer></script>
+  <script src="chat-compose.js" defer></script>
+  <script src="app.js" defer></script>
+  <link rel="stylesheet" href="chat-experience.css">
+  <script src="chat-experience.js" defer></script>
+  <link rel="stylesheet" href="chat-night.css">
+  <script src="chat-night.js" defer></script>
+</head>
+<body>
+  <div id="app" class="app">
+    <button id="sidebar-backdrop" class="sidebar-backdrop" aria-label="关闭会话列表" hidden></button>
+    <aside id="sidebar" class="sidebar" aria-label="会话列表">
+      <div class="brand"><img src="brand.svg" alt="" width="42" height="42"><div><strong>Asteria Chat</strong><span>把日常留在这里</span></div><button id="close-sidebar" class="icon-button mobile-only" aria-label="关闭会话列表">×</button></div>
+      <button id="bot-home" class="new-chat bot-home"><span aria-hidden="true">↩</span> 回到伙伴</button>
+      <div class="list-heading"><span>以前的记录</span><button id="refresh-sessions" class="text-button" aria-label="刷新会话列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.7-1L20 9M4 15l2.2 3A7 7 0 0 0 18 17"/></svg></button></div>
+      <nav id="conversation-list" class="conversation-list" aria-label="长期聊天与历史记录"><p class="list-empty">登录后同步你的会话。</p></nav>
+      <div class="sidebar-footer"><span class="local-dot" aria-hidden="true"></span><div><strong id="account-label">尚未登录</strong><span id="server-label">连接你的服务器</span></div><button id="settings-button" class="icon-button" aria-label="连接与账户设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 3-1 3-3 1-2 5 2 5 3 1 1 3h6l1-3 3-1 2-5-2-5-3-1-1-3Z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
+    </aside>
+    <main class="chat-main">
+      <header class="chat-header">
+        <button id="open-sidebar" class="icon-button mobile-only" aria-label="打开会话列表" aria-controls="sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h11"/></svg></button>
+        <span class="header-avatar" aria-hidden="true"><img id="header-avatar" src="logo.svg" alt="" width="30" height="30"></span>
+        <div class="chat-heading"><div class="conversation-title-row"><h1 id="conversation-title">伙伴</h1></div><p id="connection-status" role="status">正在检查连接</p></div>
+        <button id="search-button" type="button" class="icon-button search-toggle" aria-label="查找当前已加载文字" title="查找当前已加载文字"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg></button>
+        <button id="more-button" type="button" class="icon-button more-button" aria-label="更多操作" aria-expanded="false" title="更多操作"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/></svg></button>
+        <div id="more-menu" class="more-menu" hidden>
+          <button id="menu-theme" type="button" class="menu-item theme-menu-item" data-mode="system">深色模式：跟随系统</button>
+          <div class="menu-separator" aria-hidden="true"></div>
+          <button id="rename-button" type="button" class="menu-item" disabled>修改会话标题</button>
+          <button id="refresh-chat" type="button" class="menu-item">同步记录</button>
+          <button id="appearance-button" type="button" class="menu-item">聊天外观</button>
+          <button id="menu-interactions" type="button" class="menu-item">编辑互动</button>
+          <button id="menu-export" type="button" class="menu-item">导出记录</button>
+          <button id="menu-perception" type="button" class="menu-item">手机感知</button>
+          <button id="mobile-settings" type="button" class="menu-item">连接与账户</button>
+          <button id="menu-delete" type="button" class="menu-item danger">删除这个会话</button>
+          <div class="menu-context"><p id="conversation-persona" class="configured-persona" title="这里只展示会话配置，不代表本轮模型最终选择，也不代表历史每条消息的生成角色。">会话角色：打开对话后查看配置</p></div>
+        </div>
+      </header>
+      <div id="notice" class="notice" role="status" hidden><span id="notice-text"></span><button id="notice-action" class="text-button" hidden></button><button id="notice-close" class="notice-close" aria-label="关闭提示">×</button></div>
+      <section id="search-panel" class="message-search" aria-label="当前已加载记录查找" hidden><div class="message-search-row"><label class="sr-only" for="search-input">查找文字</label><input id="search-input" type="search" maxlength="200" autocomplete="off" placeholder="查找当前对话文字"><button id="search-prev" type="button" aria-label="上一个命中">↑</button><button id="search-next" type="button" aria-label="下一个命中">↓</button><button id="search-close" type="button" aria-label="关闭查找">×</button></div><p id="search-count" role="status">仅查找当前已加载的文字记录</p></section>
+      <div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions text">
+        <div id="messages-spacer" class="messages-spacer" aria-hidden="true"></div>
+        <section id="empty-state" class="empty-state"><img src="brand.svg" alt="Asteria Chat 品牌头像" width="76" height="76"><span class="eyebrow">ASTERIA CHAT</span><h2>今天，想聊些什么？</h2><p id="empty-description">连接你的服务器，继续与伙伴的对话。</p><button id="empty-login" class="primary-button">连接服务器</button><div class="quick-starts"><button data-draft="和我聊聊今天吧。">聊聊今天 <span>↗</span></button><button data-draft="我们接着上次的话题。">继续上次的话题 <span>↗</span></button><button data-draft="有件事想告诉你：">留下一件小事 <span>↗</span></button></div></section>
+      </div>
+      <button id="jump-latest" type="button" class="jump-latest" hidden>回到最新</button>
+      <div id="reply-status" class="reply-status" role="status" hidden><span class="waiting-dot" aria-hidden="true"></span><span id="reply-status-text">TLS正在处理这轮消息…</span></div>
+      <footer class="composer-area">
+        <section id="composer-drawer" class="composer-drawer" aria-label="消息组合工具" hidden>
+          <nav class="compose-tabs" aria-label="输入工具"><button type="button" data-compose-tab="expressions" role="tab">表情</button><button type="button" data-compose-tab="actions" role="tab">动作</button><button type="button" data-compose-tab="attachments" role="tab">附件</button><span></span><button id="compose-refresh" type="button" aria-label="刷新共享资料">↻</button><button id="compose-close" type="button" aria-label="收起工具">×</button></nav>
+          <div class="compose-pane" data-compose-pane="expressions" hidden>
+            <div class="expression-search-row"><input id="shared-expression-search" type="search" maxlength="100" placeholder="搜索名称、含义、标签" aria-label="搜索共享表情"><select id="expression-pick-mode" aria-label="选择表情后的操作"><option value="attach">附加到消息</option><option value="send">直接发送</option></select></div>
+            <div class="expression-filters"><button type="button" data-expression-filter="all" class="selected">全部</button><button type="button" data-expression-filter="favorites">收藏</button><button type="button" data-expression-filter="recent">最近</button><button type="button" data-expression-filter="frequent">常用</button><button type="button" data-expression-filter="disliked">不喜欢</button><button type="button" data-expression-filter="hidden">已隐藏</button><button type="button" data-expression-filter="disabled">停用素材</button></div>
+            <p id="expression-status" class="compose-status" role="status"></p><div id="shared-expression-grid" class="shared-expression-grid"></div>
+          </div>
+          <div class="compose-pane" data-compose-pane="actions" hidden><div class="compose-action-toolbar"><button id="compose-add-action" type="button" class="text-button">＋ 新建动作</button><button id="compose-import-actions" type="button" class="text-button">导入本机原互动</button></div><p id="action-status" class="compose-status" role="status"></p><div id="shared-action-list" class="shared-action-list"></div></div>
+          <div class="compose-pane" data-compose-pane="attachments" hidden><button id="compose-choose-file" type="button" class="attachment-picker"><span>＋</span><strong>选择图片或文件</strong><small>可与话语、动作和表情一起发送</small></button><p class="compose-status">单个附件最多 8 MiB，每条消息最多 4 个；只读取你在系统窗口选择的文件。</p></div>
+        </section>
+        <section id="sticker-panel" class="sticker-panel" aria-label="表情包" hidden>
+          <div class="sticker-panel-head"><span>伙伴表情</span><button id="sticker-close" type="button" class="text-button" aria-label="收起表情面板">收起</button></div>
+          <div id="sticker-grid" class="sticker-grid"></div>
+        </section>
+        <section class="interaction-bar" aria-label="旧版本机互动，供显式导入" hidden><div class="interaction-heading"><span>角色互动</span><button id="interaction-edit" type="button" class="text-button" disabled>编辑互动</button></div><div class="interaction-slots"><button id="quick-slot-0" type="button" disabled>摸摸头</button><button id="quick-slot-1" type="button" disabled>轻戳肚子</button><button id="quick-slot-2" type="button" disabled>牵手</button><button id="quick-slot-3" type="button" disabled>靠一会儿</button></div><p id="interaction-hint"></p></section>
+        <button id="compose-add-text" type="button" hidden class="text-button compose-add-text">将话语放入组合，再接着写</button><div id="pending-actions" class="pending-actions" aria-label="待发送互动动作" aria-live="polite" hidden></div>
+        <div id="attachment-queue" class="attachment-queue" aria-label="待发送附件" aria-live="polite" hidden></div>
+        <p id="compose-summary" class="compose-summary" aria-live="polite" hidden></p>
+        <form id="composer" class="composer" autocomplete="off"><div class="composer-input-row"><label class="sr-only" for="draft">消息</label><textarea id="draft" rows="1" maxlength="16000" placeholder="发消息…" aria-label="消息输入框"></textarea><button id="send-button" type="submit" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button></div><div class="composer-tool-row" aria-label="聊天工具"><button id="voice-button" type="button" class="composer-button" aria-label="录一段语音" title="语音"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="12" rx="4"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3m-4 0h8"/></svg></button><button id="sticker-button" type="button" class="composer-button" aria-label="打开共享表情" title="表情"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 14c2 3 6 3 8 0"/><circle cx="9" cy="9" r="1" fill="currentColor"/><circle cx="15" cy="9" r="1" fill="currentColor"/></svg></button><button id="touch-button" type="button" class="composer-button" aria-label="动作与部位" title="互动"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 13V4a2 2 0 0 1 4 0v7-3a2 2 0 0 1 4 0v3-1a2 2 0 0 1 4 0v5c0 4-3 7-7 7h-1c-3 0-4-2-6-4l-3-4c-1-2 1-4 3-2l2 2"/></svg></button><button id="attach-button" type="button" class="composer-button" aria-label="更多附件" title="附件"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M7 12h10"/></svg></button></div></form>
+
+        <div class="composer-caption"><span id="draft-status">草稿仅保存在这台设备</span><span class="desktop-hint">电脑 Enter 发送 · 手机换行，点箭头发送</span></div>
+        <p id="auto-sync-status" class="recovery-status" role="status">仅前台自动回读，不提供后台推送。</p>
+      </footer>
+    </main>
+  </div>
+  <dialog id="compose-action-dialog" class="settings-dialog" aria-labelledby="compose-action-title"><form id="compose-action-form" class="settings-form"><div class="dialog-heading"><h2 id="compose-action-title">新建动作</h2><button id="compose-action-cancel" type="button" class="icon-button" aria-label="取消动作编辑">×</button></div><label for="compose-action-label">显示名称</label><input id="compose-action-label" maxlength="32" required><label for="compose-action-description">动作语义</label><textarea id="compose-action-description" rows="3" maxlength="500" placeholder="例如：在角色互动中轻轻摸摸伙伴的头，表达亲近。" required></textarea><p class="appearance-help">这是用户发起的角色互动，和伙伴回复中的动作描写分开记录。</p><div class="compose-checks"><label><input id="compose-action-enabled" type="checkbox" checked> 启用</label><label><input id="compose-action-quick" type="checkbox" checked> 优先出现在动作面板</label></div><label for="compose-action-order">排序</label><input id="compose-action-order" type="number" min="-1000" max="1000" value="0"><p id="compose-action-error" class="form-error" role="alert"></p><div class="appearance-actions"><button id="compose-action-delete" type="button" class="text-button danger" hidden>移除动作</button><button type="submit" class="primary-button">保存</button></div></form></dialog>
+  <dialog id="expression-pref-dialog" class="settings-dialog" aria-labelledby="expression-pref-title"><form id="expression-pref-form" class="settings-form"><div class="dialog-heading"><h2 id="expression-pref-title">表情偏好</h2><button id="expression-pref-cancel" type="button" class="icon-button" aria-label="取消表情编辑">×</button></div><p id="expression-pref-meaning" class="settings-intro"></p><label for="expression-pref-actor">编辑内容</label><select id="expression-pref-actor"><option value="user">我的偏好</option><option value="texas">伙伴的偏好</option><option value="metadata">共享素材说明</option></select><section id="expression-user-fields" class="compose-checks"><label><input id="expression-user-favorite" type="checkbox"> 收藏</label><label><input id="expression-user-liked" type="checkbox"> 喜欢，供伙伴选图加权</label><label>快捷栏排序 <input id="expression-user-order" type="number" min="-1000" max="1000" value="0"></label><label><input id="expression-user-disliked" type="checkbox"> 不喜欢</label><label><input id="expression-user-hidden" type="checkbox"> 从我的表情面板隐藏</label><label><input id="expression-user-quick_send" type="checkbox"> 点击这张表情直接发送</label></section><section id="expression-texas-fields" hidden><label for="expression-texas-weight">使用倾向（−3 至 3）</label><input id="expression-texas-weight" type="number" min="-3" max="3" step="0.5" value="1"><label for="expression-texas-contexts">偏好的语境</label><textarea id="expression-texas-contexts" rows="2" maxlength="500" placeholder="用逗号或顿号分隔"></textarea><label for="expression-texas-cooldown">重复冷却（秒）</label><input id="expression-texas-cooldown" type="number" min="0" max="86400" value="120"></section><section id="expression-metadata-fields" hidden><label class="switch-label"><input id="expression-meta-enabled" type="checkbox"> 素材启用（共享设置）</label><label for="expression-meta-name">名称</label><input id="expression-meta-name" maxlength="100"><label for="expression-meta-meaning">含义</label><textarea id="expression-meta-meaning" rows="3" maxlength="1500"></textarea><label for="expression-meta-tags">标签</label><input id="expression-meta-tags" maxlength="500" placeholder="开心、安慰、害羞"><label for="expression-meta-scenarios">适用场景</label><textarea id="expression-meta-scenarios" rows="2" maxlength="1000"></textarea><label for="expression-meta-pairing">搭配话语说明</label><textarea id="expression-meta-pairing" rows="2" maxlength="1000"></textarea></section><p id="expression-pref-status" class="appearance-help" role="status"></p><button type="submit" class="primary-button">保存当前选项</button></form></dialog>
+  <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+    <form id="settings-form" class="settings-form" autocomplete="on">
+      <div class="dialog-heading"><div><span class="eyebrow">CONNECTION</span><h2 id="settings-title">连接与账户</h2></div><button id="close-settings" type="button" class="icon-button" aria-label="关闭设置">×</button></div>
+      <p class="settings-intro">连接你自己的服务，消息和会话都以服务器记录为准。</p>
+      <label for="server">服务器地址</label><input id="server" name="server" type="url" inputmode="url" placeholder="https://你的服务器/tls-chat-api" autocomplete="url" spellcheck="false" required>
+      <label for="username">用户名</label><input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="120" required>
+      <label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password" maxlength="256" required>
+      <p class="privacy-note">密码只用于登录。登录凭证由应用保管，不写入网页存储。</p>
+      <section class="theme-settings" aria-label="界面主题"><label for="theme">界面主题</label><select id="theme"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option><option value="black">纯黑</option></select><p>主题只影响本机显示，不改动角色、记录或服务器设置。</p></section>
+      <section id="persona-settings" class="persona-settings" hidden><div class="persona-heading"><label for="persona">伙伴的角色配置</label><button id="refresh-personas" type="button" class="text-button">刷新</button></div><select id="persona" aria-label="选择服务器已有角色"><option value="">登录后加载真实角色</option></select><p>选择即时保存，首次连接时选用真实角色；长期连接建立后持续复用原记录。</p></section>
+      <p id="login-error" class="form-error" role="alert" hidden></p>
+      <button id="login-button" class="primary-button" type="submit">登录并同步</button>
+      <section class="notify-settings" aria-label="新回复提醒"><label class="switch-label" for="notify-toggle"><input id="notify-toggle" type="checkbox"> 新回复提醒</label><p>开启后显示常驻通知，Android 原生服务每隔至少 30 秒检查当前对话；不是服务器推送。系统超时或停止后需要你重新开启。</p><p id="reply-watch-status" class="appearance-help" role="status">默认不开启后台服务。</p><details id="notification-diagnostics"><summary>通知权限与系统状态</summary><div id="notification-system-state" aria-live="polite"><p>打开后读取本机实际状态。</p></div><div class="appearance-actions"><button id="notification-status-refresh" type="button" class="text-button">刷新状态</button><button id="notification-settings-open" type="button" class="text-button">打开系统通知设置</button><button id="notification-permission-request" type="button" class="text-button">申请通知权限</button></div><p id="notification-system-note" class="appearance-help" role="status"></p></details></section>
+<button id="logout-button" type="button" class="text-button logout-button" hidden>退出当前账户</button>
+
+      <button id="appearance-settings-button" type="button" class="appearance-entry">聊天外观 <span>仅当前对话 · 仅此设备 →</span></button>
+      <button id="export-open" type="button" class="appearance-entry" disabled>导出当前已加载记录 <span id="export-available">保存为 Markdown 文件 →</span></button>
+      <div class="about-app"><img src="brand.svg" width="24" height="24" alt=""><span>Asteria Chat <span id="app-version"></span></span></div>
+    </form>
+  </dialog>
+  <dialog id="appearance-dialog" class="settings-dialog appearance-dialog" aria-labelledby="appearance-title">
+    <form id="appearance-form" class="settings-form" autocomplete="off">
+      <div class="dialog-heading"><div><span class="eyebrow">APPEARANCE</span><h2 id="appearance-title">当前对话外观</h2></div><button id="appearance-close" type="button" class="icon-button" aria-label="取消外观修改">×</button></div>
+      <p id="appearance-scope" class="settings-intro">仅此对话 · 仅此设备</p>
+      <div id="appearance-preview" class="appearance-preview"><img id="appearance-avatar-preview" src="logo.svg" alt="头像预览" width="48" height="48"><div><strong id="appearance-name-preview">助手</strong><span>这是一段外观预览，不会发送消息。</span></div></div>
+      <label for="appearance-name">角色显示名</label><input id="appearance-name" type="text" maxlength="40" placeholder="留空使用默认名称" spellcheck="false"><p class="appearance-help">只改变这里的显示，不会修改实际角色、人格或提示词。</p>
+      <div class="appearance-picker-row"><button id="choose-avatar" type="button" class="secondary-button">选择头像</button><button id="clear-avatar" type="button" class="text-button">使用默认头像</button></div>
+      <p class="appearance-help">头像会居中裁剪；外观图片保存在本机，动图会取静态画面。</p>
+      <label>聊天背景</label><div class="appearance-palettes" role="group" aria-label="选择聊天背景"><button type="button" data-appearance-palette="default" class="palette-default">默认</button><button type="button" data-appearance-palette="mint" class="palette-mint">浅绿</button><button type="button" data-appearance-palette="sand" class="palette-sand">暖沙</button><button type="button" data-appearance-palette="night" class="palette-night">深林</button></div>
+      <div class="appearance-picker-row"><button id="choose-background" type="button" class="secondary-button">自选背景图片</button><span id="appearance-image-status" class="appearance-help">图片在本机处理，不上传服务器。</span></div>
+      <p id="appearance-error" class="form-error" role="alert" hidden></p>
+      <div class="appearance-actions"><button id="appearance-reset" type="button" class="text-button">恢复默认</button><div><button id="appearance-cancel" type="button" class="secondary-button">取消</button><button id="appearance-save" type="submit" class="primary-button">保存</button></div></div>
+    </form>
+  </dialog>
+  <dialog id="interaction-dialog" class="settings-dialog interaction-dialog" aria-labelledby="interaction-title">
+    <form id="interaction-form" class="settings-form" autocomplete="off">
+      <div class="dialog-heading"><div><span class="eyebrow">QUICK INTERACTIONS</span><h2 id="interaction-title">编辑互动文案</h2></div><button id="interaction-close" type="button" class="icon-button" aria-label="取消互动修改">×</button></div>
+      <p id="interaction-scope" class="settings-intro">仅当前对话 · 仅此设备</p><p class="appearance-help">点击快捷键只会加入输入框，确认后才发送。这些文案不会记录真实动作，也不会修改角色或提示词。</p>
+      <div class="interaction-editors">
+        <fieldset><legend>快捷文案 1</legend><div class="interaction-editor-top"><label for="quick-label-0">名称</label><label class="interaction-enabled"><input id="quick-enabled-0" type="checkbox">启用</label></div><input id="quick-label-0" type="text" maxlength="12" required><label for="quick-action-0">互动文案</label><textarea id="quick-action-0" rows="3" maxlength="300" required></textarea></fieldset>
+        <fieldset><legend>快捷文案 2</legend><div class="interaction-editor-top"><label for="quick-label-1">名称</label><label class="interaction-enabled"><input id="quick-enabled-1" type="checkbox">启用</label></div><input id="quick-label-1" type="text" maxlength="12" required><label for="quick-action-1">互动文案</label><textarea id="quick-action-1" rows="3" maxlength="300" required></textarea></fieldset>
+        <fieldset><legend>快捷文案 3</legend><div class="interaction-editor-top"><label for="quick-label-2">名称</label><label class="interaction-enabled"><input id="quick-enabled-2" type="checkbox">启用</label></div><input id="quick-label-2" type="text" maxlength="12" required><label for="quick-action-2">互动文案</label><textarea id="quick-action-2" rows="3" maxlength="300" required></textarea></fieldset>
+        <fieldset><legend>快捷文案 4</legend><div class="interaction-editor-top"><label for="quick-label-3">名称</label><label class="interaction-enabled"><input id="quick-enabled-3" type="checkbox">启用</label></div><input id="quick-label-3" type="text" maxlength="12" required><label for="quick-action-3">互动文案</label><textarea id="quick-action-3" rows="3" maxlength="300" required></textarea></fieldset>
+      </div><p id="interaction-error" class="form-error" role="alert" hidden></p>
+      <div class="appearance-actions"><button id="interaction-reset" type="button" class="text-button">恢复默认</button><div><button id="interaction-cancel" type="button" class="secondary-button">取消</button><button id="interaction-save" type="submit" class="primary-button">保存</button></div></div>
+    </form>
+  </dialog>
+  <dialog id="rename-dialog" class="settings-dialog" aria-labelledby="rename-title">
+    <form id="rename-form" class="settings-form" autocomplete="off" novalidate>
+      <div class="dialog-heading"><div><span class="eyebrow">CONVERSATION</span><h2 id="rename-title">服务器会话标题</h2></div><button id="rename-close" type="button" class="icon-button" aria-label="关闭标题编辑">×</button></div>
+      <p class="settings-intro">修改保存到服务器的会话标题，不会更改角色、本机昵称或聊天内容。</p>
+      <p class="rename-current">当前服务器标题：<strong id="rename-server-title">正在读取…</strong></p>
+      <label for="rename-input">新标题</label><input id="rename-input" type="text" maxlength="240" placeholder="1–120 字" spellcheck="false">
+      <p id="rename-error" class="form-error" role="status" hidden></p>
+      <div class="appearance-actions"><button id="rename-check" type="button" class="text-button" hidden>核对服务器标题</button><div><button id="rename-cancel" type="button" class="secondary-button">关闭</button><button id="rename-save" type="submit" class="primary-button">保存</button></div></div>
+    </form>
+  </dialog>
+  <dialog id="delete-dialog" class="settings-dialog" aria-labelledby="delete-title-label">
+    <form id="delete-form" class="settings-form" autocomplete="off">
+      <div class="dialog-heading"><div><span class="eyebrow">DELETE</span><h2 id="delete-title-label">删除会话</h2></div><button id="delete-close" type="button" class="icon-button" aria-label="关闭删除确认">×</button></div>
+      <p class="settings-intro">将从服务器删除这个会话及其聊天记录，删除后无法从这个应用恢复。</p>
+      <p class="rename-current">会话：<strong id="delete-title"></strong></p>
+      <p class="delete-warning">删除会立即请求服务器执行，不会只藏在本机。若服务器尚未提供删除接口，这里会明确提示且不会假装成功。</p>
+      <p id="delete-error" class="form-error" role="alert" hidden></p>
+      <div class="appearance-actions"><button id="delete-cancel" type="button" class="secondary-button">取消</button><button id="delete-confirm" type="submit" class="primary-button danger">删除</button></div>
+    </form>
+  </dialog>
+  <dialog id="export-dialog" class="settings-dialog" aria-labelledby="export-title">
+    <form id="export-form" class="settings-form" autocomplete="off">
+      <div class="dialog-heading"><div><span class="eyebrow">EXPORT</span><h2 id="export-title">导出当前记录</h2></div><button id="export-close" type="button" class="icon-button" aria-label="关闭导出预览">×</button></div>
+      <p id="export-summary" class="settings-intro"></p>
+      <dl class="export-preview"><dt>当前显示会话标题</dt><dd id="export-conversation-title"></dd><dt>建议文件名</dt><dd id="export-filename"></dd></dl>
+      <p class="export-warning">仅导出本次预览时已加载、已确认保存的消息，不是全部历史。不含草稿或未确认片段；媒体只有名称文字，不包含原文件。聊天内容可能私密，请自行选择保存位置。</p>
+      <p id="export-status" class="export-status" role="status" hidden></p>
+      <div class="appearance-actions"><span class="appearance-help">打开预览不会上传或保存。</span><div><button id="export-cancel" type="button" class="secondary-button">关闭</button><button id="export-confirm" type="submit" class="primary-button">选择位置并保存</button></div></div>
+    </form>
+  </dialog>
+  <dialog id="compose-text-dialog" class="settings-dialog"><form id="compose-text-form" class="settings-form"><h2>编辑话语片段</h2><textarea id="compose-text-editor" rows="5" maxlength="16000"></textarea><div class="experience-actions"><button id="compose-text-cancel" type="button" class="secondary-button">取消</button><button class="primary-button" type="submit">保存片段</button></div></form></dialog>
+  <dialog id="perception-dialog" class="settings-dialog perception-dialog" aria-labelledby="perception-title">
+    <div class="settings-form">
+      <div class="dialog-heading"><div><span class="eyebrow">PHONE PERCEPTION</span><h2 id="perception-title">手机感知</h2></div><button id="perception-close" type="button" class="icon-button" aria-label="关闭手机感知">×</button></div>
+      <p class="settings-intro">让当前手机按你选择的范围向原感知桥上报。不会读取聊天正文、定位或文件；未开启时不采集。</p>
+      <section class="perception-state-card" aria-label="实际连接与运行状态"><strong id="perception-runtime">本机状态尚未读取</strong><p id="perception-connection">服务器尚未读取</p><p id="perception-authority">授权尚未读取</p><p id="perception-server-state"></p><dl><dt>最近上报</dt><dd id="perception-last-report">尚未读取</dd></dl><p id="perception-reason" class="appearance-help"></p></section>
+      <div id="perception-unified-status" aria-label="服务器实际感知来源状态"></div>
+      <button id="perception-workspace" type="button" class="text-button">管理日程与感知查阅权限 ›</button>
+      <label for="perception-device">沿用已有设备</label><select id="perception-device" aria-describedby="perception-device-warning"><option value="">请先读取你的原设备</option></select>
+      <p id="perception-device-warning" class="perception-warning">选择原 PPB 的同一台手机前，请先停止旧 PPB 上报端，避免两个程序同时更新同一设备。不会自动新建设备。</p>
+      <label class="switch-label"><input id="perception-enabled" type="checkbox"> 允许这台手机上报</label>
+      <section class="perception-sections" aria-label="自行选择的采集范围">
+        <label><span><input id="perception-basic" type="checkbox"> 基础状态</span><small>电量、亮屏、网络类型与音频设备等可用状态</small></label>
+        <label><span><input id="perception-app" type="checkbox"> 当前应用</span><small>需另授使用情况访问权限；不读取应用内的文字</small></label>
+        <label><span><input id="perception-music" type="checkbox"> 正在播放的音乐</span><small>需另授通知访问权限；仅取播放器的曲目资料</small></label>
+      </section>
+      <details class="perception-permissions"><summary>Android 系统授权</summary>
+        <div><span>采集常驻通知 <small id="perception-permission-state-notifications">尚未读取</small></span><button id="perception-permission-notifications" type="button" class="text-button">通知权限</button></div>
+        <div><span>当前应用 <small id="perception-permission-state-usage">尚未读取</small></span><button id="perception-permission-usage" type="button" class="text-button">使用情况访问</button></div>
+        <div><span>音乐资料 <small id="perception-permission-state-music">尚未读取</small></span><button id="perception-permission-music" type="button" class="text-button">通知访问</button></div>
+        <div><span>后台运行 <small>由手机系统决定</small></span><button id="perception-permission-battery" type="button" class="text-button">电池设置</button></div>
+        <p class="appearance-help">点击只打开相应系统设置，不代表已授权。返回后刷新查看；后台是否持续运行仍取决于手机系统。</p>
+      </details>
+      <label class="perception-consent"><input id="perception-consent" type="checkbox"><span>我同意上报所选资料，并已停止同设备的旧 PPB 上报端。可随时停止，不因此新增 QQ 发送权限。</span></label>
+      <div class="perception-actions"><button id="perception-save" type="button" class="primary-button">保存并应用</button><button id="perception-start" type="button" class="secondary-button">继续采集</button><button id="perception-stop" type="button" class="text-button danger">停止采集</button></div>
+      <div class="perception-actions perception-secondary"><button id="perception-refresh" type="button" class="text-button">刷新状态</button><button id="perception-report" type="button" class="text-button">立即上报一次</button></div>
+      <p id="perception-status" class="appearance-help" role="status" aria-live="polite"></p><button id="perception-reconcile" type="button" class="text-button" hidden>已核对，结束等待</button>
+      <p class="appearance-help">保存不会立即发送陪伴消息。真实应用或音乐变化仍由 TLS 现有授权、免打扰与消息节奏规则决定；上报成功不等于已送达一条主动消息。</p>
+    </div>
+  </dialog>
+  <script defer src="chat-identity.js"></script>
+  <script defer src="chat-workspace.js"></script>
+  <script defer src="chat-perception.js"></script>
+  <script defer src="chat-perception-status.js"></script>
+  <script defer src="chat-hub.js"></script>
+  <script defer src="chat-notification-status.js"></script>
+</body>
+</html>

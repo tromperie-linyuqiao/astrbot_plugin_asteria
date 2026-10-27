@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.runtime/
+packages/
+*.db
+*.sqlite*
+*.log
+*.private.*
+*.dpapi.*
+*.jks
+*.keystore
+*.apk
+*.zip
+node_modules/
+.env*

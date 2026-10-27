@@ -1,0 +1,1 @@
+.memory-strategy-panel{display:grid;gap:12px}.memory-strategy-field{display:flex;align-items:center;justify-content:space-between;gap:18px}.memory-strategy-field input[type=number]{width:100px;max-width:35%}.memory-strategy-panel .actions{display:flex;flex-wrap:wrap;gap:8px}.memory-strategy-panel .hint{line-height:1.65}

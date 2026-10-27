@@ -1,0 +1,79 @@
+{
+ "schema": 1,
+ "rules": [
+  {
+   "id": "reading_new_chapter",
+   "enabled": true,
+   "signal": "reading",
+   "conditions": [
+    {
+     "field": "reading.chapter_index",
+     "op": "changed",
+     "value": null
+    }
+   ],
+   "cooldown_minutes": 240,
+   "priority": 3,
+   "template_hint": "书库刚消化了新章节，她可能想聊聊读到的内容",
+   "note": "读书进度推进"
+  },
+  {
+   "id": "presence_room_changed",
+   "enabled": true,
+   "signal": "presence",
+   "conditions": [
+    {
+     "field": "presence.she_room",
+     "op": "changed",
+     "value": null
+    }
+   ],
+   "cooldown_minutes": 120,
+   "priority": 4,
+   "template_hint": "她刚换了房间，有了新的场景",
+   "note": "她移动了"
+  },
+  {
+   "id": "longing_invite",
+   "enabled": true,
+   "signal": "presence",
+   "conditions": [
+    {
+     "field": "presence.arousal",
+     "op": "gte",
+     "value": 0.55
+    },
+    {
+     "field": "presence.body_phase",
+     "op": "eq",
+     "value": "building"
+    }
+   ],
+   "cooldown_minutes": 360,
+   "priority": 2,
+   "template_hint": "她的身体已积蓄到相当程度（{mood_word}）——可能主动发出邀约；是否表达、以何种方式，由你的人格与此刻情境决定",
+   "note": "渴慕邀约（双控模型：唤起过阈+SIS 未制动）"
+  },
+  {
+   "id": "mood_warm",
+   "enabled": true,
+   "signal": "presence",
+   "conditions": [
+    {
+     "field": "presence.env_valence",
+     "op": "gte",
+     "value": 0.35
+    },
+    {
+     "field": "presence.same_room",
+     "op": "eq",
+     "value": true
+    }
+   ],
+   "cooldown_minutes": 240,
+   "priority": 4,
+   "template_hint": "这间房的氛围让她{mood_word}（暖意·放松），你们同处一室，她可能想多待一会儿",
+   "note": "氛围动机（Russell 环形：高效价环境→亲近动机）"
+  }
+ ]
+}

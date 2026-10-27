@@ -1,0 +1,256 @@
+{
+  "schema": 1,
+  "registered": false,
+  "hooks": [
+    {
+      "module": "atrelay.py",
+      "function": "compact_atrelay_tool_final_response",
+      "decorator": "filter.on_llm_response()"
+    },
+    {
+      "module": "main.py",
+      "function": "PrivateCompanionPlugin",
+      "decorator": "register(PLUGIN_NAME, 'menglimi', '我会永远陪着你：为 AstrBot 提供人格连续性、关系识别、主动行为和可视化管理的陪伴编排插件。', '5.11.2')"
+    },
+    {
+      "module": "main.py",
+      "function": "observe_recall_enhancement_events",
+      "decorator": "filter.event_message_type(filter.EventMessageType.ALL, priority=10000)"
+    },
+    {
+      "module": "main.py",
+      "function": "bridge_proactive_chat_outbound",
+      "decorator": "filter.on_decorating_result(priority=10000)"
+    },
+    {
+      "module": "main.py",
+      "function": "finalize_proactive_chat_outbound_bridge",
+      "decorator": "filter.on_decorating_result(priority=-20000)"
+    },
+    {
+      "module": "main.py",
+      "function": "stop_passive_input_status_before_private_send",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "suppress_recent_duplicate_outbound_text",
+      "decorator": "filter.on_decorating_result(priority=-10000)"
+    },
+    {
+      "module": "main.py",
+      "function": "remember_confirmed_outbound_text",
+      "decorator": "filter.after_message_sent(priority=10000)"
+    },
+    {
+      "module": "main.py",
+      "function": "suppress_group_llm_reply_block_before_send",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "strip_outbound_control_blocks_before_send",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "strip_plaintext_tool_calls_before_send",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "cancel_reply_if_trigger_recalled_before_send",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "suppress_forbidden_outbound_before_send",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "suppress_framework_error_leak_before_send",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "suppress_group_question_wakeup_collision_reply",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "suppress_smart_silence_reply_before_send",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "record_empty_passive_result_before_send",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "apply_tts_enhancement_before_send_hook",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "strip_group_internal_identity_anchors",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "suppress_group_silent_control_reply",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "strip_unexpected_private_passive_reply",
+      "decorator": "filter.on_decorating_result(priority=-1000)"
+    },
+    {
+      "module": "main.py",
+      "function": "apply_segmented_llm_reply_scope",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "remember_group_bot_reply_context_before_send",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "final_tts_markup_guard_before_send",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "attach_group_reply_quote",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "pc_body_device",
+      "decorator": "filter.llm_tool(name='pc_body_device')"
+    },
+    {
+      "module": "main.py",
+      "function": "pc_music_lookup",
+      "decorator": "filter.llm_tool(name='pc_music_lookup')"
+    },
+    {
+      "module": "main.py",
+      "function": "pc_generate_photo",
+      "decorator": "filter.llm_tool(name='pc_generate_photo')"
+    },
+    {
+      "module": "main.py",
+      "function": "pc_manage_memo",
+      "decorator": "filter.llm_tool(name='pc_manage_memo')"
+    },
+    {
+      "module": "main.py",
+      "function": "pc_get_user_id_by_name",
+      "decorator": "filter.llm_tool(name='pc_get_user_id_by_name')"
+    },
+    {
+      "module": "main.py",
+      "function": "pc_query_relation_person",
+      "decorator": "filter.llm_tool(name='pc_query_relation_person')"
+    },
+    {
+      "module": "main.py",
+      "function": "pc_query_interaction",
+      "decorator": "filter.llm_tool(name='pc_query_interaction')"
+    },
+    {
+      "module": "main.py",
+      "function": "pc_send_to_private_user",
+      "decorator": "filter.llm_tool(name='pc_send_to_private_user')"
+    },
+    {
+      "module": "main.py",
+      "function": "pc_send_to_private_users",
+      "decorator": "filter.llm_tool(name='pc_send_to_private_users')"
+    },
+    {
+      "module": "main.py",
+      "function": "enforce_memo_reminder_tool_boundary",
+      "decorator": "filter.on_agent_begin()"
+    },
+    {
+      "module": "main.py",
+      "function": "capture_future_task_result",
+      "decorator": "filter.on_llm_tool_respond()"
+    },
+    {
+      "module": "main.py",
+      "function": "redact_outbound_secrets_before_send",
+      "decorator": "filter.on_decorating_result()"
+    },
+    {
+      "module": "main.py",
+      "function": "inject_tts_enhancement_request_fallback",
+      "decorator": "filter.on_llm_request()"
+    },
+    {
+      "module": "main.py",
+      "function": "sanitize_sensitive_screen_tools",
+      "decorator": "filter.on_llm_request(priority=-21000)"
+    },
+    {
+      "module": "main.py",
+      "function": "sanitize_incompatible_web_search_tools",
+      "decorator": "filter.on_llm_request(priority=-20000)"
+    },
+    {
+      "module": "main.py",
+      "function": "inject_humanized_state",
+      "decorator": "filter.on_llm_request()"
+    },
+    {
+      "module": "main.py",
+      "function": "capture_final_external_llm_token_request",
+      "decorator": "filter.on_llm_request(priority=-30000)"
+    },
+    {
+      "module": "main.py",
+      "function": "normalize_tts_enhancement_response",
+      "decorator": "filter.on_llm_response()"
+    },
+    {
+      "module": "main.py",
+      "function": "record_external_llm_token_usage",
+      "decorator": "filter.on_llm_response()"
+    },
+    {
+      "module": "main.py",
+      "function": "record_group_expression_rule_usage",
+      "decorator": "filter.on_llm_response()"
+    },
+    {
+      "module": "main.py",
+      "function": "capture_llm_timer_directive",
+      "decorator": "filter.on_llm_response()"
+    },
+    {
+      "module": "main.py",
+      "function": "companion_command",
+      "decorator": "filter.command('陪伴', alias={'私聊陪伴', '主动陪伴'})"
+    },
+    {
+      "module": "main.py",
+      "function": "group_companion_command",
+      "decorator": "filter.command('陪伴群', alias={'群陪伴', '群聊陪伴'})"
+    },
+    {
+      "module": "main.py",
+      "function": "on_private_message",
+      "decorator": "filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)"
+    },
+    {
+      "module": "main.py",
+      "function": "on_group_message",
+      "decorator": "filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)"
+    }
+  ]
+}

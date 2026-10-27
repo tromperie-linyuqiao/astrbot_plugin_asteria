@@ -1,0 +1,21 @@
+/* Independent AMOLED palette; original light/dark modes remain available. */
+:root[data-theme="black"]{color-scheme:dark;--surface-base:#000000;--surface-panel:#080808;--surface-raised:#171717;--surface-sunken:#202020;--bubble-other:#191919;--bubble-self:#29282e;--text-strong:#f3f3f4;--text:#dddddf;--text-soft:#aaa9af;--muted:#85848a;--line:#2b2b2f;--accent:#b8b1c9;--accent-strong:#c9c1d8;--accent-soft:#26232d;--danger:#e0a6aa;--danger-soft:#302023;--shadow:0 14px 44px #0009;--wallpaper-scrim:#0008}
+:root[data-theme="black"] .app{--surface-base:#000;--surface-panel:#080808;--surface-raised:#171717;--surface-sunken:#202020;--bubble-other:#191919;--bubble-self:#29282e;--text-strong:#f3f3f4;--text:#dddddf;--text-soft:#aaa9af;--muted:#85848a;--line:#2b2b2f;--accent:#b8b1c9;--accent-strong:#c9c1d8;--accent-soft:#26232d}
+:root[data-theme="black"] .notice{background:#27221b;border-color:#473b2a;color:#d8c6aa}:root[data-theme="black"] #send-button{color:#141217}:root[data-theme="black"] .composer-input-row:focus-within{box-shadow:none}
+/* The list owns a bounded image cell; an uploaded 256px portrait must not paint
+   outside it. This fixes layout instead of hiding the image or moving it fixed. */
+.session-avatar{overflow:hidden;flex:none}.session-avatar img{display:block;width:100%;height:100%;max-width:100%;max-height:100%;object-fit:cover;border-radius:inherit}
+.message-avatar img{display:block;width:100%;height:100%;object-fit:cover}.message-row.assistant .message-avatar[role="button"]{cursor:pointer}.message-avatar[role="button"]:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.message-row.user .message-avatar{display:grid}.header-avatar[role="button"]{cursor:pointer}.header-avatar[role="button"]:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:50%}
+.chat-header .chat-heading.night-identity{display:grid;grid-template-columns:40px minmax(0,auto);column-gap:9px;justify-content:center;align-items:center;text-align:left;min-width:0}.chat-header .night-identity .header-avatar{display:grid;grid-column:1;grid-row:1/3;width:40px;height:40px;border-radius:14px}.night-identity .conversation-title-row{grid-column:2;grid-row:1;min-width:0}.night-identity #connection-status{grid-column:2;grid-row:2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}.night-identity h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.account-avatar{width:32px;height:32px;flex:none;overflow:hidden;border-radius:11px;background:var(--surface-sunken);color:var(--text-soft);font-size:12px;padding:0}.account-avatar img{display:block;width:100%;height:100%;object-fit:cover}
+:root[data-theme="black"] .composer textarea::placeholder{color:var(--muted)}
+.night-dialog #user-avatar-preview{display:block;width:140px;height:140px;margin:4px auto 20px;border-radius:50%;border:1px solid var(--line);background:var(--surface-sunken)}
+.night-dialog label{display:grid;gap:8px;color:var(--text-soft);font-size:12px;margin-top:15px}.night-dialog input[type="range"]{width:100%;accent-color:var(--accent)}
+.night-dialog [role="status"]{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.7;color:var(--text-soft)}
+.body-state-dialog #body-state-values>div,.body-state-dialog details>div{display:flex;justify-content:space-between;gap:15px;padding:9px 0;font-size:12px;color:var(--text-soft)}
+.body-state-dialog strong{font-weight:500;color:var(--text);text-align:right}.body-state-dialog details{border-top:1px solid var(--line);padding:9px 0}.body-state-dialog summary{font-size:13px;color:var(--text);cursor:pointer;padding:5px 0}.body-state-dialog #body-state-values{max-height:40vh;overflow:auto;overscroll-behavior:contain;margin:8px 0 16px}
+@media(max-width:600px){dialog.night-dialog{margin:auto auto 14px;max-height:75dvh;border-radius:22px;width:calc(100vw - 20px)}.night-dialog .settings-form{padding:20px}.night-dialog .appearance-actions{flex-wrap:wrap}.body-state-dialog #body-state-values{max-height:36dvh}}
+
+/* Pairing command uses the external stylesheet permitted by the existing CSP. */
+.settings-form input.identity-command{width:100%;font-size:14px;user-select:text}

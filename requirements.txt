@@ -1,0 +1,5 @@
+aiohttp>=3.10,<4
+Pillow>=10,<14
+LunarCalendar==0.0.9
+ephem==4.2
+pytz==2025.2

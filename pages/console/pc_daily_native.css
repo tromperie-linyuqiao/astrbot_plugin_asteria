@@ -1,0 +1,11 @@
+.pc-daily-native { --pcd-line: color-mix(in srgb, currentColor 14%, transparent); }
+.pc-daily-native [data-pcd-summary] { padding: .75rem 1rem; border: 1px solid var(--pcd-line); border-radius: 12px; margin: .75rem 0; }
+.pc-daily-native [data-pcd-summary]:empty { display: none; }
+.pc-daily-native [data-pcd-summary] p { margin: .35rem 0; overflow-wrap: anywhere; }
+.pc-daily-native-check { display: flex; gap: .6rem; align-items: flex-start; margin: .65rem 0; line-height: 1.5; }
+.pc-daily-native-check input { width: auto; flex: 0 0 auto; margin-top: .25rem; }
+.pc-daily-native-actions { display: flex; align-items: flex-end; flex-wrap: wrap; gap: .65rem; padding-top: 1rem; margin-top: 1rem; border-top: 1px solid var(--pcd-line); }
+.pc-daily-native-actions label { display: flex; flex-direction: column; gap: .35rem; }
+.pc-daily-native [data-pcd-result] { line-height: 1.65; }
+.pc-daily-native-error { color: var(--danger, #c04444); }
+@media (max-width: 600px) { .pc-daily-native-actions > * { flex: 1 1 45%; min-width: 0; } .pc-daily-native .panel-head { align-items: flex-start; } }
