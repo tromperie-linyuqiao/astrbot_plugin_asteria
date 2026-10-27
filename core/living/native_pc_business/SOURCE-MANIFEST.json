@@ -1,0 +1,637 @@
+{
+  "schema": "tls.native.pc.business.source.v1",
+  "imported_or_executed": false,
+  "legacy_state_copied": false,
+  "sdk_star_registration_included": false,
+  "primary_mixins": {
+    "daily_state": "DailyStateMixin",
+    "life_enhancer": "LifeEnhancerMixin",
+    "proactive_photo": "ProactivePhotoMixin",
+    "creative": "CreativeMixin",
+    "device_life": "DeviceLifeMixin",
+    "intimacy_life": "IntimacyLifeMixin",
+    "music_life": "MusicLifeMixin",
+    "news_exploration": "NewsExplorationMixin",
+    "persona_modules": "PersonaModulesMixin",
+    "self_timeline": "SelfTimelineMixin",
+    "worldbook": "WorldbookMixin",
+    "user_memory": "UserMemoryMixin",
+    "astrbot_knowledge": "AstrBotKnowledgeMixin",
+    "reading_life": "ReadingLifeMixin",
+    "private_reading": "PrivateReadingMixin",
+    "private_image": "PrivateImageMixin"
+  },
+  "modules": {
+    "astrbot_knowledge.py": {
+      "sha256": "5e68d922b366536deba782f216e398fbf55a7f32cec951c9a8222200f4ce97a4",
+      "bytes": 17218,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/astrbot_knowledge.py",
+      "original_sha256": "5e68d922b366536deba782f216e398fbf55a7f32cec951c9a8222200f4ce97a4",
+      "source_kind": "migrated_legacy"
+    },
+    "atrelay.py": {
+      "sha256": "fb97ee13cac5590d27da377ce6f78c7a08ae5cf3be812c2844ad530b0dd0fa5d",
+      "bytes": 60657,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/atrelay.py",
+      "original_sha256": "75bbbd73a906e3bb6e2ca30efe64372f0806c203aede19b0a0f2084c0e720338",
+      "source_kind": "migrated_legacy"
+    },
+    "balance_awareness.py": {
+      "sha256": "f80bbdbc3273a83aeaa4376695ebd9afdae1596d6b3d2d48fc5fd1a8ea2e94e1",
+      "bytes": 30933,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/balance_awareness.py",
+      "original_sha256": "f80bbdbc3273a83aeaa4376695ebd9afdae1596d6b3d2d48fc5fd1a8ea2e94e1",
+      "source_kind": "migrated_legacy"
+    },
+    "command_handlers.py": {
+      "sha256": "0badf711149f30d927787c155fb33d210afd4cb20bac839421418136a33e5f68",
+      "bytes": 267887,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/command_handlers.py",
+      "original_sha256": "0badf711149f30d927787c155fb33d210afd4cb20bac839421418136a33e5f68",
+      "source_kind": "migrated_legacy"
+    },
+    "companion_delivery.py": {
+      "sha256": "c206164ab90696ceb350562603980bf265c26eb3149d7b85fda6803716f730ba",
+      "bytes": 15442,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/companion_delivery.py",
+      "original_sha256": "c206164ab90696ceb350562603980bf265c26eb3149d7b85fda6803716f730ba",
+      "source_kind": "migrated_legacy"
+    },
+    "companion_frequency.py": {
+      "sha256": "0afed96e95d7dcfafb2aa883c1f3a24f0fff327dec63fe6f0b229429555e13ab",
+      "bytes": 4832,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/companion_frequency.py",
+      "original_sha256": "0afed96e95d7dcfafb2aa883c1f3a24f0fff327dec63fe6f0b229429555e13ab",
+      "source_kind": "migrated_legacy"
+    },
+    "companion_image.py": {
+      "sha256": "3177f4ccdb3e11d00ea4c4a062d66393c206026c501f67d6ddf334f2a61ded44",
+      "bytes": 29422,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/companion_image.py",
+      "original_sha256": "3177f4ccdb3e11d00ea4c4a062d66393c206026c501f67d6ddf334f2a61ded44",
+      "source_kind": "migrated_legacy"
+    },
+    "companion_timer.py": {
+      "sha256": "909cfba6bcb9d8df88f2eba1e627b091f6f0c8902dbb2bd33da7a0d9a9c435a7",
+      "bytes": 14446,
+      "reference": ".runtime/pc_memo_deps_actual_r32/astrbot_plugin_private_companion/companion_timer.py",
+      "original_sha256": "909cfba6bcb9d8df88f2eba1e627b091f6f0c8902dbb2bd33da7a0d9a9c435a7",
+      "source_kind": "migrated_legacy"
+    },
+    "config_migration.py": {
+      "sha256": "08b1b0530acd6cc57e8edb000261ca848a5be3af2553460692a46b209086117a",
+      "bytes": 27440,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/config_migration.py",
+      "original_sha256": "08b1b0530acd6cc57e8edb000261ca848a5be3af2553460692a46b209086117a",
+      "source_kind": "migrated_legacy"
+    },
+    "constants.py": {
+      "sha256": "494b7d65dacc6c3336d1abe1afde69a6c3157d5229c9c56113869ebefdfe2a28",
+      "bytes": 23303,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/constants.py",
+      "original_sha256": "494b7d65dacc6c3336d1abe1afde69a6c3157d5229c9c56113869ebefdfe2a28",
+      "source_kind": "migrated_legacy"
+    },
+    "core_store.py": {
+      "sha256": "5a4abed9d38e52ee04a07f5a150dabe4f1c100cbb1637a2103c9fabfdb79c710",
+      "bytes": 62671,
+      "reference": ".runtime/pc_memo_deps_actual_r32/astrbot_plugin_private_companion/core_store.py",
+      "original_sha256": "5a4abed9d38e52ee04a07f5a150dabe4f1c100cbb1637a2103c9fabfdb79c710",
+      "source_kind": "migrated_legacy"
+    },
+    "creative.py": {
+      "sha256": "a18fc18643d3fe332d53dd17f878de7da0a1fc273425c32b2ee3369457c92d4f",
+      "bytes": 99944,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/creative.py",
+      "original_sha256": "5f8bcdd4c1a59f458b594561a1600376849ef12335aefdd994938bf5fdd15b78",
+      "source_kind": "migrated_legacy"
+    },
+    "daily_state.py": {
+      "sha256": "6a7465fbdac99503369fb9801d28d5c6147e3610db9c7e5b39a4220a9a99de6d",
+      "bytes": 729988,
+      "reference": ".runtime/pc_memo_deps_actual_r32/astrbot_plugin_private_companion/daily_state.py",
+      "original_sha256": "fb396ecc82f860b71b7071ef598a39ea7de6b935d5a75838603760561e6646d9",
+      "source_kind": "migrated_legacy"
+    },
+    "device_life.py": {
+      "sha256": "761d36403a0c114cbbcdd45892fa4b4caf2993d5276dacdf1cc693b202340824",
+      "bytes": 9043,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/device_life.py",
+      "original_sha256": "761d36403a0c114cbbcdd45892fa4b4caf2993d5276dacdf1cc693b202340824",
+      "source_kind": "migrated_legacy"
+    },
+    "dreaming.py": {
+      "sha256": "9f8ec8e7dc8fd8a08203e7237c80009f4006ca6ef900abb4c61d9af084cb4792",
+      "bytes": 52225,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/dreaming.py",
+      "original_sha256": "3e2650c12e11941a092daa098880d71cc1da91046297c02dcff1c7de5aee3faa",
+      "source_kind": "migrated_legacy"
+    },
+    "event_dispatch.py": {
+      "sha256": "6e27ea6b89408662b4245ee374abee174ac1203855cc5a05c2a2f70bce6e6965",
+      "bytes": 204449,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/event_dispatch.py",
+      "original_sha256": "a270f8786e9725521f38d9fdb12bec379938719d99180cb668a4ea941394730f",
+      "source_kind": "migrated_legacy"
+    },
+    "forward_message.py": {
+      "sha256": "b4aa57a87a8b44bc08e05948a0282e140a6e2ff8a86f8306316630b9a2fd0e81",
+      "bytes": 87550,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/forward_message.py",
+      "original_sha256": "b4aa57a87a8b44bc08e05948a0282e140a6e2ff8a86f8306316630b9a2fd0e81",
+      "source_kind": "migrated_legacy"
+    },
+    "group_observation.py": {
+      "sha256": "8d413b99ef6e525f4ffbae681b82a04f85de4f6417ec01d3811a6ccac1598af0",
+      "bytes": 169269,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/group_observation.py",
+      "original_sha256": "8d413b99ef6e525f4ffbae681b82a04f85de4f6417ec01d3811a6ccac1598af0",
+      "source_kind": "migrated_legacy"
+    },
+    "group_wakeup.py": {
+      "sha256": "c9e11e2fc4976dd088faabe30e4db4817d8c119f23e1723fa8d01264fc0d67ef",
+      "bytes": 68182,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/group_wakeup.py",
+      "original_sha256": "c9e11e2fc4976dd088faabe30e4db4817d8c119f23e1723fa8d01264fc0d67ef",
+      "source_kind": "migrated_legacy"
+    },
+    "helpers.py": {
+      "sha256": "92c99f9d7102830eccc50b4b43f6a6668f2a5ce8ae656adb28dec13b54cda55b",
+      "bytes": 45690,
+      "reference": ".runtime/pc_memo_deps_actual_r32/astrbot_plugin_private_companion/helpers.py",
+      "original_sha256": "bb9b98b2ee9e781b2cd3a7a5d52d485b1e087aa0db58ff19d7b4a9733c79bdaa",
+      "source_kind": "migrated_legacy"
+    },
+    "history_surgery.py": {
+      "sha256": "5fd701be841ef4a5a9703b8c280562d84cebe79b29236f701348a14764fdfa73",
+      "bytes": 15227,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/history_surgery.py",
+      "original_sha256": "5fd701be841ef4a5a9703b8c280562d84cebe79b29236f701348a14764fdfa73",
+      "source_kind": "migrated_legacy"
+    },
+    "integration_status.py": {
+      "sha256": "557ae4d3d353078732d95c239ae288bb50bcaaeca65f57b4cbf4669431c465cf",
+      "bytes": 50469,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/integration_status.py",
+      "original_sha256": "ff773a0aa4d318f9c79c007e3e45ea003c5059d81b1faae536f3b030c59c53bd",
+      "source_kind": "migrated_legacy"
+    },
+    "interaction_utils.py": {
+      "sha256": "8d2272673d0570b009ee4ec8f7c7d343da1b26efdcb953cdad777079a4fe8168",
+      "bytes": 10027,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/interaction_utils.py",
+      "original_sha256": "8d2272673d0570b009ee4ec8f7c7d343da1b26efdcb953cdad777079a4fe8168",
+      "source_kind": "migrated_legacy"
+    },
+    "intimacy_life.py": {
+      "sha256": "57c47dd22cad6f94d06c2fd8423c5cba18cb1e84a15541dfd068e7ab538cd7ac",
+      "bytes": 34170,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/intimacy_life.py",
+      "original_sha256": "57c47dd22cad6f94d06c2fd8423c5cba18cb1e84a15541dfd068e7ab538cd7ac",
+      "source_kind": "migrated_legacy"
+    },
+    "life_enhancer.py": {
+      "sha256": "4397be7510607049ca0ca56b3f7e929147dde5a40af7a7260ca1a4d2d45ff546",
+      "bytes": 13997,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/life_enhancer.py",
+      "original_sha256": "4397be7510607049ca0ca56b3f7e929147dde5a40af7a7260ca1a4d2d45ff546",
+      "source_kind": "migrated_legacy"
+    },
+    "llm_tool_actions.py": {
+      "sha256": "b4f97f72a729f83a3941b0e93c0937130818af160ac9fbfe291e6c2e87847825",
+      "original_sha256": "b4f97f72a729f83a3941b0e93c0937130818af160ac9fbfe291e6c2e87847825",
+      "bytes": 152988,
+      "source_kind": "migrated_legacy",
+      "reference": ".runtime/pc_memo_router_overlay_r33_r1/llm_tool_actions.py"
+    },
+    "main.py": {
+      "sha256": "b9c8c0d3db388e096ab3e17a8b54f727c9ac513c849b8d6714294d9993ca9ed5",
+      "bytes": 606175,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/main.py",
+      "original_sha256": "43df488644dd4621b3f720d682214cfe48fb43fbc7665f4c93e7acc84c6b0e94",
+      "source_kind": "migrated_legacy"
+    },
+    "memo_notes.py": {
+      "sha256": "4d99c3daa7efe4022029d7eedcfede8f08ce7208a0539818ecef2d4d0d73e77a",
+      "bytes": 9801,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/memo_notes.py",
+      "original_sha256": "4d99c3daa7efe4022029d7eedcfede8f08ce7208a0539818ecef2d4d0d73e77a",
+      "source_kind": "migrated_legacy"
+    },
+    "memory_companion_adapter.py": {
+      "sha256": "33024fe205d3bd6f26c3efa84ebe011cc2a3c5bc48c25352e53f35e67d53f0b0",
+      "bytes": 76683,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/memory_companion_adapter.py",
+      "original_sha256": "79bff6e1c4d72fdd7565290284d3e8df640a6e89b362065baa7b7939be183f60",
+      "source_kind": "migrated_legacy"
+    },
+    "music_life.py": {
+      "sha256": "5e78524b1f04690ac3a7d9681842392e5fc28026b51ab4cac3a04a3a66cf5f0b",
+      "bytes": 6859,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/music_life.py",
+      "original_sha256": "b0a166d11f7db8c3ff6b1f2ba17d759476e78e7370b9935e3e1e4a6935e9f2ca",
+      "source_kind": "migrated_legacy"
+    },
+    "news_exploration.py": {
+      "sha256": "d166d01bb9ad5a468e7b00732f0b4dfdcbc8c4d34bba6600a825fb84f00cdf47",
+      "bytes": 218671,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/news_exploration.py",
+      "original_sha256": "a528c672ca96d51d56043906f5aeca6c5da702e3aa50dbf20c25b10f1d3bac61",
+      "source_kind": "migrated_legacy"
+    },
+    "page_api.py": {
+      "sha256": "0b3b127d6fc0a7ddd5346a1ef743051b4554bc4124e069d888bc3fc6b75dc60a",
+      "bytes": 41615,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/page_api.py",
+      "original_sha256": "9dffdc7d503c079d365db7fe835fff23aeae0bdbc149161ed4a4e016c4aae025",
+      "source_kind": "migrated_legacy"
+    },
+    "page_api_books.py": {
+      "sha256": "3591275ae9d507740729883e74416c5161a15c9cf1843d0ae20432c9d51d9e8c",
+      "bytes": 58229,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/page_api_books.py",
+      "original_sha256": "3591275ae9d507740729883e74416c5161a15c9cf1843d0ae20432c9d51d9e8c",
+      "source_kind": "migrated_legacy"
+    },
+    "page_api_images.py": {
+      "sha256": "e0e15c1e14b415b387492c6368adec90d07bbfd8085041504dc9df252dde01a3",
+      "bytes": 31278,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/page_api_images.py",
+      "original_sha256": "e0e15c1e14b415b387492c6368adec90d07bbfd8085041504dc9df252dde01a3",
+      "source_kind": "migrated_legacy"
+    },
+    "page_api_life.py": {
+      "sha256": "b9d8454f3023e34e281310806c1c16e3fded62da1d1c3aca0dc0ccf5b3ae90f2",
+      "bytes": 96889,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/page_api_life.py",
+      "original_sha256": "b9d8454f3023e34e281310806c1c16e3fded62da1d1c3aca0dc0ccf5b3ae90f2",
+      "source_kind": "migrated_legacy"
+    },
+    "page_api_proactive.py": {
+      "sha256": "18bb4ce6e3858d5c31fb343da02d062c0f59cda591be57fb2ffd3b246e203555",
+      "bytes": 7228,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/page_api_proactive.py",
+      "original_sha256": "18bb4ce6e3858d5c31fb343da02d062c0f59cda591be57fb2ffd3b246e203555",
+      "source_kind": "migrated_legacy"
+    },
+    "page_api_qzone.py": {
+      "sha256": "cbad620d7b41393c2353346a1305edbda4258e31e2449def5b45a6d938697743",
+      "bytes": 20132,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/page_api_qzone.py",
+      "original_sha256": "cbad620d7b41393c2353346a1305edbda4258e31e2449def5b45a6d938697743",
+      "source_kind": "migrated_legacy"
+    },
+    "page_api_roleplay.py": {
+      "sha256": "0aa99c4597751da15ba21b3e6c7242d8f6098c319579975c82fbd58b4b0fb5de",
+      "bytes": 167247,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/page_api_roleplay.py",
+      "original_sha256": "abf797dc50b8a4e126b50561a8477fd4bcd86bba809f137bb1cb6fbc63a323c9",
+      "source_kind": "migrated_legacy"
+    },
+    "page_api_summary.py": {
+      "sha256": "b21fda50465ee7315abc244b936952bd7d1ee8a2e96159026571f8fb5c581ec7",
+      "bytes": 515778,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/page_api_summary.py",
+      "original_sha256": "b21fda50465ee7315abc244b936952bd7d1ee8a2e96159026571f8fb5c581ec7",
+      "source_kind": "migrated_legacy"
+    },
+    "page_api_trouble.py": {
+      "sha256": "34f457da716af01d1f1aff7eb71c6cb3aecc7b4cdcbe6450f4538e94b8ed35f7",
+      "bytes": 156986,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/page_api_trouble.py",
+      "original_sha256": "34f457da716af01d1f1aff7eb71c6cb3aecc7b4cdcbe6450f4538e94b8ed35f7",
+      "source_kind": "migrated_legacy"
+    },
+    "page_api_users_groups.py": {
+      "sha256": "5d85fede39ef4995d6e638e7173c0af1d3a251dc2e17c0ac2700f1756c386791",
+      "bytes": 42474,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/page_api_users_groups.py",
+      "original_sha256": "5d85fede39ef4995d6e638e7173c0af1d3a251dc2e17c0ac2700f1756c386791",
+      "source_kind": "migrated_legacy"
+    },
+    "persona_modules.py": {
+      "sha256": "849b5de57dd3baa1d5ab86751b253994a2b01a42fa26bcdf1d7a50a1f2c34361",
+      "bytes": 7283,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/persona_modules.py",
+      "original_sha256": "849b5de57dd3baa1d5ab86751b253994a2b01a42fa26bcdf1d7a50a1f2c34361",
+      "source_kind": "migrated_legacy"
+    },
+    "photo_clothing.py": {
+      "sha256": "143623a658bb90fedc539a2fb17e014f1dfba9d0f2af89de1d9bb2b485b1cfb8",
+      "bytes": 6874,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/photo_clothing.py",
+      "original_sha256": "143623a658bb90fedc539a2fb17e014f1dfba9d0f2af89de1d9bb2b485b1cfb8",
+      "source_kind": "migrated_legacy"
+    },
+    "photo_request_policy.py": {
+      "sha256": "1f39fd44d86a1af773ce0600871d6fcf72044f1664b0f3fb8a5c1471e53b9212",
+      "bytes": 5926,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/photo_request_policy.py",
+      "original_sha256": "1f39fd44d86a1af773ce0600871d6fcf72044f1664b0f3fb8a5c1471e53b9212",
+      "source_kind": "migrated_legacy"
+    },
+    "planning.py": {
+      "sha256": "7655cde463ae02c02755bb8a9534f9514a234c3d659a9831099c75dbf817e577",
+      "bytes": 81976,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/planning.py",
+      "original_sha256": "7655cde463ae02c02755bb8a9534f9514a234c3d659a9831099c75dbf817e577",
+      "source_kind": "migrated_legacy"
+    },
+    "presence_adapter.py": {
+      "sha256": "5e4186b7994c27a7a423dcf57368283316fe49723442b928396b15bdf49e2acd",
+      "bytes": 3005,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/presence_adapter.py",
+      "original_sha256": "5e4186b7994c27a7a423dcf57368283316fe49723442b928396b15bdf49e2acd",
+      "source_kind": "migrated_legacy"
+    },
+    "presence_snapshot.py": {
+      "sha256": "bc195c366d87e36cee1682cbda816499bc2b944f12655cb3dd67c6864a8897c6",
+      "bytes": 10385,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/presence_snapshot.py",
+      "original_sha256": "bc195c366d87e36cee1682cbda816499bc2b944f12655cb3dd67c6864a8897c6",
+      "source_kind": "migrated_legacy"
+    },
+    "private_image.py": {
+      "sha256": "4fd2b7bd2d1bf6d4a7bc5067bb7b2490a9229734ffe0681df1219327ade25347",
+      "bytes": 215121,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/private_image.py",
+      "original_sha256": "4fd2b7bd2d1bf6d4a7bc5067bb7b2490a9229734ffe0681df1219327ade25347",
+      "source_kind": "migrated_legacy"
+    },
+    "private_reading.py": {
+      "sha256": "e524d9cd8ca8fd2b5fe404db33e8a6c5ce1a72be94c2d8caa0a93d2f9069c116",
+      "bytes": 87962,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/private_reading.py",
+      "original_sha256": "be43cbba51d9ffc34e755c6f7635d58de429596e0cf406f7203943e496899e24",
+      "source_kind": "migrated_legacy"
+    },
+    "proactive.py": {
+      "sha256": "51cf125b5a4ee84ea198099b305154fb1928b9342761e2bb07a175a1379b5672",
+      "bytes": 953003,
+      "reference": ".runtime/phase4_pc_actual_proactive_r38_20261024.py",
+      "original_sha256": "b26d068d386b3acb3f5f57bebdd35d3249bc2e978c438c72776ffb9d325f1ac4",
+      "source_kind": "migrated_legacy"
+    },
+    "proactive_chat_runtime_bridge.py": {
+      "sha256": "4d3c3c81b775c634cd7f1287752213765a692a564602fc41642b9029d9a23bb1",
+      "bytes": 39403,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/proactive_chat_runtime_bridge.py",
+      "original_sha256": "4d3c3c81b775c634cd7f1287752213765a692a564602fc41642b9029d9a23bb1",
+      "source_kind": "migrated_legacy"
+    },
+    "proactive_photo.py": {
+      "sha256": "a1ff031c07c4fe61edc0de309f6f4aaf8720c3a7851426db771f8adfa2b7520d",
+      "bytes": 220962,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/proactive_photo.py",
+      "original_sha256": "a3c2861270f400893fb4d130928f17611392c5036bdae1a8499c64a7903bd69d",
+      "source_kind": "migrated_legacy"
+    },
+    "prompt_surface.py": {
+      "sha256": "53d495ea5a55b777b790a79d714e54801e5a1f525c3b391e6e5479df5df903c6",
+      "bytes": 3880,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/prompt_surface.py",
+      "original_sha256": "53d495ea5a55b777b790a79d714e54801e5a1f525c3b391e6e5479df5df903c6",
+      "source_kind": "migrated_legacy"
+    },
+    "qzone_integration.py": {
+      "sha256": "42a471cfa35f746b360eabae22a5c6952618967ca105e5cc6a3616922177f548",
+      "bytes": 159879,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/qzone_integration.py",
+      "original_sha256": "a59ee0097a8571946e7b8cf31123b00f96d89119e6af40347845767ec6bf3440",
+      "source_kind": "migrated_legacy"
+    },
+    "qzone_media.py": {
+      "sha256": "b5c9272399f8d3b9743afb1a21a73326b4f85477c6e9afc31fd04f5d60d5a866",
+      "bytes": 47141,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/qzone_media.py",
+      "original_sha256": "b5c9272399f8d3b9743afb1a21a73326b4f85477c6e9afc31fd04f5d60d5a866",
+      "source_kind": "migrated_legacy"
+    },
+    "qzone_recent_parser.py": {
+      "sha256": "c8abbda36eef89a89ff8d9c454822d8710e1164584cb9e82c793b30641065633",
+      "bytes": 7824,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/qzone_recent_parser.py",
+      "original_sha256": "c8abbda36eef89a89ff8d9c454822d8710e1164584cb9e82c793b30641065633",
+      "source_kind": "migrated_legacy"
+    },
+    "qzone_selection.py": {
+      "sha256": "3d4ff630333b552fb418d995214d4bbc36d4d8f6005543592317dcb0279c7335",
+      "bytes": 3261,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/qzone_selection.py",
+      "original_sha256": "3d4ff630333b552fb418d995214d4bbc36d4d8f6005543592317dcb0279c7335",
+      "source_kind": "migrated_legacy"
+    },
+    "reading_life.py": {
+      "sha256": "5a84234f89092b85bb27b9917870c77feaa24c7e41aade41540168024d770592",
+      "bytes": 17962,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/reading_life.py",
+      "original_sha256": "5a84234f89092b85bb27b9917870c77feaa24c7e41aade41540168024d770592",
+      "source_kind": "migrated_legacy"
+    },
+    "remember_you_adapter.py": {
+      "sha256": "31ae2776a8e640a8a3d2f0b19cb983b4116cd0963f2b24add4c70ebef2d34115",
+      "bytes": 26584,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/remember_you_adapter.py",
+      "original_sha256": "ea30c47f04c4335810e56b5416c21ad740965a299cb5910c103f2c0a4ec4f078",
+      "source_kind": "migrated_legacy"
+    },
+    "segmented_message.py": {
+      "sha256": "baf72d1f2fa247f7fce80ddd4c44b440c151c9db4ed7a731937bc8f97d8f849d",
+      "bytes": 2581,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/segmented_message.py",
+      "original_sha256": "baf72d1f2fa247f7fce80ddd4c44b440c151c9db4ed7a731937bc8f97d8f849d",
+      "source_kind": "migrated_legacy"
+    },
+    "self_timeline.py": {
+      "sha256": "670ee5f1f5622f91c8a90c2b5e7e1363e708a3d506141f74f9ea85ee07f02d75",
+      "bytes": 26874,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/self_timeline.py",
+      "original_sha256": "670ee5f1f5622f91c8a90c2b5e7e1363e708a3d506141f74f9ea85ee07f02d75",
+      "source_kind": "migrated_legacy"
+    },
+    "state_views.py": {
+      "sha256": "3f4884a89aeeed06ff816012288c5150be3e4fbc92cfdaa5e66da28aec1aedc0",
+      "bytes": 9873,
+      "reference": ".runtime/pc_memo_deps_actual_r32/astrbot_plugin_private_companion/state_views.py",
+      "original_sha256": "3f4884a89aeeed06ff816012288c5150be3e4fbc92cfdaa5e66da28aec1aedc0",
+      "source_kind": "migrated_legacy"
+    },
+    "storage/__init__.py": {
+      "sha256": "4c954bbdf2aa6fbaeb95c956a68c881a875e4c6ff723ddb92c6b6f2c23e13f8f",
+      "bytes": 489,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/storage/__init__.py",
+      "original_sha256": "a300388ed870720995897935cd5c54b2aa2ef4907db4b68c457d4efafd20f714",
+      "source_kind": "migrated_legacy"
+    },
+    "storage/backend_base.py": {
+      "sha256": "83ae9dfff88b594a1bcd2256a520d5866188d7e408be00b090e3d9894652ca71",
+      "bytes": 941,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/storage/backend_base.py",
+      "original_sha256": "83ae9dfff88b594a1bcd2256a520d5866188d7e408be00b090e3d9894652ca71",
+      "source_kind": "migrated_legacy"
+    },
+    "storage/factory.py": {
+      "sha256": "653081a9fcc291382a02a87451cc92dd4bfdea5990bff2226965a816a0e977ff",
+      "bytes": 664,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/storage/factory.py",
+      "original_sha256": "653081a9fcc291382a02a87451cc92dd4bfdea5990bff2226965a816a0e977ff",
+      "source_kind": "migrated_legacy"
+    },
+    "storage/json_backend.py": {
+      "sha256": "b43d833ae42a6cbcd59886a6cff30017b07df3162befa0e174f98f4172947878",
+      "bytes": 3295,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/storage/json_backend.py",
+      "original_sha256": "b43d833ae42a6cbcd59886a6cff30017b07df3162befa0e174f98f4172947878",
+      "source_kind": "migrated_legacy"
+    },
+    "storage/migration.py": {
+      "sha256": "1f4b9afc87c2a23b73d1e0d8a4559fda579fae600a0c8371e7af05410000caab",
+      "bytes": 880,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/storage/migration.py",
+      "original_sha256": "1f4b9afc87c2a23b73d1e0d8a4559fda579fae600a0c8371e7af05410000caab",
+      "source_kind": "migrated_legacy"
+    },
+    "storage/sqlite_backend.py": {
+      "sha256": "fb53bbc86e573d6759a49193530592b3420874cb35a05d24eee77e930786cbfc",
+      "bytes": 3947,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/storage/sqlite_backend.py",
+      "original_sha256": "fb53bbc86e573d6759a49193530592b3420874cb35a05d24eee77e930786cbfc",
+      "source_kind": "migrated_legacy"
+    },
+    "storage/store_manager.py": {
+      "sha256": "8c10cd8aeb4463c1f29f989876598fc2da61a954777c006b8334b49341894c86",
+      "bytes": 2463,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/storage/store_manager.py",
+      "original_sha256": "8c10cd8aeb4463c1f29f989876598fc2da61a954777c006b8334b49341894c86",
+      "source_kind": "migrated_legacy"
+    },
+    "token_budget.py": {
+      "sha256": "11058b0008593792f261f0fd105e11370594563c2a5a230fb65a3544478e2b84",
+      "bytes": 49110,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/token_budget.py",
+      "original_sha256": "11058b0008593792f261f0fd105e11370594563c2a5a230fb65a3544478e2b84",
+      "source_kind": "migrated_legacy"
+    },
+    "tts_enhancement.py": {
+      "sha256": "c1ba8c86d50b1d98801324ddb53f900f87aeb109ebf7aabf4fa70c23b1960e3d",
+      "bytes": 163462,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/tts_enhancement.py",
+      "original_sha256": "c1ba8c86d50b1d98801324ddb53f900f87aeb109ebf7aabf4fa70c23b1960e3d",
+      "source_kind": "migrated_legacy"
+    },
+    "tts_tool_sanitizer.py": {
+      "sha256": "a71ba978703527345001b39acb75ac2c954c4ee0591acd015d66090a1336d3e4",
+      "bytes": 14885,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/tts_tool_sanitizer.py",
+      "original_sha256": "a71ba978703527345001b39acb75ac2c954c4ee0591acd015d66090a1336d3e4",
+      "source_kind": "migrated_legacy"
+    },
+    "user_memory.py": {
+      "sha256": "035054e4da5ee28beea4a2c514582d8753f511c7e0e001b812ab2342f7afd587",
+      "bytes": 386763,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/user_memory.py",
+      "original_sha256": "035054e4da5ee28beea4a2c514582d8753f511c7e0e001b812ab2342f7afd587",
+      "source_kind": "migrated_legacy"
+    },
+    "user_rest_gate.py": {
+      "sha256": "d6d16f49cde7ff5cfec766b73bb3d5e6e0fabefe9982e250fbd069c31fe92a14",
+      "bytes": 13228,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/user_rest_gate.py",
+      "original_sha256": "4e14fe307068bea94c1fe82468c82aafb6ff1caf042e82151fc4f64da59d947e",
+      "source_kind": "migrated_legacy"
+    },
+    "worldbook.py": {
+      "sha256": "2423a36683abc0d92edde8ecf56c1a47659e2d58dcd4dad515cad13110322316",
+      "bytes": 61799,
+      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/worldbook.py",
+      "original_sha256": "2423a36683abc0d92edde8ecf56c1a47659e2d58dcd4dad515cad13110322316",
+      "source_kind": "migrated_legacy"
+    },
+    "__init__.py": {
+      "reference": "new TLS native adapter",
+      "sha256": "ad5adb84cc046ffbd2815dde354f5cbd6baa913287190fa0d0224e2b1cb2966a",
+      "bytes": 137,
+      "source_kind": "generated_tls"
+    },
+    "native_runtime_bindings.py": {
+      "reference": "new TLS native adapter",
+      "sha256": "d443e98fb37acf2ecd5224458559628e0d72763d13289e44c19b2241314b1b26",
+      "bytes": 2689,
+      "source_kind": "generated_tls"
+    },
+    "tls_memo_tool_adapter.py": {
+      "sha256": "ea8a834be8efa7cd01b5cb71ee52da73a7f61823f75b6cf50e8d936477a9a09d",
+      "original_sha256": "ea8a834be8efa7cd01b5cb71ee52da73a7f61823f75b6cf50e8d936477a9a09d",
+      "bytes": 7148,
+      "source_kind": "migrated_legacy",
+      "reference": ".runtime/pc_memo_router_overlay_r33_r1/tls_memo_tool_adapter.py"
+    }
+  },
+  "native_adjustments": {
+    "scoped_projection_reads": [
+      {
+        "file": "creative.py",
+        "scoped_plan_reads": 2
+      },
+      {
+        "file": "daily_state.py",
+        "scoped_plan_reads": 21
+      },
+      {
+        "file": "dreaming.py",
+        "scoped_plan_reads": 2
+      },
+      {
+        "file": "event_dispatch.py",
+        "scoped_plan_reads": 1
+      },
+      {
+        "file": "main.py",
+        "scoped_plan_reads": 7
+      },
+      {
+        "file": "memory_companion_adapter.py",
+        "scoped_plan_reads": 2
+      },
+      {
+        "file": "news_exploration.py",
+        "scoped_plan_reads": 4
+      },
+      {
+        "file": "page_api.py",
+        "scoped_plan_reads": 1
+      },
+      {
+        "file": "page_api_roleplay.py",
+        "scoped_plan_reads": 8
+      },
+      {
+        "file": "private_reading.py",
+        "scoped_plan_reads": 1
+      },
+      {
+        "file": "proactive.py",
+        "scoped_plan_reads": 14
+      },
+      {
+        "file": "proactive_photo.py",
+        "scoped_plan_reads": 3
+      },
+      {
+        "file": "qzone_integration.py",
+        "scoped_plan_reads": 4
+      },
+      {
+        "file": "remember_you_adapter.py",
+        "scoped_plan_reads": 2
+      }
+    ],
+    "old_global_plan_overwritten": false,
+    "native_runtime_bridges": true,
+    "cache_atexit_cleanup": false,
+    "public_schema_included": true,
+    "private_config_included": false,
+    "tests_run": false,
+    "business_executed": false
+  }
+}

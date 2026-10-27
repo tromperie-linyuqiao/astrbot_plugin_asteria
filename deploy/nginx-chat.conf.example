@@ -1,0 +1,17 @@
+# Include INSIDE your own HTTPS server block. Replace ONLY the local AstrBot upstream.
+# Configure your own TLS certificate on that server; never expose a default password.
+location = /asteria-api/auth/login {
+    proxy_pass http://127.0.0.1:6185/api/auth/login;
+    proxy_set_header Host $host;
+}
+location /asteria-api/chat/ {
+    proxy_pass http://127.0.0.1:6185/api/v1/plugins/extensions/astrbot_plugin_virtual_body/page/chat/;
+    proxy_set_header Host $host;
+    proxy_set_header Authorization $http_authorization;
+    proxy_http_version 1.1;
+    proxy_read_timeout 180s;
+    client_max_body_size 9m;
+    proxy_buffering off;
+}
+# APP server setting: https://YOUR-HOST/asteria-api
+# Verify your installed AstrBot plugin API prefix; the source contract remains authenticated.

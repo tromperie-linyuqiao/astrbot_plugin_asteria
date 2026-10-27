@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>原生记忆 · 管理</title>
+<script>
+try{const theme=new URLSearchParams(location.search).get('theme');document.documentElement.dataset.theme=['light','dark','black'].includes(theme)?theme:'dark';}catch(_){document.documentElement.dataset.theme='dark';}
+</script>
+<style>
+:root{color-scheme:dark;--bg:#0d1117;--panel:#161b22;--edge:#30363d;--text:#e6edf3;--muted:#9ba6b4;--blue:#58a6ff;--red:#ff938a}
+:root[data-theme="light"]{color-scheme:light;--bg:#f5f7fa;--panel:#fff;--edge:#d5dbe3;--text:#17202c;--muted:#566375;--blue:#245cab;--red:#a52c33}
+:root[data-theme="black"]{color-scheme:dark;--bg:#000;--panel:#111;--edge:#333;--text:#ededed;--muted:#aaa;--blue:#9bb4d5;--red:#f0a0a0}
+*{box-sizing:border-box}body{margin:0;padding:18px;background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",sans-serif}main{max-width:1040px;margin:auto}h1,h2,p{margin:0}h1{font-size:25px;letter-spacing:.03em}h2{font-size:16px}button,input,select,textarea{font:inherit;color:inherit;border:1px solid var(--edge);border-radius:7px;background:var(--bg);min-height:40px;padding:8px 11px}input,select,textarea{width:100%;min-width:0}textarea{resize:vertical;min-height:112px}button{cursor:pointer;background:#21262d;white-space:nowrap}button:hover{border-color:var(--blue)}button:disabled{opacity:.5;cursor:default}.primary{background:#1f6feb;border-color:#1f6feb}.danger{color:var(--red)}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.xnav{display:flex;gap:7px;flex-wrap:wrap;border-bottom:1px solid var(--edge);padding-bottom:14px;margin-bottom:22px}.xnav a{color:var(--muted);text-decoration:none;border:1px solid var(--edge);padding:6px 12px;border-radius:7px;cursor:pointer}.xnav a.cur{background:#1f6feb22;border-color:#1f6feb88;color:var(--blue)}.heading{display:flex;align-items:start;justify-content:space-between;gap:12px;margin-bottom:18px}.eyebrow{font-size:11px;letter-spacing:.15em;color:var(--blue);margin-bottom:4px}.muted,.hint{color:var(--muted);font-size:12px}.panel{background:var(--panel);border:1px solid var(--edge);border-radius:12px;padding:20px;margin-bottom:16px}.panel-title{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}.scope-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px}label{display:block;font-size:12px;color:var(--muted)}label>input,label>select,label>textarea{display:block;margin-top:5px;color:var(--text)}.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.scope-summary{margin-top:14px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;color:var(--muted);border-left:2px solid var(--blue);padding-left:12px}.toolbar{display:flex;gap:9px;align-items:end;flex-wrap:wrap}.toolbar .query{flex:1;min-width:170px}.check{display:flex;align-items:center;gap:7px;min-height:40px}.check input{width:16px;min-height:auto;margin:0}.stats{font-size:12px;color:var(--muted);margin:12px 0;white-space:pre-wrap;overflow-wrap:anywhere}.record{border:1px solid var(--edge);border-radius:9px;padding:16px;margin-top:12px;background:var(--bg)}.record-content{white-space:pre-wrap;overflow-wrap:anywhere;margin-bottom:10px}.record-meta{font-size:12px;color:var(--muted);overflow-wrap:anywhere}.record-buttons{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.record.deleted{opacity:.65}.empty{padding:24px 0;color:var(--muted);text-align:center}.status{position:sticky;top:8px;z-index:2;padding:10px 14px;border-radius:8px;background:#143221;border:1px solid #2c6745;margin-bottom:16px;overflow-wrap:anywhere}.status.error{background:#391d22;border-color:#71323d}.status[hidden]{display:none}.add-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}.add-content{grid-column:1/-1}.badge{border:1px solid #388bfd66;border-radius:99px;padding:3px 10px;color:var(--blue);font-size:12px;white-space:nowrap}dialog{width:min(560px,calc(100vw - 28px));color:var(--text);background:var(--panel);border:1px solid var(--edge);border-radius:12px;padding:22px}dialog::backdrop{background:#0009}dialog h2{margin-bottom:10px}.dialog-info{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted);font-size:12px;margin-bottom:12px}.dialog-error{color:var(--red);margin-top:10px}.footer{font-size:12px;color:var(--muted);padding:2px 2px 20px}.pagination{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:15px}.source-details{font-size:12px;overflow-wrap:anywhere;margin-top:10px}.source-details pre{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted)}
+@media(max-width:680px){body{padding:12px}.panel{padding:16px}.scope-grid{grid-template-columns:1fr 1fr}.heading{flex-wrap:wrap}h1{font-size:22px}.toolbar>button{flex:1}.add-grid{grid-template-columns:1fr}.add-content{grid-column:auto}.actions>button{flex:1}.badge{margin-top:4px}}
+@media(max-width:420px){.scope-grid{grid-template-columns:1fr}.xnav a{padding:7px 10px}.panel-title{flex-wrap:wrap}}
+:root[data-theme="light"] button:not(.primary){background:#e9edf3}:root[data-theme="light"] .status{background:#e6f3e9;color:#235036}:root[data-theme="light"] .status.error{background:#fae9ec;color:#7d2935}
+:root[data-theme="black"] button:not(.primary){background:#1b1b1b}:root[data-theme="black"] .primary{background:#29425f;border-color:#536a85}:root[data-theme="black"] .status{background:#18221d;border-color:#38483f}:root[data-theme="black"] .status.error{background:#28191d;border-color:#634148}
+</style>
+</head>
+<body><main>
+<nav class="xnav" aria-label="存在层页面">
+<a href="#" data-page="console">功能工作台</a>
+<a href="#" data-page="status">身体</a><a href="#" data-page="manor">空间</a><a href="#" data-page="materials">材质</a><a href="#" data-page="home">总览</a><a href="#" data-page="mood">心绪</a><a class="cur" aria-current="page">记忆</a>
+</nav>
+<header class="heading"><div><p class="eyebrow">PRESENCE / NATIVE MEMORY</p><h1>原生记忆管理</h1><p class="muted">查看来源，修正事实，让每条记忆有据可查。</p></div><span class="badge">独立原生存储</span></header>
+<div id="status" class="status" role="status" aria-live="polite" hidden></div>
+<section class="panel" aria-labelledby="scope-title">
+<h2 id="scope-title">选择会话</h2>
+<p class="hint">后台管理员可管理历史私聊范围；每次仅查看一个用户、角色和会话。这里的操作不会授予聊天自动读写权限。</p>
+<div class="toolbar" style="margin-top:14px"><label class="query">会话与历史记忆范围<select id="scope-select" disabled><option>正在读取会话…</option></select></label><button type="button" id="scope-refresh">刷新会话</button></div>
+<p class="hint" id="scope-help">列出当前已授权的真实入站私聊，以及原生存储中的历史范围，最多 100 个。</p>
+<details id="advanced-scope" style="margin-top:14px"><summary>高级：指定或新建数据范围</summary>
+<p class="hint">五项身份必须完整匹配。手动指定范围仅适用于管理员已核实的完整身份，不会建立聊天授权。</p>
+<form id="scope-form">
+<div class="scope-grid">
+<label>平台 · platform<input name="platform" required maxlength="256" autocomplete="off" placeholder="例如 aiocqhttp"></label>
+<label>机器人 · bot_id<input name="bot_id" required maxlength="256" autocomplete="off"></label>
+<label>用户 · user_id<input name="user_id" required maxlength="256" autocomplete="off"></label>
+<label>角色 · character_id<input name="character_id" required maxlength="256" autocomplete="off"></label>
+<label>会话 · session_id<input name="session_id" required maxlength="256" autocomplete="off"></label>
+</div><div class="actions"><button class="primary" type="submit">载入此范围</button><span class="hint">不提供“全部用户”查询。</span></div>
+</form></details><details style="margin-top:14px"><summary>查看当前数据范围</summary><div class="scope-summary" id="scope-summary">尚未载入数据范围。</div></details>
+</section>
+<section class="panel" aria-labelledby="records-title">
+<div class="panel-title"><h2 id="records-title">记忆记录</h2><span class="hint" id="result-label">等待指定范围</span></div>
+<form id="search-form" class="toolbar">
+<label class="query">关键词<input id="query" maxlength="512" placeholder="在当前范围内查找内容" autocomplete="off"></label>
+<button type="submit" data-requires-scope disabled>检索</button><button type="button" id="list-button" data-requires-scope disabled>显示列表</button>
+<label class="check"><input id="include-deleted" type="checkbox">含已删除</label>
+</form>
+<p class="hint">当前使用本地关键词检索，最多返回 8 条有效记录；不保证语义召回。列表每页 50 条，可显示软删除记录。</p>
+<div class="stats" id="stats"></div><div id="records" aria-live="polite"><p class="empty">填写五项身份后载入。</p></div>
+<div class="pagination"><button id="previous" disabled>上一页</button><span class="hint" id="page-label"></span><button id="next" disabled>下一页</button></div>
+</section>
+<section class="panel" aria-labelledby="add-title"><h2 id="add-title">手动补充记忆</h2>
+<p class="hint">手动新增的来源固定为 webui.admin。证据类型会随记录保存，推测和角色扮演内容应标注对应类型。</p>
+<form id="add-form"><div class="add-grid">
+<label>记忆类型<input name="memory_type" value="fact" maxlength="64" required autocomplete="off"></label>
+<label>证据类型<select name="evidence_kind"><option value="user_reported">用户陈述</option><option value="real_observation">真实观察</option><option value="model_inference">模型推测</option><option value="roleplay_event">角色扮演</option><option value="action_result">动作结果</option></select></label>
+<label class="add-content">内容<textarea name="content" maxlength="6000" required placeholder="写下具体事实，并尽量保留发生时间和适用条件。"></textarea></label>
+</div><div class="actions"><button id="add-save" class="primary" type="submit" data-requires-scope disabled>保存到当前范围</button><button id="add-check" type="button" hidden>只读核对原新建请求</button></div><p id="add-request-state" class="hint" role="status"></p></form>
+</section>
+<p class="footer">本页通过 AstrBot 已认证的插件页面接口访问原生记忆。原生后端关闭或不可用时会明确报错；编辑和删除按记录版本检查冲突。</p>
+</main>
+<dialog id="edit-dialog" aria-labelledby="edit-title"><form id="edit-form"><h2 id="edit-title">确认修正记忆</h2><p class="dialog-info" id="edit-info"></p><label>修正后的内容<textarea id="edit-content" required maxlength="6000"></textarea></label><p class="hint">保存后生成新版本。若记录已被其他操作修改，请刷新后重新编辑。</p><p id="edit-error" class="dialog-error" role="alert"></p><div class="actions"><button type="button" id="edit-cancel">取消</button><button type="submit" class="primary" id="edit-save">确认保存修正</button></div></form></dialog>
+<dialog id="delete-dialog" aria-labelledby="delete-title"><form id="delete-form"><h2 id="delete-title">确认删除这条记忆？</h2><p class="dialog-info" id="delete-info"></p><p class="hint">记录将标为已删除，并退出正常检索与聊天上下文。来源与修订历史保留供审计。</p><p id="delete-error" class="dialog-error" role="alert"></p><div class="actions"><button type="button" id="delete-cancel">取消</button><button type="submit" class="danger" id="delete-save">确认删除</button></div></form></dialog>
+<dialog id="restore-dialog" aria-labelledby="restore-title"><form id="restore-form"><h2 id="restore-title">确认恢复这条记忆？</h2><p class="dialog-info" id="restore-info"></p><p class="hint">按当前版本撤销软删除，保留原文、来源和历史。恢复后重新参与正常检索，不会发送消息。</p><p id="restore-error" class="dialog-error" role="alert"></p><div class="actions"><button type="button" id="restore-cancel">取消</button><button type="submit" class="primary" id="restore-save">确认恢复</button></div></form></dialog>
+<script src="/api/plugin/page/bridge-sdk.js"></script>
+<script>
+'use strict';
+const PLUGIN = 'astrbot_plugin_virtual_body';
+const FIELDS = ['platform','bot_id','user_id','character_id','session_id'];
+const $ = id => document.getElementById(id);
+const state = {scope:null,scopes:[],generation:0,readRequest:0,offset:0,mode:'list',rows:[],busy:0,editing:null,deleting:null,restoring:null};
+const addPending=new Map(),addDrafts=new Map();
+const scopeKey=scope=>JSON.stringify(FIELDS.map(key=>scope&&scope[key]));
+let ready;
+function showStatus(message,error=false){const el=$('status');el.textContent=message;el.classList.toggle('error',error);el.hidden=false;}
+function displayError(error){return error && error.displayMessage || '连接失败，请从 AstrBot 管理后台重新打开页面后重试。';}
+function publicError(status,message){const error=new Error('Native memory request failed');error.status=status;const defaults={400:'参数无效，请检查完整范围和记忆内容。',401:'认证已失效，请从 AstrBot 管理后台重新打开页面。',403:'当前账号没有插件页面管理权限。',404:'当前范围中找不到该记忆，请刷新列表。',409:'记录已被修改，请刷新后重新编辑。',503:'原生记忆未启用或暂不可用，请检查存在层与记忆配置。'};error.displayMessage=defaults[status] || message || '操作失败，请稍后重试。';return error;}
+// The host or its authenticated relay injects this SDK. Page asset tokens are
+// for assets only and are never repurposed as extension API credentials.
+const bridge=window.AstrBotPluginPage;
+async function api(method,endpoint,payload){
+  if(!bridge || typeof bridge.ready!=='function')throw publicError(401);
+  if(!ready)ready=bridge.ready();
+  await ready;
+  let result;
+  try{result=method==='GET'?await bridge.apiGet(endpoint,payload):await bridge.apiPost(endpoint,payload);}
+  catch(error){if(error && error.displayMessage)throw error;const status=Number(error && (error.status || error.statusCode));throw publicError(status);}
+  if(result && result.status==='error')throw publicError(Number(result.status_code || result.code),result.message);
+  if(result && result.data && result.ok===undefined)result=result.data;
+  if(!result || result.ok!==true)throw publicError(500);
+  return result;
+}
+function busy(change){state.busy+=change;document.querySelectorAll('[data-requires-scope]').forEach(button=>button.disabled=!state.scope || state.busy>0);$('previous').disabled=state.busy>0 || state.mode!=='list' || state.offset===0;$('next').disabled=state.busy>0 || state.mode!=='list' || state.rows.length<50;document.querySelectorAll('.record-buttons button').forEach(button=>button.disabled=state.busy>0);const pending=state.scope&&addPending.get(scopeKey(state.scope));$('add-save').disabled=!state.scope||state.busy>0||!!pending;$('add-check').hidden=!pending;$('add-check').disabled=state.busy>0;}
+function clearRecords(message){$('records').replaceChildren();const p=document.createElement('p');p.className='empty';p.textContent=message;$('records').append(p);}
+function scopeLabel(scope){return FIELDS.map(key=>key+': '+scope[key]).join('\n');}
+function sameScope(left,right){return !!left && !!right && FIELDS.every(key=>left[key]===right[key]);}
+function clearSelection(){for(const action of ['edit','delete','restore']){const dialog=$(action+'-dialog');if(dialog.open)dialog.close();}state.editing=state.deleting=state.restoring=null;}
+function saveAddDraft(){if(state.scope)addDrafts.set(scopeKey(state.scope),Object.fromEntries(['content','memory_type','evidence_kind'].map(key=>[key,$('add-form').elements[key].value])));}
+function selectScope(scope){saveAddDraft();clearSelection();state.scope=Object.fromEntries(FIELDS.map(key=>[key,scope[key]]));state.generation++;state.offset=0;state.mode='list';state.rows=[];const draft=addDrafts.get(scopeKey(state.scope))||{content:'',memory_type:'fact',evidence_kind:'user_reported'};for(const key of Object.keys(draft))$('add-form').elements[key].value=draft[key];$('add-request-state').textContent=addPending.has(scopeKey(state.scope))?'本范围有待核对的新建请求；只能读取原请求，不重复新增。':'';for(const key of FIELDS)$('scope-form').elements[key].value=scope[key];$('scope-summary').textContent='当前操作范围（私聊）\n'+scopeLabel(state.scope);$('stats').textContent='';$('page-label').textContent='';clearRecords('读取中…');loadRecords();}
+function short(value,maximum=34){return value.length>maximum?'…'+value.slice(-(maximum-1)):value;}
+async function loadScopes(){
+  const select=$('scope-select');select.disabled=true;$('scope-refresh').disabled=true;
+  try{const result=await api('GET','page/memory/scopes',{limit:100});state.scopes=(Array.isArray(result.scopes)?result.scopes:[]).filter(scope=>scope && FIELDS.every(key=>typeof scope[key]==='string' && scope[key].trim()));select.replaceChildren();
+    if(!state.scopes.length){const option=document.createElement('option');option.textContent='暂无可选会话';select.append(option);$('scope-help').textContent='先在目标私聊发一句正常的话，再刷新会话；无需先新增记忆。高级设置仅供管理员指定已核实的完整范围。';$('advanced-scope').open=true;if(!state.scope)clearRecords('暂无可选范围。先在目标私聊发话，再刷新会话。');return;}
+    state.scopes.forEach((scope,index)=>{const option=document.createElement('option');option.value=String(index);option.textContent=short(scope.user_id,18)+' / '+short(scope.character_id,18)+' / '+short(scope.session_id);option.title=scopeLabel(scope);select.append(option);});select.disabled=false;$('scope-help').textContent='按用户 / 角色 / 会话选择。包含当前已授权入站会话和原生历史范围，最多 100 个。';const current=state.scopes.findIndex(scope=>sameScope(scope,state.scope));if(current>=0)select.value=String(current);else if(!state.scope){select.value='0';selectScope(state.scopes[0]);}else{select.selectedIndex=-1;}
+  }catch(error){select.replaceChildren();const option=document.createElement('option');option.textContent='会话读取失败';select.append(option);showStatus(displayError(error),true);$('scope-help').textContent='无法读取会话。可检查原生记忆配置后点击“刷新会话”。';}
+  finally{$('scope-refresh').disabled=false;}
+}
+function evidenceLabel(value){return {real_observation:'真实观察',user_reported:'用户陈述',model_inference:'模型推测',roleplay_event:'角色扮演',action_result:'动作结果'}[value] || String(value || '未知');}
+function renderRows(rows,scope,generation){
+  $('records').replaceChildren();
+  if(!rows.length){clearRecords(state.mode==='search'?'当前范围没有匹配结果。':'当前范围尚无记忆记录。');return;}
+  rows.forEach(row=>{
+    const card=document.createElement('article');card.className='record';
+    const deleted=row.lifecycle==='deleted' || row.deleted===true || !!row.deleted_at;
+    card.classList.toggle('deleted',deleted);
+    const content=document.createElement('p');content.className='record-content';content.textContent=String(row.content || '');card.append(content);
+    const meta=document.createElement('p');meta.className='record-meta';meta.textContent='来源 '+String(row.source_id || row.source || '未知')+' · '+evidenceLabel(row.evidence_kind)+' · '+String(row.memory_type || 'fact')+' · 版本 '+String(row.revision)+' · '+(deleted?'已删除':String(row.lifecycle || '有效'));card.append(meta);
+    const identity=document.createElement('p');identity.className='record-meta';identity.textContent='ID '+String(row.id || '');card.append(identity);
+    const details=document.createElement('details');details.className='source-details';const summary=document.createElement('summary');summary.textContent='查看时间与来源详情';details.append(summary);const pre=document.createElement('pre');pre.textContent=JSON.stringify({occurred_at:row.occurred_at,created_at:row.created_at,updated_at:row.updated_at,expires_at:row.expires_at,confidence:row.confidence,importance:row.importance,metadata:row.metadata},null,2);details.append(pre);card.append(details);
+    if(!deleted){const actions=document.createElement('div');actions.className='record-buttons';const edit=document.createElement('button');edit.type='button';edit.textContent='修正';edit.addEventListener('click',()=>{if(generation!==state.generation)return;state.editing={row,scope,generation};$('edit-info').textContent=scopeLabel(scope)+'\n记忆 '+row.id+' · 版本 '+row.revision;$('edit-content').value=String(row.content || '');$('edit-error').textContent='';$('edit-dialog').showModal();});const del=document.createElement('button');del.type='button';del.className='danger';del.textContent='删除';del.addEventListener('click',()=>{if(generation!==state.generation)return;state.deleting={row,scope,generation};$('delete-info').textContent=scopeLabel(scope)+'\n\n'+String(row.content || '');$('delete-error').textContent='';$('delete-dialog').showModal();});actions.append(edit,del);card.append(actions);}
+    if(deleted){const actions=document.createElement('div');actions.className='record-buttons';const restore=document.createElement('button');restore.type='button';restore.textContent='恢复记忆';restore.addEventListener('click',()=>{if(generation!==state.generation)return;state.restoring={row,scope,generation};$('restore-info').textContent=scopeLabel(scope)+'\n\n'+String(row.content||'')+'\n版本 '+row.revision;$('restore-error').textContent='';$('restore-dialog').showModal();});actions.append(restore);card.append(actions);}
+    $('records').append(card);
+  });
+}
+function renderStats(stats){$('stats').textContent=Object.entries(stats || {}).filter(([,value])=>typeof value==='number' || typeof value==='string').map(([key,value])=>key+': '+value).join(' · ');}
+async function loadRecords(){
+  if(!state.scope)return;
+  const generation=state.generation,request=++state.readRequest,scope={...state.scope},mode=state.mode,query=$('query').value.trim();
+  if(mode==='search' && !query){showStatus('请先填写检索关键词。',true);return;}
+  busy(1);$('result-label').textContent='读取中…';
+  try{
+    const params=mode==='search'?{...scope,q:query,limit:8}:{...scope,limit:50,offset:state.offset,include_deleted:$('include-deleted').checked};
+    const [result,stats]=await Promise.all([api('GET','page/memory/'+mode,params),api('GET','page/memory/stats',scope)]);
+    if(generation!==state.generation||request!==state.readRequest)return;
+    state.rows=Array.isArray(result.records)?result.records:[];renderRows(state.rows,scope,generation);renderStats(stats.stats);$('result-label').textContent=(mode==='search'?'检索结果':'当前页')+' · '+state.rows.length+' 条';$('page-label').textContent=mode==='list'?'第 '+(Math.floor(state.offset/50)+1)+' 页':'关键词结果';showStatus('已载入当前范围的原生记忆。');
+  }catch(error){if(generation!==state.generation||request!==state.readRequest)return;state.rows=[];clearRecords('读取失败。请检查页面上方提示后重试。');$('result-label').textContent='读取失败';$('stats').textContent='';showStatus(displayError(error),true);}
+  finally{busy(-1);}
+}
+$('scope-form').addEventListener('submit',event=>{event.preventDefault();const form=new FormData(event.currentTarget),scope={};for(const key of FIELDS){const value=String(form.get(key) || '');if(!value.trim() || value!==value.trim()){showStatus('五项范围均须填写，且不能包含首尾空白。',true);return;}scope[key]=value;}const current=state.scopes.findIndex(candidate=>sameScope(candidate,scope));$('scope-select').selectedIndex=current;selectScope(scope);});
+$('scope-form').addEventListener('input',()=>{if(!state.scope)return;saveAddDraft();clearSelection();state.scope=null;state.generation++;state.rows=[];$('add-form').elements.content.value='';$('add-request-state').textContent='';$('scope-select').selectedIndex=-1;$('scope-summary').textContent='范围已修改，请点击“载入此范围”后再操作。';$('stats').textContent='';$('result-label').textContent='等待载入';$('page-label').textContent='';clearRecords('范围已修改，旧结果已清除。');busy(0);});
+$('scope-select').addEventListener('change',()=>{const scope=state.scopes[Number($('scope-select').value)];if(scope)selectScope(scope);});$('scope-refresh').addEventListener('click',loadScopes);
+$('search-form').addEventListener('submit',event=>{event.preventDefault();if(state.busy)return;state.mode='search';state.offset=0;loadRecords();});
+$('list-button').addEventListener('click',()=>{state.mode='list';state.offset=0;loadRecords();});
+$('include-deleted').addEventListener('change',()=>{if(!state.scope || state.busy)return;state.mode='list';state.offset=0;loadRecords();});
+$('previous').addEventListener('click',()=>{state.offset=Math.max(0,state.offset-50);loadRecords();});$('next').addEventListener('click',()=>{state.offset+=50;loadRecords();});
+function newRequestId(){if(window.crypto&&typeof crypto.randomUUID==='function')return 'webui.memory.'+crypto.randomUUID();if(window.crypto&&typeof crypto.getRandomValues==='function')return 'webui.memory.'+Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('');throw publicError(400,'本页无法创建稳定请求ID，请从后台重新打开。');}
+async function readAdded(scope,generation,pending){const result=await api('GET','page/memory/request',{...scope,request_id:pending.request_id});if(!sameScope(result.scope,scope)||!result.record||result.record.source_id!=='webui.admin'||result.record.metadata?.request_id!==pending.request_id)throw publicError(500);addPending.delete(scopeKey(scope));if(generation!==state.generation)return;if($('add-form').elements.content.value===pending.content)$('add-form').elements.content.value='';saveAddDraft();$('add-request-state').textContent='已按原请求回读确认；没有再次新增。';state.mode='list';state.offset=0;await loadRecords();if(generation===state.generation)showStatus('记忆已保存，来源为 webui.admin；原请求已回读确认。');}
+$('add-form').addEventListener('submit',async event=>{event.preventDefault();if(!state.scope||state.busy||addPending.has(scopeKey(state.scope)))return;const scope={...state.scope},generation=state.generation,form=new FormData(event.currentTarget),content=String(form.get('content')||'');if(!content.trim())return;let pending;try{pending={scope,content,memory_type:String(form.get('memory_type')),evidence_kind:String(form.get('evidence_kind')),request_id:newRequestId()};}catch(error){showStatus(displayError(error),true);return;}addPending.set(scopeKey(scope),pending);busy(1);let accepted=false;try{await api('POST','page/memory/add',pending);accepted=true;await readAdded(scope,generation,pending);}catch(error){if(!accepted&&[400,401,403,404,409].includes(Number(error?.status)))addPending.delete(scopeKey(scope));if(generation===state.generation){$('add-request-state').textContent=addPending.has(scopeKey(scope))?'保存结果待确认，请只读核对原新建请求，不要重新提交。':'本次请求被拒绝，草稿仍保留。';showStatus(displayError(error),true);}}finally{busy(-1);}});
+$('add-check').addEventListener('click',async()=>{if(!state.scope||state.busy)return;const scope={...state.scope},generation=state.generation,pending=addPending.get(scopeKey(scope));if(!pending)return;busy(1);try{await readAdded(scope,generation,pending);}catch(error){if(generation===state.generation)showStatus('尚未确认原新建请求，可能仍在处理；只继续回读，不重复提交。',true);}finally{busy(-1);}});
+$('edit-cancel').addEventListener('click',()=>$('edit-dialog').close());$('delete-cancel').addEventListener('click',()=>$('delete-dialog').close());$('restore-cancel').addEventListener('click',()=>$('restore-dialog').close());
+async function commitChange(action){
+  const editing=action==='correct',kind=editing?'edit':action,selection=editing?state.editing:action==='restore'?state.restoring:state.deleting,dialog=$(kind+'-dialog'),errorBox=$(kind+'-error'),save=$(kind+'-save');
+  if(save.disabled)return;
+  if(!selection || selection.generation!==state.generation){errorBox.textContent='数据范围已改变，请关闭并重新载入。';return;}
+  const payload={scope:selection.scope,id:selection.row.id,expected_revision:selection.row.revision};if(editing)payload.content=$('edit-content').value;
+  save.disabled=true;busy(1);try{await api('POST','page/memory/'+action,payload);if(selection.generation===state.generation){dialog.close();await loadRecords();if(selection.generation===state.generation)showStatus(editing?'记忆修正已保存。':action==='restore'?'记忆已恢复，原文与历史保留。':'记忆已标为删除。');}}catch(error){if(selection.generation===state.generation){errorBox.textContent=displayError(error);if(error && error.status===409)showStatus('版本冲突：关闭弹窗并重新载入列表后再操作。',true);}}finally{save.disabled=false;busy(-1);}
+}
+$('edit-form').addEventListener('submit',event=>{event.preventDefault();commitChange('correct');});$('delete-form').addEventListener('submit',event=>{event.preventDefault();commitChange('delete');});$('restore-form').addEventListener('submit',event=>{event.preventDefault();commitChange('restore');});
+document.querySelectorAll('[data-page]').forEach(link=>link.addEventListener('click',async event=>{event.preventDefault();try{if(!bridge)throw publicError(401);await bridge.ready();let result=await bridge.apiGet('page/nav',{to:link.dataset.page,theme:document.documentElement.dataset.theme||'dark',format:'json'});if(result && result.data && !result.url)result=result.data;const url=new URL(result.url,location.href);if(url.origin!==location.origin || url.pathname!=='/api/plugin/page/content/'+PLUGIN+'/'+link.dataset.page+'/' || url.username || url.password || !url.searchParams.get('asset_token'))throw publicError(500);location.href=url.href;}catch(error){showStatus('导航失败，请从 AstrBot 管理后台重新打开页面。',true);}}));
+if(!bridge)showStatus('页面桥接不可用，请从 AstrBot 管理后台打开“记忆”页面。',true);else loadScopes();
+</script>
+</body>
+</html>
+

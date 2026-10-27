@@ -1,0 +1,12 @@
+Asteria / 星栖 — public AstrBot companion system
+
+Original VirtualBody and subsequent commissioned work are maintained by
+tromperie-linyuqiao. Original author and source notices are preserved.
+The owner confirmed ownership of the integrated Memory Companion and Private
+Companion implementations on 2026-10-28, and authorized this public distribution.
+
+Original contributions: AGPL-3.0-or-later, as already selected by the owner.
+The integrated proactive-chat implementation is AGPL-3.0-only; its authors and
+source notice remain. This combined distribution can be used under AGPL v3.
+Third-party MIT components retain their respective licenses.
+No warranty. See LICENSE and THIRD_PARTY_NOTICES.md.

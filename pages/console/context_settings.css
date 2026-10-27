@@ -1,0 +1,22 @@
+.tls-context-settings{border:1px solid var(--line,#dcd8cf);border-radius:12px;background:var(--panel,#fffefa);padding:20px;margin-bottom:18px;min-width:0}
+.tls-context-settings [hidden]{display:none!important}
+.context-settings-heading{display:flex;gap:8px 18px;align-items:baseline;justify-content:space-between;flex-wrap:wrap}
+.context-settings-heading h2{font-size:17px;margin:0}
+.context-settings-summary{font-size:15px;margin:14px 0 8px;overflow-wrap:anywhere}
+.context-settings-status{font-size:12px;color:var(--muted,#6f716e);margin:12px 0;min-height:1.6em;overflow-wrap:anywhere}
+.context-settings-warning{color:var(--red,#a33c43)}
+.context-settings-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:15px}
+.context-settings-actions button{min-height:42px;max-width:100%;white-space:normal}
+.context-settings-fields{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:18px}
+.context-settings-field{min-width:0}
+.context-settings-field:first-child{grid-column:1/-1}
+.context-settings-field label{display:block;color:var(--text,#292b2d);font-size:13px}
+.context-settings-field label:not(.context-settings-switch) span{display:block;margin-bottom:7px}
+.context-settings-field input[type=number]{width:100%;min-width:0;margin:0}
+.context-settings-switch{display:flex!important;align-items:center;gap:10px;padding:8px 0}
+.context-settings-switch input{flex:0 0 auto;width:18px;height:18px;min-height:18px;margin:0}
+.context-settings-field .hint{margin:7px 0 0}
+.context-settings-current{font-size:11px;color:var(--muted,#6f716e);margin:7px 0 0}
+.context-settings-field-error{font-size:12px;color:var(--red,#a33c43);margin:5px 0 0}
+.context-settings-field input[aria-invalid=true]{border-color:var(--red,#a33c43)}
+@media(max-width:590px){.tls-context-settings{padding:17px}.context-settings-fields{grid-template-columns:1fr;gap:17px}.context-settings-field:first-child{grid-column:auto}.context-settings-actions button{flex:1 0 135px}.context-settings-heading{gap:4px}.context-settings-heading .hint{flex-basis:100%}#view-config>.panel .panel-head>.actions{width:100%}#view-config>.panel .panel-head>.actions>button{flex:1 1 125px}}

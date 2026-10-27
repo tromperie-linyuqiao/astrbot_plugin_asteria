@@ -1,0 +1,29 @@
+{
+  "$meta": {
+    "schema_version": 1,
+    "name": "星栖 Asteria for AstrBot",
+    "version": "2026-10-28",
+    "homepage": "https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria",
+    "repository": "https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria",
+    "description": "Asteria单插件来源；非AstrBot官方收录声明。"
+  },
+  "tromperie-linyuqiao/astrbot_plugin_virtual_body": {
+    "author": "tromperie-linyuqiao",
+    "name": "astrbot_plugin_virtual_body",
+    "version": "0.66.1",
+    "repo": "https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria",
+    "display_name": "星栖 Asteria · AstrBot 伴侣系统",
+    "short_desc": "角色持续状态、记忆、日程、感知与可定制Android Chat",
+    "desc": "面向AstrBot的持续伴侣系统。新装默认无私人数据，完整MC/PC原生初始化仍需独立配置。",
+    "logo": "https://raw.githubusercontent.com/tromperie-linyuqiao/astrbot_plugin_asteria/main/logo.png",
+    "tags": [
+      "AstrBot",
+      "astrbot-plugin",
+      "伴侣",
+      "记忆",
+      "Android",
+      "Chat"
+    ],
+    "astrbot_version": ">=4.26.6,<5.0.0"
+  }
+}

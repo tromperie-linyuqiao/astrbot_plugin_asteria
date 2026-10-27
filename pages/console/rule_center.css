@@ -1,0 +1,16 @@
+.rule-center { display: grid; gap: 14px; }
+.rule-center h2, .rule-center h3, .rule-center p { margin: 0; }
+.rule-center-hint { color: var(--muted, #64748b); font-size: .92rem; line-height: 1.65; }
+.rule-center-status { min-height: 1.6em; font-size: .94rem; line-height: 1.6; }
+.rule-center form { display: grid; gap: 10px; padding: 18px; border: 1px solid var(--line, #dbe2ea); border-radius: 14px; }
+.rule-center label { display: grid; gap: 8px; font-weight: 600; }
+.rule-center textarea { box-sizing: border-box; width: 100%; min-height: 100px; resize: vertical; padding: 12px; font: inherit; border: 1px solid var(--line, #cbd5e1); border-radius: 9px; background: var(--input, var(--panel, #181e29)); color: var(--text, inherit); }
+.rule-center-records { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+.rule-center-card { display: grid; align-content: start; gap: 10px; padding: 16px; border: 1px solid var(--line, #dbe2ea); border-radius: 14px; overflow-wrap: anywhere; }
+.rule-center-card details { font-size: .86rem; color: var(--muted, #64748b); }
+.rule-center-card summary { cursor: pointer; }
+.rule-center-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.rule-center button { min-height: 40px; padding: 9px 14px; border: 1px solid var(--line, #cbd5e1); border-radius: 9px; font: inherit; cursor: pointer; }
+.rule-center button:disabled { cursor: default; opacity: .55; }
+.rule-center button:focus-visible, .rule-center textarea:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
+@media (max-width: 480px) { .rule-center form, .rule-center-card { padding: 13px; } .rule-center-actions button { flex: 1; } }
