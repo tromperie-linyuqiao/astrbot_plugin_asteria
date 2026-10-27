@@ -2,7 +2,7 @@
 
 面向 AstrBot 上 Asteria Living 的 Android 长期角色聊天客户端。复用 AstrBot 的认证、角色和 ChatService，不在客户端保存密码或独立实现角色大脑。
 
-这是从既有客户端导出的可公开源码。默认不配置任何服务器、私人证书 pin、账号、角色卡、素材或签名密钥。首次打开时，请在设置填写你部署的 HTTPS API 地址、AstrBot 用户名和密码。API 前缀与反向代理配置由服务端仓库说明决定。
+默认不配置任何服务器、私人证书 pin、账号、角色卡、素材或签名密钥。首次打开时，请在设置填写你部署的 HTTPS API 地址、AstrBot 用户名和密码。API 前缀与反向代理配置由服务端仓库说明决定。
 
 ## 当前能力
 
@@ -31,7 +31,7 @@ python client/asteria-chat/configure_brand.py --reset-icon
 
 ## 离线构建
 
-需要自行安装 JDK17、Android SDK35，以及 build-tools35.0.0。构建器不下载工具、不安装软件、不连接服务器、不生成签名密钥。Windows 和其他系统均可通过 `--sdk`、`--jdk` 明确指定工具路径；当前公开导出只进行必要编译/语法检查，未签名发布或真机验收。
+需要自行安装 JDK17、Android SDK35，以及 build-tools35.0.0。构建器不下载工具、不安装软件、不连接服务器、不生成签名密钥。Windows 和其他系统均可通过 `--sdk`、`--jdk` 明确指定工具路径；发布页已提供实际构建并签名的安装包；实体手机与长期后台表现仍需实际设备验证。
 
 使用你自行管理的现有签名文件。设置 `ASTERIA_CHAT_SIGNING_DIR` 为该目录，默认读取 `asteria-chat.p12` 和 `storepass.private.txt`，默认 alias `asteria-chat`。也可通过 `ASTERIA_CHAT_KEYSTORE`、`ASTERIA_CHAT_STOREPASS_FILE` 与 `ASTERIA_CHAT_KEY_ALIAS` 指定现有文件/alias。不要把目录、密码或私钥提交到仓库。
 

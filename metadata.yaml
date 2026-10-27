@@ -2,9 +2,8 @@ name: astrbot_plugin_virtual_body
 display_name: 星栖 Asteria · AstrBot 伴侣系统
 short_desc: 为 AstrBot 提供持续角色状态、记忆资料、日程、感知与 Android Chat。
 desc: >-
-  面向 AstrBot 的可维护伴侣系统，整合持续状态、虚拟身体、空间、记忆、RP、
-  日程、感知和主动交流，并提供可自定义名称与图标的 Asteria Chat 源码。
-  新安装采用中性模板与关闭的执行权默认值；旧系统接管须单独初始化。
+  为 AstrBot 提供角色持续状态、长期记忆、虚拟身体、场景互动、日程提醒与感知接入，
+  可搭配 Asteria Chat 在 Android 上聊天，并通过原生管理页面维护角色与资料。
 author: tromperie-linyuqiao
 maintainer: tromperie-linyuqiao
 version: 0.66.1

@@ -1,51 +1,86 @@
-# 星栖 Asteria — AstrBot 伴侣系统
+# 星栖 Asteria
 
-![AstrBot](https://img.shields.io/badge/for-AstrBot-6b73e8) ![License](https://img.shields.io/badge/license-AGPL--3.0-blue) ![Android](https://img.shields.io/badge/client-Android-green)
+**适用于 AstrBot 的角色陪伴插件，配套 Asteria Chat Android 客户端。**
 
-面向 **AstrBot** 的持续角色与聊天系统。插件叫 **星栖 Asteria**，Android 客户端叫 **Asteria Chat**。本仓库公开源码，不携带维护者私人角色、账号、服务器、聊天记录或签名密钥。
+![AstrBot](https://img.shields.io/badge/AstrBot-4.26.6%2B-6b73e8)
+![License](https://img.shields.io/badge/License-AGPL--3.0-blue)
+![Android](https://img.shields.io/badge/Client-Android-green)
 
-## 安装到 AstrBot
+星栖把角色状态、长期记忆、场景互动和日常陪伴整合到 AstrBot 中。你可以在原生管理页面维护角色与资料，也可以通过 Asteria Chat 与角色长期聊天。
 
-在 AstrBot「插件 → 安装插件 → 从链接安装」填写 `https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria.git`。
-支持范围声明 `>=4.26.6,<5.0.0`；实际宿主基线为4.26.6，声明不等于每个版本都已实测。
-插件加载后可在已安装页面看到「星栖 Asteria · AstrBot 伴侣系统」，并进入 console/home/status 等管理页面。
+## 主要功能
 
-官方市场需要通过 AstrBot Cloud 提交审核；GitHub topics 和 release tag 不是市场收录证明。当前可从仓库直接安装。
+| 功能 | 说明 |
+| --- | --- |
+| 角色与持续状态 | 管理虚拟身体、接触反馈、位置、空间与心绪，让角色状态在对话间保持连续。 |
+| 记忆与偏好 | 维护长期资料、偏好和共同经历，支持查阅、修正及修订历史。 |
+| 场景互动 | 结合现有角色设定与 RP 场景，接收文字和自定义动作。 |
+| 日程与提醒 | 管理一次性或周期日程、重要日期和待办，按权限与时段发送提醒。 |
+| 感知与陪伴 | 接入经过授权的手机、应用和音乐状态，用于上下文与主动陪伴。 |
+| 表情与媒体 | 使用共享素材库，维护表情语义、使用偏好及重复冷却。 |
+| 原生管理页面 | 在 AstrBot 后台集中查看模块状态、角色、资料和配置。 |
+| Asteria Chat | Android 长期聊天客户端，支持历史、附件、头像背景、动作组合与通知设置。 |
 
-## 功能与边界
+各项能力按实际配置和授权运行。没有连接的数据源会显示未接入；手机采集与主动发送需要单独开启。
 
-持续角色状态、身体与空间、Presence、可维护记忆与偏好、RP、资料、日程、主动消息和手机感知的实现均在源码中；Asteria Chat 复用 AstrBot 原认证、角色、ChatService与TLS业务，不另建模型大脑。
+## 安装插件
 
-**新安装不等同原服务器迁移。** 空白名单不授予任何人角色权限；默认关闭原生执行权与主动来源，不带旧插件数据或退休证明。MC/PC旧实例接管控制器是迁移入口，不能把其私有退休配置复制到新安装或自动停用他人的插件。首次配置和目前尚需初始化的完整业务见 [INSTALL.md](INSTALL.md)。不把源码存在称新用户全功能已经验收。
+在 AstrBot「插件 → 安装插件 → 从链接安装」填写：
 
-公开版保留兼容标识 `astrbot_plugin_virtual_body`、固定兼容包名及 `/astrbot_plugin_virtual_body/page/` 路由，避免已有数据与页面认证断开；仓库名、显示名和客户端品牌统一为 Asteria。维护者为 [tromperie-linyuqiao](https://github.com/tromperie-linyuqiao)，公开维护命名空间为 tromperie-linyuqiao；原作者在NOTICE中保留，不表示上游背书。
-
-## 自定义 Chat 名称和软件图标
-
-源码在 [client/asteria-chat](client/asteria-chat)。先执行：
-
-```sh
-python client/asteria-chat/configure_brand.py --name "我的伴侣" --icon /path/to/my-square.png
+```text
+https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria
 ```
 
-这会真正修改下一次构建的 Android 桌面图标和APP品牌，不改聊天双方头像。可 `--reset-icon` 恢复原创星形。它是构建定制，Android不允许应用在安装后任意替换包内图标，不能与桌面快捷方式混称。
+也可以从 [Releases](https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria/releases) 下载源码 ZIP，通过文件安装。
 
-构建需 Android SDK35、JDK17、自己的签名目录；不生成或上传维护者私钥。默认服务器留空，首次使用需配置自己部署的HTTPS接口。[客户端说明](client/asteria-chat/README.md) · [反向代理示例](deploy/nginx-chat.conf.example)
+安装后，在已安装插件中打开「星栖 Asteria」的管理页面。首次使用请先配置角色和授权用户，参见 [安装说明](INSTALL.md)。不要在同一实例中同时启用承担相同职责的两份插件。
 
-## 安全与许可
+### 在插件市场中查看
 
-主动发送必须有真实来源、身份和许可；位置、手机采集默认关闭，由用户授予系统权限。QQ与APP记忆不能按昵称自动合并。后台回复提醒沿原本机检查，**不是可靠远程推送**，受Android与厂商后台限制。
+在「插件市场 → 插件源管理」添加星栖的插件源：
 
-源码使用AGPL v3及保留的第三方许可，完整说明见 [NOTICE](NOTICE)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。用户自行添加的图片、角色和资料须拥有相应使用权。
+```text
+https://raw.githubusercontent.com/tromperie-linyuqiao/astrbot_plugin_asteria/main/market.json
+```
 
-私人生产环境已有的测试只属于原范围；本公开树的实际检查结果会在 [RELEASE.md](RELEASE.md) 中列出，尚未执行的全新安装/设备测试不声称通过。
+无法连接 GitHub 原始文件时，可使用以下镜像：
 
-## 在 AstrBot 市场中直接显示本插件
+```text
+https://cdn.jsdelivr.net/gh/tromperie-linyuqiao/astrbot_plugin_asteria@main/market.json
+```
 
-在「插件市场 → 插件源管理 → 添加源」填写：
-`https://raw.githubusercontent.com/tromperie-linyuqiao/astrbot_plugin_asteria/main/market.json`。
-这是本仓库维护的单插件来源，使用官方schema1；不会替换你的官方来源，也不自动安装其他插件。
-官方公共市场仍须 AstrBot Cloud 提交审核，添加自己的源不等于官方收录。
+这是项目维护的插件源。官方公共市场收录状态以 AstrBot Cloud 的审核结果为准。
 
-公开版本身份为 `tromperie-linyuqiao/astrbot_plugin_virtual_body`，与历史私有 `menglimi/...` 身份不同。
-不要把公开版与私用版同时运行，也不要直接覆盖原运行配置；本轮不会改动维护者的线上私用实例。
+## Asteria Chat
+
+[下载 Android 安装包](https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria/releases) · [客户端说明](client/asteria-chat/README.md)
+
+客户端连接你自己的 AstrBot 服务，复用现有角色、模型与聊天历史。默认不预置服务器或账号。服务端连接配置见 [反向代理示例](deploy/nginx-chat.conf.example)。
+
+### 自定义名称与软件图标
+
+准备一张有权使用的方形 PNG，在构建前运行：
+
+```sh
+python client/asteria-chat/configure_brand.py --name "我的伙伴" --icon "/path/to/avatar.png"
+```
+
+重新构建后，Android 桌面名称与图标会使用你的设置。`--reset-icon` 可恢复默认星形图标；聊天中用户与角色的头像分别设置，不会互相覆盖。
+
+## 使用要求与当前状态
+
+- 实际开发基线为 AstrBot 4.26.6；建议使用兼容的4.x版本。
+- 本项目仍为预览版本。完整 MC/PC 业务的新安装初始化尚未完成，相关高级入口不能直接代替首次配置，详见 [安装说明](INSTALL.md)。
+- Android 后台提醒受通知权限和系统后台策略影响，目前使用本机检查机制，并非可靠远程推送。
+- 连接手机状态、共享资料和发送主动消息均需明确授权；默认不附带私人角色、图片、账号、资料或密钥。
+
+## 文档与反馈
+
+- [安装与配置](INSTALL.md)
+- [Asteria Chat 使用与构建](client/asteria-chat/README.md)
+- [版本说明](RELEASE.md)
+- [提交问题](https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria/issues)
+
+## 许可
+
+项目按 [AGPL v3](LICENSE) 发布。第三方组件保留各自许可，见 [NOTICE](NOTICE) 和 [第三方说明](THIRD_PARTY_NOTICES.md)。
