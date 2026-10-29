@@ -93,18 +93,33 @@ def capture_mode(ctx, event):
     return 'roleplay' if info.get('mode') == 'roleplay' else 'chat'
 
 
+def is_roleplay_record(value):
+    """Read explicit stored provenance, including records predating the router.
+
+    Text, names and the current conversation mode cannot establish the source
+    of a historical record. Existing typed RP markers remain authoritative
+    even when the record has no newer ``memory_routing`` metadata.
+    """
+    meta = metadata(value)
+    routing = meta.get('memory_routing')
+    return (str(_value(value, 'reality_level', '')) in _RP
+            or str(_value(value, 'memory_type', '') or _value(value, 'event_type', '')) in _RP
+            or str(meta.get('evidence_kind', '')) in _RP
+            or meta.get('roleplay') is True
+            or isinstance(routing, dict) and routing.get('bucket') == 'roleplay')
+
+
 def route(value, *, now=None, ttl_minutes=120):
     """Route existing typed facts, not a regex substitute for profile quality."""
     meta = metadata(value)
     kind = str(_value(value, 'memory_type', '') or _value(value, 'event_type', ''))
-    reality = str(_value(value, 'reality_level', '') or meta.get('evidence_kind', ''))
     text = _value(value, 'evidence', '') or _value(value, 'content', '')
     current = now or datetime.now(timezone.utc)
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     if kind in _MANUAL or meta.get('admin_action') or meta.get('manual') is True:
         bucket, reason = 'manual', 'explicit_manual_authority'
-    elif reality in _RP or kind in _RP or meta.get('roleplay') is True:
+    elif is_roleplay_record(value):
         bucket, reason = 'roleplay', 'typed_fictional_source'
     elif kind == 'explicit_memory':
         bucket, reason = 'explicit', 'existing_explicit_classifier'
@@ -189,7 +204,7 @@ def summary_plan(rows, *, settings=None):
         if values['living_memory_strategy_enabled'] and values['living_memory_summary_dedupe'] and fingerprint in seen:
             filtered[event_id] = 'duplicate_in_window'
             continue
-        current_domain = 'roleplay' if bucket == 'roleplay' else 'real_conversation'
+        current_domain = 'roleplay' if is_roleplay_record(row) else 'real_conversation'
         if domain is not None and domain != current_domain:
             deferred.append(event_id)
             continue

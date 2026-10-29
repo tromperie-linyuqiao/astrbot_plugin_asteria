@@ -10,13 +10,14 @@
   <link rel="stylesheet" href="app.css">
   <link rel="stylesheet" href="chat-compose.css">
   <link rel="stylesheet" href="chat-perception-status.css">
-  <script src="brand-config.js" defer></script>
   <script src="chat-compose.js" defer></script>
+  <script src="chat-cache.js" defer></script>
   <script src="app.js" defer></script>
   <link rel="stylesheet" href="chat-experience.css">
   <script src="chat-experience.js" defer></script>
   <link rel="stylesheet" href="chat-night.css">
   <script src="chat-night.js" defer></script>
+  <script src="brand-config.js" defer></script>
 </head>
 <body>
   <div id="app" class="app">
@@ -98,7 +99,19 @@
       <p id="login-error" class="form-error" role="alert" hidden></p>
       <button id="login-button" class="primary-button" type="submit">登录并同步</button>
       <section class="notify-settings" aria-label="新回复提醒"><label class="switch-label" for="notify-toggle"><input id="notify-toggle" type="checkbox"> 新回复提醒</label><p>开启后显示常驻通知，Android 原生服务每隔至少 30 秒检查当前对话；不是服务器推送。系统超时或停止后需要你重新开启。</p><p id="reply-watch-status" class="appearance-help" role="status">默认不开启后台服务。</p><details id="notification-diagnostics"><summary>通知权限与系统状态</summary><div id="notification-system-state" aria-live="polite"><p>打开后读取本机实际状态。</p></div><div class="appearance-actions"><button id="notification-status-refresh" type="button" class="text-button">刷新状态</button><button id="notification-settings-open" type="button" class="text-button">打开系统通知设置</button><button id="notification-permission-request" type="button" class="text-button">申请通知权限</button></div><p id="notification-system-note" class="appearance-help" role="status"></p></details></section>
-<button id="logout-button" type="button" class="text-button logout-button" hidden>退出当前账户</button>
+      <section id="notification-preferences" class="notification-preferences" aria-label="通知偏好"></section>
+      <section id="chat-cache-settings" class="chat-cache-settings" aria-labelledby="chat-cache-title">
+        <div class="cache-heading"><h3 id="chat-cache-title">本机缓存</h3><button id="chat-cache-refresh" type="button" class="text-button">刷新缓存信息</button></div>
+        <p id="chat-cache-account" class="appearance-help"></p>
+        <dl class="cache-details"><dt>聊天记录</dt><dd id="chat-cache-history-count">尚未读取</dd><dt>最近保存</dt><dd id="chat-cache-history-time">尚未读取</dd><dt>占用空间</dt><dd id="chat-cache-history-size">尚未读取</dd></dl>
+        <p id="chat-cache-history-policy" class="appearance-help"></p>
+        <p class="appearance-help">只保留服务器已确认保存的记录。离线可回看，联网后以服务器记录为准；待确认的发送不会自动重发。</p>
+        <button id="chat-cache-history-clear" type="button" class="secondary-button">清理当前账户的记录缓存</button>
+        <p class="cache-clear-scope">仅清理当前服务器、当前账户的本机记录副本，联网同步后可恢复。草稿、外观、通知偏好与服务器原记录保留。</p>
+        <div class="cache-attachments"><strong>已下载的附件</strong><p id="chat-cache-attachment-state" class="appearance-help">尚未读取</p><button id="chat-cache-attachment-clear" type="button" class="secondary-button">清理本机已下载附件</button><p class="cache-clear-scope">清理此应用在本机保存的附件下载副本，包含各账户。服务器原文件、待发送附件及你另存的文件保留；再次查看需要重新下载。</p></div>
+        <p id="chat-cache-error" class="form-error" role="alert" hidden></p><p id="chat-cache-note" class="appearance-help" role="status"></p>
+      </section>
+      <button id="logout-button" type="button" class="text-button logout-button" hidden>退出当前账户</button>
 
       <button id="appearance-settings-button" type="button" class="appearance-entry">聊天外观 <span>仅当前对话 · 仅此设备 →</span></button>
       <button id="export-open" type="button" class="appearance-entry" disabled>导出当前已加载记录 <span id="export-available">保存为 Markdown 文件 →</span></button>
@@ -198,5 +211,20 @@
   <script defer src="chat-perception-status.js"></script>
   <script defer src="chat-hub.js"></script>
   <script defer src="chat-notification-status.js"></script>
+  <script defer src="chat-notification-preferences.js"></script>
+  <script defer src="chat-cache-settings.js"></script>
+  <script defer src="chat-receipts.js"></script>
+  <link rel="stylesheet" href="chat-delivery-center.css">
+  <script defer src="chat-delivery-center.js"></script>
+  <script defer src="chat-message-memory.js"></script>
+  <script defer src="chat-session-preferences.js"></script>
+  <script defer src="chat-product-entry.js"></script>
+  <link rel="stylesheet" href="chat-model-route.css">
+  <link rel="stylesheet" href="chat-notification-center.css">
+  <link rel="stylesheet" href="chat-navigation.css">
+  <script defer src="chat-message-navigation.js"></script>
+  <script defer src="chat-model-route.js"></script>
+  <script defer src="chat-notification-center.js"></script>
+  <script defer src="chat-navigation.js"></script>
 </body>
 </html>

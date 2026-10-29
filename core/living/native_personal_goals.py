@@ -144,6 +144,17 @@ def goal_terms(fields):
     return terms[:16]
 
 
+def linked_goal_ids(value):
+    """Explicit goal links for an attributed activity; None keeps legacy matching."""
+    if value is None:
+        return None
+    if (type(value) is not list or len(value) > 16
+            or any(type(identity) is not str or not _GOAL.fullmatch(identity) for identity in value)
+            or len(set(value)) != len(value)):
+        raise ValueError('at most 16 unique scoped goal IDs are required')
+    return list(value)
+
+
 def matches_activity(fields, text):
     if not isinstance(text, str):
         return False
@@ -632,20 +643,29 @@ class NativePersonalGoals:
 
     # -- sourced progression ----------------------------------------------
 
-    def apply_activity(self, scope, activity, *, now=None):
-        """Advance each matching active goal once for one sourced activity."""
+    def apply_activity(self, scope, activity, *, now=None, goal_ids=None):
+        """Advance linked goals, or legacy text matches, once per sourced activity.
+
+        A scoped plan carries its target IDs explicitly. Its text is evidence,
+        not a fuzzy selector that may accidentally advance an unrelated goal.
+        An empty list deliberately records no goal progression (e.g. a routine).
+        """
         scope = self._scope(scope)
         event = activity_event(activity)
+        targets = linked_goal_ids(goal_ids)
         current = self._now() if now is None else _epoch(now, 'activity receipt')
         if event['occurred_at'] > current + 30:
             raise ValueError('activity occurs after receipt')
         rows = self._read_rows(scope)
+        if targets is not None and not set(targets) <= {row['id'] for row in rows}:
+            raise ValueError('linked goal does not exist in this private scope')
         report = dict(event_id=event['id'], evidence_kind=event['evidence_kind'],
                       matched=[], advanced=[], duplicate=[], skipped=[],
                       progressed=False, creates_send_permission=False,
                       delivery='none')
         for row in rows:
-            if not matches_activity(row['fields'], event['text']):
+            if ((targets is not None and row['id'] not in targets)
+                    or targets is None and not matches_activity(row['fields'], event['text'])):
                 continue
             report['matched'].append(row['id'])
             if row['archived'] or row['status'] != 'active':
@@ -656,7 +676,8 @@ class NativePersonalGoals:
                     fresh = self._get(db, scope, row['id'])
                     if fresh is None:
                         raise KeyError('personal goal absent')
-                    outcome = self._apply_one(db, scope, fresh, event, current)
+                    outcome = self._apply_one(db, scope, fresh, event, current,
+                                              explicitly_linked=targets is not None)
             except JournalConflict:
                 report['skipped'].append(dict(goal_id=row['id'], reason='concurrent_revision'))
                 continue
@@ -671,7 +692,7 @@ class NativePersonalGoals:
         self._scope(scope)
         return report
 
-    def _apply_one(self, db, scope, record, event, now):
+    def _apply_one(self, db, scope, record, event, now, *, explicitly_linked=False):
         goal_id = record['id']
         occurred = event['occurred_at']
         # The outer read only discovers candidates. An administrator may pause,
@@ -679,7 +700,7 @@ class NativePersonalGoals:
         # fresh row, not that earlier discovery snapshot, decides progression.
         if record['archived'] or record['status'] != 'active':
             return dict(goal_id=goal_id, state='skipped', reason='goal_not_active')
-        if not matches_activity(record['fields'], event['text']):
+        if not explicitly_linked and not matches_activity(record['fields'], event['text']):
             return dict(goal_id=goal_id, state='skipped',
                         reason='activity_no_longer_matches')
         if event['id'] in record['applied']:

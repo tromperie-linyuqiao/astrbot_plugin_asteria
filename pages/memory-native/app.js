@@ -26,12 +26,12 @@ const PERSONAL_MEMORY_VIEW = {
   },
   unavailable: {
     title: "个人记忆不可用",
-    hint: "需要安装并启用主动陪伴插件后，才能查看 Bot 自身的日程与细化。",
-    small: "需要陪伴插件",
+    hint: "TLS 原生陪伴服务尚未提供当前范围的日程与细化，请在原生接管中心查看运行状态。",
+    small: "等待原生陪伴",
   },
   error: {
     title: "个人记忆检测失败",
-    hint: "陪伴插件状态暂时无法读取，请查看错误并重试。",
+    hint: "原生陪伴状态暂时无法读取，请查看错误并重试。",
     small: "检测失败 · 可重试",
   },
 };
@@ -5326,6 +5326,62 @@ function renderGenericArchiveResult(value = {}, title = "执行结果") {
   `;
 }
 
+function renderMemoryPipeline(report = {}) {
+  const pipeline = report.pipeline;
+  if (!pipeline || pipeline.schema !== 1) {
+    return `<p class="archive-note">服务端尚未提供后台任务状态，请核对当前服务版本。</p>`;
+  }
+  const taskLabels = {
+    running: "任务存活", not_started: "未启动", finished: "任务已结束",
+    failed: "任务已失败", cancelled: "任务已取消", unknown: "状态未知",
+  };
+  const stateLabels = { ready: "可接纳请求", closing: "正在关闭", closed: "已关闭" };
+  const observedCount = (value) => Number.isInteger(value) && value >= 0 ? String(value) : "未知";
+  const flagLabel = (value) => value === true ? "开启" : value === false ? "关闭" : "未知";
+  const capture = pipeline.capture || {};
+  const summary = pipeline.summary || {};
+  const failures = report.memory?.summary_failures || {};
+  const workerCard = (key, title) => {
+    const worker = pipeline[key] || {};
+    const live = taskLabels[worker.task_state] || "状态未知";
+    const configured = worker.enabled === true ? "配置开启" : worker.enabled === false ? "配置关闭" : "配置未知";
+    const problem = worker.task_state === "failed" || worker.last_error_present;
+    return archiveResultCard(title, live,
+      `${configured}；最近完成：${worker.last_completed_at ? formatTime(worker.last_completed_at) : "暂无记录"}${problem ? "；有错误记录，请展开原始结果" : ""}`,
+      problem ? "gold" : worker.task_state === "running" ? "teal" : "blue");
+  };
+  return `
+    <div class="archive-result-head">
+      <b>记忆运行与后台任务</b>
+      <span>${escapeHtml(formatTime(pipeline.observed_at))} · 当前实例快照</span>
+    </div>
+    <div class="archive-result-grid">
+      ${archiveResultCard("服务", stateLabels[pipeline.state] || "状态未知", "运行快照不等于本轮捕获、模型或召回已验证", pipeline.state === "ready" ? "teal" : "gold")}
+      ${archiveResultCard("原话捕获", capture.enabled === true ? "配置开启" : capture.enabled === false ? "配置关闭" : "配置未知", `用户原话：${flagLabel(capture.user_messages)}；助手回复：${flagLabel(capture.bot_responses)}`, "blue")}
+      ${archiveResultCard("增量摘要", summary.enabled === true ? "配置开启" : summary.enabled === false ? "配置关闭" : "配置未知", `正在执行 ${observedCount(summary.running_workers)}；等待补偿 ${observedCount(summary.pending_sessions)}；待处理失败批次 ${observedCount(failures.total)}`, failures.total || summary.failed_workers ? "gold" : "blue")}
+      ${workerCard("portrait", "综合画像")}
+      ${workerCard("maintenance", "记忆维护")}
+      ${workerCard("wal_checkpoint", "数据库整理")}
+    </div>
+    <p class="archive-note">此处只读取已有任务，不会启动摘要、画像或维护。配置已开、任务存活与实际业务完成分别展示；空闲摘要没有常驻任务属于正常情况。失败批次来自原库，不会因内存任务已结束而清零${failures.last_updated_at ? `；最近记录：${escapeHtml(formatTime(failures.last_updated_at))}` : ""}。</p>
+  `;
+}
+
+function renderOperationsDiagnostics(report = {}) {
+  const warnings = Array.isArray(report.warnings) ? report.warnings : [];
+  const usage = report.model_usage || {};
+  return `<section class="archive-result-panel">
+    ${renderMemoryPipeline(report)}
+    <div class="archive-result-grid">
+      ${archiveResultCard("检索方式", report.retrieval?.mode || "未知", "使用当前已配置的检索器", "blue")}
+      ${archiveResultCard("记忆条数", Number.isInteger(report.memory?.total_memories) ? String(report.memory.total_memories) : "未知", "原记忆库统计，不代表全部资料已审核", "blue")}
+      ${archiveResultCard("已记录模型调用", Number.isInteger(usage.calls) ? String(usage.calls) : "未知", Number.isInteger(usage.errors) ? `失败 ${usage.errors}` : "尚无错误统计", usage.errors ? "gold" : "blue")}
+    </div>
+    ${warnings.length ? `<ul class="archive-note">${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>` : ""}
+    ${renderArchiveResultDetails(report)}
+  </section>`;
+}
+
 function showArchiveResult(value, kind = "generic", host = "#importResult") {
   const box = typeof host === "string" ? $(host) : host;
   if (!box) return;
@@ -5336,6 +5392,8 @@ function showArchiveResult(value, kind = "generic", host = "#importResult") {
     box.innerHTML = renderLivingMemoryImportResult(value);
   } else if (kind === "repair") {
     box.innerHTML = renderLivingMemoryRepairResult(value);
+  } else if (kind === "diagnostics") {
+    box.innerHTML = renderOperationsDiagnostics(value);
   } else {
     box.innerHTML = renderGenericArchiveResult(value, kind === "maintenance" ? "维护结果" : "执行结果");
   }

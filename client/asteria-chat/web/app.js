@@ -42,6 +42,77 @@ const storage = {
 const pref = name => 'asteria-chat.' + name;
 const draftKey = id => pref('draft.' + encodeURIComponent(state.server + '|' + state.username) + '.' + (id || 'new'));
 const parse = value => typeof value === 'string' ? JSON.parse(value) : value;
+let chatCacheEpoch = 0;
+let chatAuthEpoch = 0;
+let notificationTarget = null;
+let lastNotificationIdentity = '';
+function chatAccountKey() { return JSON.stringify([state.server, state.username]); }
+function chatCacheStatus() {
+  return window.ChatCache ? window.ChatCache.stats(state.server, state.username) : { sessions: 0, messages: 0, bytes: 0, error: '当前界面未提供记录缓存。' };
+}
+function clearRecoverableChatCache() {
+  chatCacheEpoch++;
+  const cleared = !window.ChatCache || window.ChatCache.clear(state.server, state.username);
+  state.mediaCache.clear(); state.previewElements = [];
+  if (state.cacheDisplay) {
+    state.messages = state.messages.filter(row => row.delivery !== 'confirmed');
+    state.cacheDisplay = null;
+  }
+  renderMessages();
+  return { ok: cleared, ...chatCacheStatus() };
+}
+function cacheSessions() {
+  if (window.ChatCache && state.authenticated) window.ChatCache.sessions(state.server, state.username, state.sessions, state.activeId);
+}
+function restoreCachedHistory(id) {
+  state.cacheDisplay = null;
+  if (!state.authenticated || !window.ChatCache) return false;
+  const record = window.ChatCache.history(state.server, state.username, id);
+  if (!record) return false;
+  state.messages = normalizeHistory(record.snapshot.history);
+  state.sessionPersonaConfig = { sessionId: id, ...normalizeConfiguredPersona(record.snapshot.persona) };
+  state.cacheDisplay = { savedAt: record.updatedAt, complete: record.complete };
+  state.remoteRunning = false; // A cached generation flag cannot describe current work.
+  return true;
+}
+function restoreCachedConversation() {
+  if (!state.authenticated || !window.ChatCache) return false;
+  const account = window.ChatCache.restore(state.server, state.username);
+  if (!account || !account.sessions.length) return false;
+  state.sessions = account.sessions;
+  const preferred = storage.get(pref('last-session.' + encodeURIComponent(state.server + '|' + state.username)));
+  state.activeId = account.sessions.some(row => row.session_id === preferred) ? preferred
+    : account.lastId || account.sessions[0].session_id;
+  const primary = account.sessions.find(row => row.primary === true);
+  if (primary) { state.primaryId = primary.session_id; state.primaryAccount = state.server + '|' + state.username; }
+  restoreCachedHistory(state.activeId);
+  return true;
+}
+function discardCachedSession(id) {
+  if (window.ChatCache) window.ChatCache.remove(state.server, state.username, id);
+  state.sessions = state.sessions.filter(row => row.session_id !== id);
+  if (state.activeId === id) {
+    saveDraft(); state.historySerial++; state.activeId = null; state.messages = [];
+    state.cacheDisplay = null; state.sessionPersonaConfig = null; state.remoteRunning = false;
+    state.readingScope = ''; restoreDraft(); renderMessages();
+  }
+  if (state.primaryId === id) state.primaryId = null;
+  renderSessions();
+}
+function locateNotificationMessage() {
+  const target = notificationTarget;
+  if (!target || target.account !== chatAccountKey() || target.sessionId !== state.activeId) return;
+  if (target.clickTarget === 'conversation') { notificationTarget = null; return; }
+  const message = state.messages.find(row => String(row.serverId) === target.messageId);
+  const row = message && [...$('messages').querySelectorAll('.message-row')].find(node => node.dataset.messageKey === String(message.id));
+  if (!row) return; // The following authoritative history may contain it.
+  requestAnimationFrame(() => {
+    if (notificationTarget !== target || target.account !== chatAccountKey() || state.activeId !== target.sessionId) return;
+    if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center', behavior: 'auto' });
+    row.classList.add('notification-target');
+    if (!state.cacheDisplay) notificationTarget = null;
+  });
+}
 
 function native() {
   const value = window.AsteriaChat;
@@ -88,7 +159,7 @@ function bridgeRequest(method, path, body, options = {}) {
       if (completeNative) error.nativeCompletionUnknown = true;
       reject(error);
     }, method === 'POST' && [API.send,'/chat/regenerate'].includes(path) ? 180000 : 45000);
-    state.requests.set(requestId, { resolve, reject, timeout, completeNative });
+    state.requests.set(requestId, { resolve, reject, timeout, completeNative, authEpoch: chatAuthEpoch });
     try { if(options.streaming && typeof bridge.requestStream==='function')bridge.requestStream(requestId,path,JSON.stringify(body));else bridge.request(JSON.stringify({ requestId, method, path, body: body === undefined ? null : body })); }
     catch (error) { clearTimeout(timeout); state.requests.delete(requestId); if (completeNative) completeNative(); reject(error); }
   });
@@ -105,7 +176,7 @@ function nativeAsync(method, args, timeoutMs = 45000) {
       error.nativeTimeout = true;
       reject(error);
     }, timeoutMs);
-    state.requests.set(requestId, { resolve, reject, timeout });
+    state.requests.set(requestId, { resolve, reject, timeout, authEpoch: chatAuthEpoch });
     try { bridge[method](requestId, ...args); }
     catch (error) { clearTimeout(timeout); state.requests.delete(requestId); reject(error); }
   });
@@ -122,7 +193,7 @@ function appearanceScope() {
 /* Read one conversation's local appearance without touching the active cache. */
 const sessionAppearanceCache = new Map();
 function sessionAppearance(sessionId) {
-  const cacheKey = String(state.server) + '|' + String(state.username) + '|' + String(sessionId);
+  const cacheKey = JSON.stringify([state.server, state.username, sessionId]);
   if (sessionAppearanceCache.has(cacheKey)) return sessionAppearanceCache.get(cacheKey);
   let value = { avatar: null, displayName: '' };
   try {
@@ -241,6 +312,18 @@ function applyAppearance() {
   }
   if (appearance.displayName) $('conversation-title').textContent = appearance.displayName;
   paintAppearance($('app'), appearance);
+  if (state.authenticated && state.activeId) {
+    const name = appearance.displayName || '伙伴', avatar = appearance.avatar || '';
+    const key = JSON.stringify([state.server, state.username, state.activeId, name, avatar]);
+    if (key !== lastNotificationIdentity) {
+      try {
+        const bridge = native();
+        if (typeof bridge.setNotificationIdentity === 'function') {
+          bridge.setNotificationIdentity(state.activeId, name, avatar); lastNotificationIdentity = key;
+        }
+      } catch (_) {}
+    }
+  }
 }
 function appearanceError(message) { $('appearance-error').textContent = message; $('appearance-error').hidden = !message; }
 function previewAppearance() {
@@ -494,6 +577,7 @@ function receive(id, payload) {
   if (pending.completeNative) pending.completeNative();
   if (pending.expired) { foregroundRecovery.stateChanged(); return; }
   try {
+    if (pending.authEpoch !== undefined && pending.authEpoch !== chatAuthEpoch) throw new Error('账户已切换，旧请求结果已忽略。');
     const result = parse(payload);
     if (!result || typeof result.status !== 'number') throw new Error('应用返回了无法识别的连接结果。');
     let body = result.body;
@@ -501,8 +585,12 @@ function receive(id, payload) {
       try { body = JSON.parse(body); } catch (_) {}
     }
     if (result.status === 401) {
+      saveDraft(); chatAuthEpoch++; state.historySerial++;
       state.authenticated = false;
+      state.messages = []; state.sessions = []; state.activeId = null; state.cacheDisplay = null;
+      state.mediaCache.clear(); state.previewElements = []; state.sessionPersonaConfig = null;
       try { native().clearAuth(); } catch (_) {}
+      renderMessages(); renderSessions();
       renderChrome();
     }
     if (result.status < 200 || result.status >= 300 || (body && typeof body === 'object' && body.status === 'error')) {
@@ -521,7 +609,8 @@ const apiClient = {
   sessions: options => apiClient.json('GET', API.sessions, undefined, options),
   personas: () => apiClient.json('GET', API.personas),
   connectBot: body => apiClient.json('POST', API.connect, body),
-  history: (id, options) => apiClient.json('GET', API.history(id), undefined, options),
+  history: (id, options = {}) => apiClient.json('GET', API.history(id)
+    + (/^[a-f0-9]{64}$/.test(options.knownRevision || '') ? '&known_revision=' + options.knownRevision : ''), undefined, options),
   send: (id, message, files = [], parts = null, clientMessageId = null) => bridgeRequest('POST', API.send, {
     session_id: id, message, enable_streaming: true,
     ...(parts ? { parts, client_message_id: clientMessageId } : {}),
@@ -1114,6 +1203,9 @@ function renderChrome() {
   if (window.ChatWorkspace) window.ChatWorkspace.scopeChanged();
   if (window.ChatNight && typeof window.ChatNight.scopeChanged === 'function') window.ChatNight.scopeChanged();
   if (window.ChatExperience && typeof window.ChatExperience.scopeChanged === 'function') window.ChatExperience.scopeChanged();
+  window.ChatDeliveryCenter?.scopeChanged(); window.ChatMessageMemory?.scopeChanged(); window.ChatSessionPreferences?.scopeChanged();
+  window.ChatModelRoute?.scopeChanged(); window.ChatNotificationCenter?.scopeChanged();
+  window.ChatMessageNavigation?.scopeChanged(); window.ChatNavigation?.scopeChanged();
   renderRenameTitle();
   renderMessageSearchControls();
   const active = state.sessions.find(item => item.session_id === state.activeId);
@@ -1130,7 +1222,9 @@ function renderChrome() {
   try { if (state.server) serverName = new URL(state.server).host; } catch (_) {}
   $('server-label').textContent = serverName;
   document.querySelector('.local-dot').classList.toggle('connected', state.authenticated);
-  $('connection-status').textContent = !state.bridgeAvailable ? '需要在 Android 应用中连接' : !state.authenticated ? '登录后同步会话' : state.loading ? '正在读取服务器记录…' : state.sending ? '本轮消息正在处理中' : state.remoteRunning ? '服务器仍在生成 · 可点同步查看' : '私人对话';
+  $('connection-status').textContent = !state.bridgeAvailable ? '需要在 Android 应用中连接' : !state.authenticated ? '登录后同步会话'
+    : state.cacheDisplay ? (state.loading ? '已显示本机记录 · 正在核对服务器…' : '本机已保存记录 · 联网后同步最新内容')
+    : state.loading ? '正在读取服务器记录…' : state.sending ? '本轮消息正在处理中' : state.remoteRunning ? '服务器仍在生成 · 可点同步查看' : '私人对话';
   $('send-button').disabled = !state.bridgeAvailable || !state.authenticated || state.sending || state.loading || state.creating || state.attaching || state.remoteRunning || invalidAttachments() || (!$('draft').value.trim() && !readyAttachments().length && !(window.ChatComposer && window.ChatComposer.hasContent()));
   $('attach-button').disabled = !state.bridgeAvailable || !state.authenticated || state.sending || state.loading || state.creating || state.attaching || state.appearanceBusy || state.remoteRunning;
   $('bot-home').disabled = state.sending || state.loading || state.creating || state.attaching;
@@ -1186,6 +1280,7 @@ async function confirmDeleteConversation(event) {
   const fail = text => { $('delete-error').textContent = text; $('delete-error').hidden = false; };
   try {
     await apiClient.json('POST', API.removeSession, { session_id: editing.sessionId });
+    if (window.ChatCache) window.ChatCache.remove(state.server, state.username, editing.sessionId);
     state.sessions = state.sessions.filter(row => row.session_id !== editing.sessionId);
     if (state.activeId === editing.sessionId) {
       state.activeId = null; state.messages = []; state.readingScope = '';
@@ -1611,7 +1706,7 @@ function renderMediaPart(part, message, sessionId) {
   const filename = attachmentFilename(part), name = part.display_name || part.filename || (part.type === 'image' ? '图片' : '文件');
   const available = message.delivery === 'confirmed' && part.source !== 'stream' && !!filename;
   const error = document.createElement('p'); error.className = 'media-error'; error.hidden = true;
-  const account = state.server + '|' + state.username;
+  const account = chatAccountKey();
   async function open() {
     if (!available) return;
     try { await nativeAsync('openAttachment', [sessionId, filename]); }
@@ -1621,13 +1716,13 @@ function renderMediaPart(part, message, sessionId) {
     const image = document.createElement('img'); image.className = 'message-image'; image.alt = name; image.hidden = true; image.loading = 'lazy'; image.addEventListener('click', open);
     const button = document.createElement('button'); button.type = 'button'; button.className = 'image-button';
     button.textContent = available ? '▧  查看图片' : filename ? '同步保存记录后查看图片' : '图片缺少可下载引用'; button.disabled = !available;
-    const key = account + '|' + sessionId + '|' + filename;
+    const key = JSON.stringify([account, sessionId, filename]);
     image.addEventListener('error', () => { image.hidden = true; button.hidden = false; button.disabled = false; button.textContent = '图片未能显示，点击重试'; });
     button.addEventListener('click', async () => {
       button.disabled = true; button.textContent = '正在读取图片…'; error.hidden = true;
       try {
         const body = state.mediaCache.get(key) || responseData(await nativeAsync('loadAttachment', [sessionId, filename]));
-        if (!state.authenticated || account !== state.server + '|' + state.username) throw new Error('账户已切换，请重新打开记录。');
+        if (!state.authenticated || account !== chatAccountKey()) throw new Error('账户已切换，请重新打开记录。');
         showPreview(image, button, body); rememberImage(key, body);
       } catch (failure) { button.disabled = false; button.textContent = '重新读取图片'; error.textContent = errorText(failure); error.hidden = false; }
     });
@@ -1662,7 +1757,8 @@ function normalizeHistory(rows) {
   for (const [index, row] of rows.entries()) {
     if (!row || typeof row !== 'object' || !row.content || !['user', 'bot'].includes(row.content.type)) continue;
     const key = row.id != null ? String(row.id) + '|' + String(row.llm_checkpoint_id || '') : 'row-' + index;
-    if (seen.has(key)) continue; seen.add(key);
+    const stableKey = row.id != null ? String(row.id) : key;
+    if (seen.has(stableKey)) continue; seen.add(stableKey);
     const typed = row.tls_parts || row.content.tls_parts;
     const parts = window.ChatComposer && Array.isArray(typed) ? window.ChatComposer.normalizeParts(typed) : contentParts(row.content);
     const notice = savedMessageNotice(row.content);
@@ -1677,10 +1773,13 @@ function normalizeHistory(rows) {
   return result;
 }
 async function loadSessions({ select = true, accept = () => true, onNativeComplete } = {}) {
+  const account = chatAccountKey(), cacheEpoch = chatCacheEpoch;
   const rows = await apiClient.sessions({ onNativeComplete });
-  if (!accept()) return false;
+  if (!accept() || account !== chatAccountKey() || !state.authenticated) return false;
   if (!Array.isArray(rows)) throw new Error('会话列表格式暂不兼容，请检查服务器版本。');
   state.sessions = rows.filter(row => row && typeof row.session_id === 'string' && row.session_id);
+  if (state.activeId && !state.sessions.some(row => row.session_id === state.activeId)) discardCachedSession(state.activeId);
+  if (cacheEpoch === chatCacheEpoch) cacheSessions();
   renderSessions();
   if (select && !state.activeId) {
     await connectLongTerm({accept});
@@ -1719,15 +1818,34 @@ function configuredPersonaForCurrent() {
 async function loadHistory(id, { accept = () => true, reconcileAttachments = true, preserveUnconfirmed = false, preserveReading = false, onNativeComplete } = {}) {
   if (!state.sessions.some(item => item.session_id === id)) throw new Error('请从当前账户的会话列表打开对话。');
   const serial = ++state.historySerial;
-  if (state.activeId === id) state.sessionPersonaConfig = { sessionId: id, ...normalizeConfiguredPersona(null) };
-  const result = await apiClient.history(id, { onNativeComplete });
-  if (serial !== state.historySerial || state.activeId !== id || !accept()) return false;
+  const account = chatAccountKey(), cacheEpoch = chatCacheEpoch;
+  const current = () => serial === state.historySerial && state.activeId === id && account === chatAccountKey() && state.authenticated && accept();
+  const cached = window.ChatCache && window.ChatCache.history(state.server, state.username, id);
+  if (state.activeId === id && !state.cacheDisplay) state.sessionPersonaConfig = { sessionId: id, ...normalizeConfiguredPersona(null) };
+  let result;
+  try {
+    result = await apiClient.history(id, { onNativeComplete, knownRevision: cached?.revision });
+    if (!current()) return false;
+    if (result?.not_modified === true) {
+      if (cacheEpoch === chatCacheEpoch && cached?.complete && cached.revision && cached.revision === result.history_revision) {
+        result = { ...cached.snapshot, history_revision: cached.revision };
+      } else result = await apiClient.history(id, { onNativeComplete });
+    }
+  } catch (error) {
+    if (account === chatAccountKey() && serial === state.historySerial && [403, 404].includes(error?.status)) discardCachedSession(id);
+    throw error;
+  }
+  if (!current()) return false;
   if (!result || !Array.isArray(result.history)) throw new Error('聊天记录格式暂不兼容，请检查服务器版本。');
   state.sessionPersonaConfig = { sessionId: id, ...normalizeConfiguredPersona(result.persona) };
   const sessionItem=state.sessions.find(value=>value.session_id===id);if(sessionItem&&result.tls_state)sessionItem.tls_state=result.tls_state;
   const previousReplies=new Set(state.messages.filter(value=>value.role==='assistant'&&value.serverId!=null).map(value=>String(value.serverId)));
   const hadHistory=state.messages.length>0;
   const actualMessages = normalizeHistory(result.history);
+  if (window.ChatCache && cacheEpoch === chatCacheEpoch) {
+    cacheSessions(); window.ChatCache.save(state.server, state.username, id, result);
+  }
+  state.cacheDisplay = null;
   if (preserveUnconfirmed) {
     // An automatic read is not an ACK for a local unknown send. Only a stable
     // server/client ID or checkpoint can replace that local card; never text.
@@ -1755,27 +1873,36 @@ async function loadHistory(id, { accept = () => true, reconcileAttachments = tru
     }
   }
   if (preserveReading && captureMessagePosition($('messages'))?.follow === false) state.liveFollowScope = '';
-  renderMessages({forceLatest:!preserveReading&&receivedReply&&!state.messageSearch.open});
+  renderMessages({forceLatest:!preserveReading&&receivedReply&&!state.messageSearch.open&&!notificationTarget});
+  locateNotificationMessage();
   if (recoveryForeground() && window.ChatComposer && typeof window.ChatComposer.historyReceived === 'function') window.ChatComposer.historyReceived(id);
+  if (window.ChatReceipts) window.ChatReceipts.historyReceived(id, result);
   return true;
 }
 async function selectSession(id) {
   if (state.sending || state.attaching) { showNotice('本轮消息或文件仍在处理，完成后再切换会话。'); return; }
   foregroundRecovery.cancel('scope_changed', true);
   cancelAppearance(); cancelInteractions(); saveDraft(); state.activeId = id; state.sessionPersonaConfig = null; state.messages = []; state.remoteRunning = false; state.replyPhase='idle';
+  restoreCachedHistory(id);
   storage.set(pref('last-session.' + encodeURIComponent(state.server + '|' + state.username)), id);
   restoreDraft(); sidebar(false); renderSessions(); renderMessages();
+  locateNotificationMessage();
+  if (!recoveryOnline()) { showNotice('当前离线，显示本机已保存记录；联网后会同步，不会自动发送消息。'); renderChrome(); return; }
   state.loading = true; renderChrome();
   try { await loadHistory(id); hideNotice(); }
   catch (error) { showNotice(errorText(error), { label: '重试同步', run: refreshCurrent }, true); }
   finally { state.loading = false; renderChrome(); }
 }
-async function refreshCurrent() {
+async function refreshCurrent(options = {}) {
   if (!state.authenticated) { openSettings(); return false; }
   if (state.sending) { showNotice('本轮回复仍在接收，完成后再同步记录。'); return false; }
   if (state.loading || !foregroundRecovery.manualIntent()) { showNotice('上一次读取尚未结束，请稍候再同步；应用不会叠加自动请求。'); return false; }
   state.loading = true; renderChrome();
-  try { if (state.activeId) await loadHistory(state.activeId); else await loadSessions(); hideNotice(); return true; }
+  try { if (state.activeId) await loadHistory(state.activeId, {
+    preserveUnconfirmed: options?.preserveUnconfirmed === true,
+    preserveReading: options?.preserveReading === true,
+    accept: typeof options?.accept === 'function' ? options.accept : () => true
+  }); else await loadSessions(); hideNotice(); return true; }
   catch (error) { showNotice(errorText(error), { label: '重试同步', run: refreshCurrent }, true); return false; }
   finally { state.loading = false; renderChrome(); }
 }
@@ -1793,10 +1920,12 @@ async function connectLongTerm({ accept = () => true } = {}) {
   if(state.activeId!==session.session_id){
     saveDraft();
     state.activeId=session.session_id;state.sessionPersonaConfig=null;state.messages=[];state.remoteRunning=false;
+    restoreCachedHistory(session.session_id);
     restoreDraft();
   }
   if(session.persona_id)state.sessionPersonas.set(session.session_id,session.persona_id);
   storage.set(pref('last-session.'+encodeURIComponent(owner)),session.session_id);
+  cacheSessions();
   renderSessions();renderMessages();sidebar(false);
   return session.session_id;
 }
@@ -1940,7 +2069,12 @@ async function refreshSessions() {
   if (!state.authenticated) { openSettings(); return; }
   if (state.loading || !foregroundRecovery.manualIntent()) { showNotice('上一次读取尚未结束，请稍候再同步。'); return; }
   state.loading = true; renderChrome();
-  try { await loadSessions(); hideNotice(); }
+  try {
+    const active = state.activeId;
+    await loadSessions();
+    if (active && active === state.activeId) await loadHistory(active, { preserveUnconfirmed: true });
+    hideNotice();
+  }
   catch (error) { showNotice(errorText(error), { label: '重试同步', run: refreshSessions }, true); }
   finally { state.loading = false; renderChrome(); }
 }
@@ -1957,11 +2091,13 @@ async function login(event) {
   $('login-button').disabled = true; $('login-button').textContent = '正在登录…'; $('login-error').hidden = true;
   try {
     foregroundRecovery.cancel('login', true);
+    saveDraft(); chatAuthEpoch++; state.historySerial++;
     cancelAppearance(); cancelInteractions();
     const configured = parse(native().setServer(server));
     if (!configured || configured.ok !== true) throw new Error(configured && configured.error || '服务器地址不可用。');
     state.server = configured.server || server; state.username = username;
     state.authenticated = false; state.sessions = []; state.messages = []; state.activeId = null; state.sessionPersonaConfig = null;
+    state.cacheDisplay = null; notificationTarget = null; lastNotificationIdentity = '';
     state.personas = []; state.newPersona = ''; state.sessionPersonas.clear();
     state.attachmentQueues.clear(); state.mediaCache.clear(); state.previewElements = [];
     state.appearanceCache = null;
@@ -1970,11 +2106,14 @@ async function login(event) {
     await apiClient.json('POST', API.login, body);
     const config = nativeConfig();
     if (config.authenticated !== true) throw new Error('登录响应未建立有效凭证，请核对服务器接口。');
+    if (typeof config.username === 'string' && config.username) state.username = config.username;
     state.authenticated = true;
+    restoreCachedConversation();
     $('password').value = '';
-    storage.set(pref('username'), username);
+    storage.set(pref('username'), state.username);
     $('settings-dialog').close(); restoreDraft(); renderMessages(); renderSessions();
-    await loadPersonas(); await refreshSessions();
+    try { await loadPersonas(); } catch (_) { /* History does not depend on persona discovery. */ }
+    await refreshSessions();
   } catch (error) {
     if ($('settings-dialog').open) { $('login-error').textContent = errorText(error); $('login-error').hidden = false; }
     else showNotice(errorText(error), { label: '连接设置', run: openSettings }, true);
@@ -1986,8 +2125,10 @@ function logout() {
   if (state.sending || state.attaching) { showNotice('请等待本轮消息或文件处理结束。'); return; }
   foregroundRecovery.cancel('logout', true);
   cancelAppearance(); cancelInteractions(); saveDraft();
+  chatAuthEpoch++; state.historySerial++; notificationTarget = null; lastNotificationIdentity = '';
   try { native().clearAuth(); } catch (_) {}
   state.authenticated = false; state.sessions = []; state.messages = []; state.activeId = null; state.sessionPersonaConfig = null; state.remoteRunning = false; state.replyPhase='idle';
+  state.cacheDisplay = null;
   state.personas = []; state.newPersona = ''; state.sessionPersonas.clear();
   state.attachmentQueues.clear(); state.mediaCache.clear(); state.previewElements = [];
   state.appearanceCache = null;
@@ -2002,6 +2143,7 @@ function init() {
   syncComposerMetrics();
   state.username = storage.get(pref('username'));
   const config = nativeConfig();
+  if (typeof config.username === 'string' && config.username) state.username = config.username;
   state.server = typeof config.server === 'string' ? config.server : '';
   state.authenticated = config.authenticated === true;
   state.bridgeAvailable = !!(window.AsteriaChat && typeof window.AsteriaChat.request === 'function');
@@ -2160,15 +2302,22 @@ function init() {
     if (event.key === pref(THEME_KEY)) applyTheme();
   });
   if (window.ChatComposer) window.ChatComposer.init();
+  restoreCachedConversation();
   restoreDraft(); renderPendingActions(); renderSessions(); renderMessages();
-  if (state.authenticated) loadPersonas().then(refreshSessions).catch(error => showNotice(errorText(error), { label: '连接设置', run: openSettings }, true));
+  if (state.authenticated && recoveryOnline()) loadPersonas().catch(() => {}).then(refreshSessions).catch(error => showNotice(errorText(error), { label: '连接设置', run: openSettings }, true));
+  else if (state.authenticated) showNotice('当前离线，显示本机已保存记录；联网后自动同步，不会自动发送消息。');
   else if (!state.bridgeAvailable) showNotice('当前是本地界面预览；请安装 Android 应用后连接服务器。');
 }
 window.AsteriaChatUI = Object.freeze({ receive:(id,payload)=>receive(id,payload), receiveStream:value=>window.ChatExperience&&window.ChatExperience.receiveStream(value),
   viewportChanged: value => { if (window.ChatComposer) window.ChatComposer.viewportChanged(value); },
   replyWatchChanged: value => { if (window.ChatComposer) window.ChatComposer.watchChanged(value); },
   notificationPermissionChanged: granted => { if (window.ChatComposer) window.ChatComposer.permissionChanged(granted); if (window.ChatNotificationStatus) window.ChatNotificationStatus.refresh(); },
-  openConversation: id => { if (window.ChatComposer) window.ChatComposer.openConversation(id); },
+  openConversation: (id, messageId, clickTarget = 'message') => {
+    if (typeof id !== 'string' || !id || id.length > 256) return;
+    notificationTarget = { account: chatAccountKey(), sessionId: id, messageId: String(messageId || ''), clickTarget };
+    if (window.ChatReceipts) window.ChatReceipts.notificationOpened(id, messageId);
+    if (window.ChatComposer) window.ChatComposer.openConversation(id);
+  },
   foregroundChanged: () => { foregroundRecovery.signal(); syncViewport(); if (phonePerceptionPanel) phonePerceptionPanel.foregroundChanged(); if (window.ChatNotificationStatus) window.ChatNotificationStatus.refresh(); },
-  back: () => window.ChatComposer && window.ChatComposer.closeActive() || closeMessageSearch() || cancelRenameTitle() || cancelConversationExport() });
+  back: () => window.ChatNotificationCenter?.closeActive() || window.ChatModelRoute?.closeActive() || window.ChatSettingsHub?.closeActive() || window.ChatDeliveryCenter?.closeActive() || window.ChatMessageMemory?.closeActive?.() || window.ChatSessionPreferences?.closeActive?.() || window.ChatComposer && window.ChatComposer.closeActive() || closeMessageSearch() || cancelRenameTitle() || cancelConversationExport() });
 document.addEventListener('DOMContentLoaded', init, { once: true });

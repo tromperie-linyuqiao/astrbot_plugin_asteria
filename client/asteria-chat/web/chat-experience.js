@@ -365,6 +365,7 @@ window.ChatExperience = (() => {
       if(!historyOnly&&message.role==='assistant')actions.append(action('让伙伴再答一次',()=>regenerate(message)));
       const saved=bookmarkScope===key()&&bookmarkRows.some(value=>String(value.message_id)===String(message.serverId));
       const star=action(saved?'★ 取消收藏':'☆ 收藏到重要消息',()=>toggleBookmark(message.serverId,!saved));star.setAttribute('aria-label',saved?'取消收藏这条消息':'收藏这条消息');actions.append(star);
+      if(window.ChatMessageMemory)actions.append(action('查看或保存相关记忆',()=>window.ChatMessageMemory.open(message)));
       if(saved){toggle.textContent='★ ···';toggle.setAttribute('aria-label','已收藏，打开这条消息的操作');}
       bar.append(toggle,actions);
       const bubble=row.querySelector('.message-bubble');

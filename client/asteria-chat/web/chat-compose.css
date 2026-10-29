@@ -48,11 +48,38 @@
 .attachment-picker strong { font-size: 13px; font-weight: 500; }
 .attachment-picker small { font-size: 10px; color: var(--muted); }
 .typed-action { display: block; margin: 3px 0 7px; font-size: 12px; color: var(--text-soft); border-left: 2px solid var(--accent); padding: 4px 9px; background: var(--accent-soft); border-radius: 0 7px 7px 0; }
+.typed-action-result { display:block; margin-top:3px; font-size:10px; color:var(--muted); font-style:normal; }
 .typed-sticker { padding: 5px 0; }
 .typed-sticker img { width: 128px; height: 128px; object-fit: contain; display: block; }
+.composition-preview-fragment { padding: 12px 0; border-bottom: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.composition-preview-fragment small { color: var(--muted); }
+.composition-preview-fragment p { margin: 5px 0; }
+#composition-preview-body { max-height: 55dvh; overflow-y: auto; overscroll-behavior: contain; }
+#compose-preview { font-size: 11px; margin-bottom: 6px; }
+.workspace-important-dates { margin: 16px 0; padding: 12px 0; border-top: 1px solid var(--line); }
+.workspace-important-dates > summary { cursor: pointer; font-weight: 550; }
 .message-bubble.sticker-only { padding: 0; background: transparent; box-shadow: none; border: 0; }
 .composer-button.expanded { color: var(--accent); background: var(--accent-soft); }
 .ime-visible .composer-area { padding-bottom: 7px; }
+/* Two-step input is driven by the server's accepted verb/part catalogue. */
+.native-touch-picker{padding:4px 1px 12px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.touch-path{display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:12px;color:var(--text-soft)}
+.touch-breadcrumb{padding:5px 8px;border-radius:8px;background:var(--surface-sunken);color:var(--text)}
+.touch-path strong{font-size:12px;font-weight:550;color:var(--text-strong)}
+.touch-choices{display:flex;flex-wrap:wrap;gap:7px}
+.touch-choice{min-height:36px;min-width:48px;padding:7px 12px;border:1px solid var(--line);border-radius:10px;color:var(--text);background:var(--surface-base);font-size:12px}
+.touch-choice.selected{border-color:var(--accent);background:var(--accent-soft);color:var(--text-strong)}
+.touch-choice:disabled{opacity:.45}
+.touch-selection-preview{margin:12px 0 8px;padding:10px 12px;border-radius:11px;background:var(--surface-sunken)}
+.touch-selection-preview strong{font-size:13px;font-weight:550;color:var(--text-strong)}
+.touch-selection-preview p{font-size:10px;line-height:1.6;color:var(--text-soft);margin:5px 0 0}
+.touch-quick-option{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-soft);margin:9px 1px}
+.touch-quick-option input{accent-color:var(--accent);width:15px;height:15px}
+.touch-confirm{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.touch-confirm button{flex:1;min-height:36px;font-size:12px;padding:8px 10px;white-space:nowrap}
+.action-favorite{font-size:20px;color:var(--accent);min-width:30px;min-height:32px;padding:2px}
+.action-sort-controls{display:flex;gap:10px;margin-top:3px}.action-sort-controls button{padding:2px 6px;min-width:24px;min-height:26px;font-size:12px}
+.compose-action-toolbar{flex-wrap:wrap;justify-content:flex-start;gap:4px 12px}.compose-action-toolbar button{padding:6px 0}
 @media(max-width:800px) {
   .shared-expression-grid { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 4px; }
   .expression-pick img { width: 67px; height: 67px; }

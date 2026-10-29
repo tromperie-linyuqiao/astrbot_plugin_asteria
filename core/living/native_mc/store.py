@@ -11152,6 +11152,18 @@ class MemoryStore:
                 row["scope"]: row["count"]
                 for row in self._conn.execute("SELECT scope, COUNT(*) AS count FROM memories GROUP BY scope").fetchall()
             }
+            # Report persisted retry/quarantine state independently from RAM
+            # workers, whose finally blocks remove completed/failed tasks.
+            # No session ids, source text or provider errors leave this query.
+            summary_failure_rows = self._conn.execute("""
+                SELECT CASE WHEN json_valid(metadata) THEN
+                    CASE WHEN json_extract(metadata, '$.state') IN
+                        ('retry_pending', 'transient_cooldown', 'retry_cooldown', 'dead_letter', 'evidence_quarantine')
+                    THEN json_extract(metadata, '$.state') ELSE 'other' END
+                    ELSE 'other' END AS state,
+                    COUNT(*) AS count, MAX(updated_at) AS last_updated_at
+                FROM summary_failures GROUP BY state
+            """).fetchall()
         current_wal_files = self._database_file_snapshot()
         last_wal_health = dict(self._last_wal_health)
         memory_storage = {
@@ -11176,6 +11188,11 @@ class MemoryStore:
             "injection_logs": injection_logs,
             "acl_rules": acl_rules,
             "by_scope": by_scope,
+            "summary_failures": {
+                "total": sum(int(row["count"]) for row in summary_failure_rows),
+                "by_state": {row["state"]: int(row["count"]) for row in summary_failure_rows},
+                "last_updated_at": max((row["last_updated_at"] or "" for row in summary_failure_rows), default="") or None,
+            },
             "wal": {
                 **last_wal_health,
                 **current_wal_files,

@@ -253,8 +253,11 @@ public final class MainActivity extends Activity {
             session = ReplyWatchService.notificationSession(selected, bridge.server, bridge.token);
         }
         if (session == null) { pendingReplyIntent = null; return; }
+        String notifiedMessage = selected.getStringExtra("reply_message_id");
+        if (notifiedMessage == null || notifiedMessage.length() > 160) notifiedMessage = "";
+        String clickTarget = "conversation".equals(selected.getStringExtra("reply_click_target")) ? "conversation" : "message";
         web.evaluateJavascript("Boolean(window.AsteriaChatUI&&typeof window.AsteriaChatUI.openConversation==='function'"
-                + "&&(window.AsteriaChatUI.openConversation(" + JSONObject.quote(session) + "),true))", result -> {
+                + "&&(window.AsteriaChatUI.openConversation(" + JSONObject.quote(session) + "," + JSONObject.quote(notifiedMessage) + "," + JSONObject.quote(clickTarget) + "),true))", result -> {
             if ("true".equals(result) && pendingReplyIntent == selected) pendingReplyIntent = null;
         });
     }
@@ -318,16 +321,53 @@ public final class MainActivity extends Activity {
         @JavascriptInterface public String getConfig() {
             if (!trusted()) return json("error", "local_page_required").toString();
             synchronized (lock) {
-                return json("server", server, "authenticated", token != null, "version", BuildConfig.VERSION_NAME,
+                return json("server", server, "authenticated", token != null, "username", AttachmentCache.username(token), "version", BuildConfig.VERSION_NAME,
                         "foreground", foreground.get(),
-                        "replyWatch", decode(ReplyWatchService.snapshot(), "application/json"),
+                        "replyWatch", decode(ReplyWatchService.snapshot(MainActivity.this), "application/json"),
                         "localOnly", true, "tlsCertificatePin", !BuildConfig.DEFAULT_CERT_SHA256.isEmpty(),
                         "attachmentCacheRecovery", attachmentRecovery).toString();
             }
         }
 
         @JavascriptInterface public String getReplyWatchStatus() {
-            return trusted() ? ReplyWatchService.snapshot() : json("ok", false, "error", "local_page_required").toString();
+            return trusted() ? ReplyWatchService.snapshot(MainActivity.this) : json("ok", false, "error", "local_page_required").toString();
+        }
+
+        @JavascriptInterface public String getNotificationPreferences() {
+            return trusted() ? NotificationPreferences.load(MainActivity.this).json().toString()
+                    : json("ok", false, "error", "local_page_required").toString();
+        }
+
+        @JavascriptInterface public String setNotificationPreferences(String value) {
+            if (!trusted() || !foreground.get()) return json("ok", false, "error", "foreground_required").toString();
+            try {
+                NotificationPreferences saved = NotificationPreferences.save(MainActivity.this, value);
+                ReplyWatchService.preferencesChanged(MainActivity.this, saved);
+                return saved.json().toString();
+            } catch (Exception invalid) { return json("ok", false, "error", "notification_preferences_not_saved").toString(); }
+        }
+
+        @JavascriptInterface public String setNotificationIdentity(String sessionId, String name, String avatarDataUrl) {
+            try {
+                AttachmentPolicy.session(sessionId); AuthState auth = attachmentAuth();
+                synchronized (lock) {
+                    requireCurrent(auth);
+                    NotificationIdentity.save(MainActivity.this, ReplyWatchService.scope(auth.server, auth.token, sessionId), name, avatarDataUrl);
+                }
+                return json("ok", true).toString();
+            } catch (Exception invalid) { return json("ok", false, "error", "notification_identity_unavailable").toString(); }
+        }
+
+        @JavascriptInterface public String getAttachmentCacheStatus() {
+            if (!trusted()) return json("ok", false, "error", "local_page_required").toString();
+            try { return AttachmentCache.status(MainActivity.this).toString(); }
+            catch (Exception unavailable) { return json("ok", false, "error", "cache_unavailable").toString(); }
+        }
+
+        @JavascriptInterface public String clearRecoverableAttachmentCache() {
+            if (!trusted() || !foreground.get()) return json("ok", false, "error", "foreground_required").toString();
+            try { return AttachmentCache.clear(MainActivity.this).toString(); }
+            catch (Exception unavailable) { return json("ok", false, "error", "cache_clear_failed").toString(); }
         }
 
         @JavascriptInterface public String getNotificationStatus() {
@@ -353,7 +393,7 @@ public final class MainActivity extends Activity {
                     if (!trusted() || !foreground.get()) return;
                     try { startActivity(destination); }
                     catch (RuntimeException unavailable) {
-                        Toast.makeText(MainActivity.this, "无法打开系统通知设置，请从手机设置中查找应用的通知设置。", Toast.LENGTH_LONG).show();
+                        Toast.makeText(MainActivity.this, "无法打开系统通知设置，请从手机设置中查找 Asteria Chat。", Toast.LENGTH_LONG).show();
                     }
                 });
                 return json("ok", true, "settings_opening", true, "target", channel ? "channel" : "app").toString();
@@ -501,6 +541,7 @@ public final class MainActivity extends Activity {
                 AuthState auth = attachmentAuth();
                 requireCurrent(auth);
                 boolean updated = ReplyWatchService.acknowledge(auth.server, auth.token, sessionId, serverMessageId);
+                ReplyWatchService.cancelConversationNotices(MainActivity.this, auth.server, auth.token, sessionId);
                 return json("ok", updated, "history_cursor_updated", updated, "service_started", false).toString();
             } catch (RuntimeException unavailable) {
                 return json("ok", false, "error", "watch_ack_unavailable", "service_started", false).toString();
@@ -517,6 +558,8 @@ public final class MainActivity extends Activity {
             try {
                 AttachmentPolicy.session(sessionId);
                 if (!foreground.get()) throw new IllegalStateException("foreground_required");
+                if (!NotificationPreferences.load(MainActivity.this).enabled)
+                    return json("ok", false, "error", "notifications_disabled", "state", "stopped", "running", false).toString();
                 if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
                         != android.content.pm.PackageManager.PERMISSION_GRANTED)
                     return json("ok", false, "error", "notification_permission", "state", "stopped", "running", false).toString();
@@ -1053,47 +1096,56 @@ public final class MainActivity extends Activity {
 
         private void download(String id, String filename, String path, AuthState auth, boolean preview) {
             HttpURLConnection connection = null;
-            File partial = null, target = null;
             try {
-                connection = attachmentConnection(auth, path, "GET");
-                int status = connection.getResponseCode();
-                if (status != 200) {
-                    InputStream response = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-                    Object body = decode(new String(response == null ? new byte[0] : read(response), StandardCharsets.UTF_8),
-                            connection.getContentType());
-                    attachmentUnauthorized(auth, status);
-                    deliver(id, status, body);
-                    return;
+                requireCurrent(auth);
+                final long cacheGeneration = AttachmentCache.generation();
+                String key = AttachmentCache.key(auth.server, auth.token, path);
+                AttachmentCache.Entry cached = AttachmentCache.find(MainActivity.this, key);
+                byte[] bytes = null;
+                String mime = "application/octet-stream";
+                if (cached != null) {
+                    try (InputStream input = new java.io.FileInputStream(cached.file)) {
+                        bytes = read(input); mime = cached.mime;
+                        if (preview && (!AttachmentPolicy.previewImage(mime) || !mime.equals(AttachmentPolicy.imageSignature(bytes)))) cached = null;
+                    } catch (Exception evicted) { cached = null; }
                 }
-                if (connection.getContentLengthLong() > AttachmentPolicy.MAX_BYTES)
-                    throw new java.io.IOException("download_too_large");
-                String mime = AttachmentPolicy.mime(connection.getContentType());
-                if (preview) {
-                    if (!AttachmentPolicy.previewImage(mime)) throw new java.io.IOException("preview_type_not_allowed");
-                    byte[] bytes = read(connection.getInputStream());
-                    if (!mime.equals(AttachmentPolicy.imageSignature(bytes))) throw new java.io.IOException("image_signature_mismatch");
+                if (cached == null) {
+                    connection = attachmentConnection(auth, path, "GET");
+                    int status = connection.getResponseCode();
+                    if (status != 200) {
+                        InputStream response = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+                        Object body = decode(new String(response == null ? new byte[0] : read(response), StandardCharsets.UTF_8), connection.getContentType());
+                        attachmentUnauthorized(auth, status); deliver(id, status, body); return;
+                    }
+                    if (connection.getContentLengthLong() > AttachmentPolicy.MAX_BYTES) throw new java.io.IOException("download_too_large");
+                    mime = AttachmentPolicy.mime(connection.getContentType());
+                    bytes = read(connection.getInputStream());
                     requireCurrent(auth);
-                    deliver(id, 200, json("data_url", "data:" + mime + ";base64," + Base64.encodeToString(bytes, Base64.NO_WRAP),
-                            "mime_type", mime));
-                    return;
-                }
-                File directory = AttachmentFileProvider.directory(MainActivity.this);
-                String opaque = java.util.UUID.randomUUID().toString().replace("-", "") + ".cache";
-                target = new File(directory, opaque);
-                partial = new File(directory, opaque + ".part");
-                ATTACHMENT_RECOVERY.admitWriter();
-                try (InputStream input = connection.getInputStream(); FileOutputStream output = new FileOutputStream(partial)) {
-                    AttachmentStreams.copy(input, output, () -> requireCurrent(auth));
+                    if (preview && (!AttachmentPolicy.previewImage(mime) || !mime.equals(AttachmentPolicy.imageSignature(bytes))))
+                        throw new java.io.IOException("preview_type_not_allowed");
+                    synchronized (lock) {
+                        requireCurrent(auth); ATTACHMENT_RECOVERY.admitWriter();
+                        try { cached = AttachmentCache.put(MainActivity.this, key, bytes, mime, cacheGeneration); }
+                        catch (Exception cacheUnavailable) { if (!preview) throw cacheUnavailable; }
+                    }
                 }
                 requireCurrent(auth);
-                if (!partial.renameTo(target)) throw new java.io.IOException("cache_commit_failed");
-                final Uri uri = AttachmentFileProvider.publish(MainActivity.this, target, filename, mime);
+                if (preview) {
+                    if (!AttachmentPolicy.previewImage(mime) || !mime.equals(AttachmentPolicy.imageSignature(bytes)))
+                        throw new java.io.IOException("image_signature_mismatch");
+                    AttachmentPreview.Result image = AttachmentPreview.create(bytes, mime, () -> requireCurrent(auth));
+                    requireCurrent(auth);
+                    deliver(id, 200, json("data_url", "data:" + image.mime + ";base64," + Base64.encodeToString(image.bytes, Base64.NO_WRAP),
+                            "mime_type", image.mime, "thumbnail", image.thumbnail, "width", image.width, "height", image.height));
+                    return;
+                }
+                if (cached == null) throw new java.io.IOException("cache_unavailable");
+                final Uri uri = AttachmentFileProvider.publish(MainActivity.this, cached.file, filename, mime);
                 final String type = mime;
                 runOnUiThread(() -> {
                     try {
                         requireCurrent(auth);
-                        Intent view = new Intent(Intent.ACTION_VIEW).setDataAndType(uri,
-                                type.equals("application/octet-stream") ? "*/*" : type)
+                        Intent view = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, type.equals("application/octet-stream") ? "*/*" : type)
                                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                         view.setClipData(ClipData.newRawUri("Asteria Chat attachment", uri));
                         startActivity(Intent.createChooser(view, "打开附件"));
@@ -1101,13 +1153,8 @@ public final class MainActivity extends Activity {
                     } catch (Exception unavailable) { deliver(id, 0, error("viewer_unavailable", "没有可用的应用打开此附件，或登录状态已改变。")); }
                 });
             } catch (Exception failure) {
-                deliver(id, 0, error(preview ? "image_preview_failed" : "attachment_download_failed",
-                        "附件暂时无法读取；仅已发送并有权访问的附件可查看。"));
-                if (target != null) target.delete();
-            } finally {
-                if (partial != null) partial.delete();
-                finishConnection(connection);
-            }
+                deliver(id, 0, error(preview ? "image_preview_failed" : "attachment_download_failed", "附件暂时无法读取；仅已发送并有权访问的附件可查看。"));
+            } finally { finishConnection(connection); }
         }
 
         private void perform(String id, String method, String path, byte[] body, boolean login,

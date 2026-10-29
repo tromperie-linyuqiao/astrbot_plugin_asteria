@@ -1,0 +1,7 @@
+.model-route-shortcut{flex:0 1 auto;max-width:30vw;min-height:26px;padding:3px 9px;border:1px solid var(--line);border-radius:20px;background:var(--surface-panel);color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.model-route-shortcut:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.model-route-dialog{width:min(94vw,520px);max-height:calc(var(--app-height,100dvh) - 28px)}
+.model-route-effective{display:grid;gap:7px;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--surface-raised);overflow-wrap:anywhere}
+.model-route-effective p{margin:0;font-size:13px}.model-route-effective small{color:var(--muted);line-height:1.6}
+.model-route-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.model-route-note{min-height:2em;line-height:1.7;font-size:13px;color:var(--muted);overflow-wrap:anywhere}.model-route-warning{color:var(--danger)}
+@media(max-width:420px){.model-route-shortcut{max-width:22vw}.model-route-dialog .settings-form{padding:18px}.model-route-actions .primary-button{width:100%}}

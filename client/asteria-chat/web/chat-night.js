@@ -33,6 +33,8 @@ window.ChatNight = (() => {
   };
   function requestClose(dialog){
     if(!dialog||!dialog.open)return false;
+    if(dialog.id==='settings-hub-dialog'&&window.ChatSettingsHub?.closeActive)
+      return window.ChatSettingsHub.closeActive();
     const closer=$n(closers[dialog.id]);
     if(closer){if(!closer.disabled)closer.click();return true;}
     const close=dialog.querySelector('button[aria-label^="关闭"],button[aria-label^="取消"]');
@@ -201,14 +203,26 @@ window.ChatNight = (() => {
     try{const value=await apiClient.json('GET','/chat/body-state?session_id='+encodeURIComponent(state.activeId));if(!current())return;
       const list=$n('body-state-values');list.replaceChildren();
       $n('body-state-name').textContent=value.name||'伙伴';
-      if(!value.available){$n('body-state-status').textContent=value.reason||'虚拟身体尚未接入';return;}
       const metric=(label,number,isTime=false)=>{const row=document.createElement('div'),value=isTime?bodyTime(number):null;
         const content=text('strong',value?value.label:number==null?'未提供':String(number));
         if(value)content.title=value.raw?'服务器原始时间：'+value.raw:'未记录';row.append(text('span',label),content);return row;};
+      const rp=value.tls_state,modeNames={chat:'日常聊天',roleplay:'角色扮演（RP）',technical:'讨论'};
+      if(rp&&['chat','roleplay','technical'].includes(rp.mode)){
+        const section=document.createElement('section');section.className='body-state-rp';section.append(text('h3','会话与 RP 状态'));
+        section.append(metric('当前模式',modeNames[rp.mode]||rp.mode),metric('剧情简介',rp.scene||'尚未设置'),metric('设置版本',rp.revision));
+        if(rp.mode==='roleplay'&&rp.rp_intensity)section.append(metric('互动强度',{inherit:'继承角色设置',light:'轻量',balanced:'适中',immersive:'沉浸'}[rp.rp_intensity]||rp.rp_intensity));
+        list.append(section);
+      }else list.append(text('p','当前服务器未提供会话与 RP 状态。','appearance-help'));
+      const source=value.source==='owned_webchat_virtual_body'?'当前APP会话 · TLS虚拟身体原始记录':value.source||'当前APP会话';
+      list.append(text('p','来源：'+source+' · 读取于 '+bodyTime(value.read_at).label,'appearance-help'));
+      if(!value.available){$n('body-state-status').textContent=value.reason||'虚拟身体尚未接入';return;}
       for(const [label,key]of [['当前阶段','phase'],['身体唤起','arousal'],['语言唤起','verbal_arousal'],['耐受','tolerance']])list.append(metric(label,value[key]));
+      if(value.phase_until)list.append(metric('阶段有效至',value.phase_until,true));
       for(const part of value.parts||[]){const row=document.createElement('details');row.append(text('summary',part.label),metric('基础敏感度',part.sensitivity),metric('敏感增益',part.sensitivity_boost),metric('当前状态值',part.value),metric('最近触碰',part.last_event_at,true));list.append(row);}
       const updated=bodyTime(value.updated_at);$n('body-state-status').title=updated.raw?'服务器原始时间：'+updated.raw:'未记录';
-      $n('body-state-status').textContent=value.initialized?'实际数据更新于 '+updated.label:'当前APP对话尚无身体状态；完成一次可识别互动后显示。以下敏感度来自原TLS角色配置。';
+      const until=typeof value.phase_until==='number'?new Date(value.phase_until<1e12?value.phase_until*1000:value.phase_until):new Date(value.phase_until);
+      const expired=value.phase_until&&Number.isFinite(until.getTime())&&until.getTime()<=Date.now();
+      $n('body-state-status').textContent=value.initialized?'保存的身体状态更新于 '+updated.label+(expired?'；阶段有效时间已过，当前显示原始快照。':'；显示已保存快照，刷新不会推进身体状态。'):'当前APP对话尚无身体状态；完成一次可识别互动后显示。以下敏感度来自原TLS角色配置。';
     }catch(error){if(current())$n('body-state-status').textContent=errorText(error);}
   }
   function openBody(){if(!account()){openSettings();return;}if(!state.activeId){showNotice('先连接当前对话再查看身体状态。');return;}hideMoreMenu();$n('body-state-dialog').showModal();readBody();}
@@ -235,7 +249,7 @@ window.ChatNight = (() => {
     const accountAvatar=button('你',openUserAvatar,'account-avatar');accountAvatar.id='account-avatar';accountAvatar.setAttribute('aria-label','我的头像设置');document.querySelector('.sidebar-footer').prepend(accountAvatar);
     const originalRender=renderMessages;renderMessages=function(){const value=originalRender.apply(this,arguments);decorateRoleAvatars();return value;};
     const originalChrome=renderChrome;renderChrome=function(){const value=originalChrome.apply(this,arguments);readUserAvatar();return value;};
-    const send=apiClient.send;apiClient.send=async function(){const result=await send.apply(this,arguments);if($n('body-state-dialog').open)readBody();
+    const send=apiClient.send;apiClient.send=async function(){const owner=scope();const result=await send.apply(this,arguments);if(!owner||owner!==scope())return result;if($n('body-state-dialog').open)readBody();
       for(const frame of typeof result==='string'?result.split('\n\n'):[]){const line=frame.split('\n').find(v=>v.startsWith('data: '));if(!line)continue;let event;try{event=JSON.parse(line.slice(6));}catch(_){continue;}if(event.type==='tls_action_result'&&event.data)showNotice(event.data.applied?'互动已由TLS身体系统处理。':'动作已交给角色回应；没有匹配的身体事件。');}
       return result;
     };

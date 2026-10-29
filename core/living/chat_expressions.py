@@ -25,6 +25,7 @@ from PIL import Image
 
 from ..state import _atomic_json
 from .models import private_scope, scope_key
+from .journal import JournalConflict
 from .native_expression_assets import NativeExpressionAssets, NAMESPACE as ASSET_NAMESPACE, _terms
 
 
@@ -60,6 +61,10 @@ _EMOTIONS = {
     '困倦': ('困', '晚安', '睡觉', '休息', '打哈欠', '累了', 'sleep'),
     '疑惑': ('疑惑', '为什么', '怎么回事', '什么意思', '不明白', '好奇', '嗯？', 'what'),
     '鼓励': ('加油', '可以的', '做得好', '相信你', '继续努力', '厉害', '棒', 'well done'),
+    '思考': ('思考', '想一想', '想想看', '琢磨', '考虑一下', '让我想想', 'thinking'),
+    '惊讶': ('惊讶', '震惊', '没想到', '居然', '竟然', '真的吗', 'surprised'),
+    '得意': ('得意', '自豪', '果然', '那当然', '早就知道', 'proud'),
+    '音乐': ('听歌', '听音乐', '配乐', '旋律', '背景音乐', 'bgm', 'music'),
 }
 _GENERIC_TAGS = {'德克萨斯', 'texas', '表情', '表情包', '图片', '日常', '聊天'}
 _GENERIC_TERMS = _terms('德克萨斯表情图片使用这个时候可以现在今天一下这里我们你们')
@@ -145,6 +150,28 @@ def _normalize(value):
     return ' '.join(unicodedata.normalize('NFKC', str(value)).casefold().split())
 
 
+def _positive_contains(text, phrase):
+    """Small lexical evidence, not sentiment inference or another model call.
+
+    A literal negated label is not affirmative evidence for that expression.
+    Unknown or double-negated phrasing can stay text-only.
+    """
+    if not phrase:
+        return False
+    offset = 0
+    while (at := text.find(phrase, offset)) >= 0:
+        head = text[max(0, at - 8):at]
+        end = at + len(phrase)
+        word_boundary = not (re.match(r'[a-z0-9]', phrase[:1]) and at and re.match(r'[a-z0-9]', text[at - 1])) \
+            and not (re.match(r'[a-z0-9]', phrase[-1:]) and end < len(text) and re.match(r'[a-z0-9]', text[end]))
+        negated = re.search(r'(?:不|没|没有|并不|并没有|别|不要|不再|不是|并非|谈不上)(?:太|很|那么|怎么)?\s*$', head) \
+            or re.search(r'\b(?:not|never|no)(?:\s+(?:very|really))?\s+$', text[max(0, at - 18):at])
+        if word_boundary and not negated:
+            return True
+        offset = at + len(phrase)
+    return False
+
+
 def semantic_units(text):
     """Keep paragraphs and natural sentence groups; join tiny interjections.
 
@@ -157,6 +184,7 @@ def semantic_units(text):
     paragraphs = [part.strip() for part in re.split(r'\n\s*\n', text) if part.strip()]
     units = []
     for paragraph in paragraphs:
+        paragraph_start = len(units)
         if re.search(r'https?://\S+', paragraph):
             units.append(paragraph)
             continue
@@ -171,7 +199,7 @@ def semantic_units(text):
                 units.append(pending)
                 pending = ''
         if pending:
-            if units and len(pending) < 8 and len(units[-1]) + len(pending) < 140:
+            if len(units) > paragraph_start and len(pending) < 8 and len(units[-1]) + len(pending) < 140:
                 units[-1] += pending
             else:
                 units.append(pending)
@@ -368,13 +396,18 @@ class ChatExpressions:
         record = self.journal.fetch(ACTIONS, 'definitions', scope)
         items = deepcopy(record['data']['items'] if record else list(DEFAULT_ACTIONS))
         return {'items': sorted(items, key=lambda row: (row['order'], row['id'])), 'revision': record['revision'] if record else 0,
-                'native_touch': self.touch_catalog()}
+                'native_touch': self.touch_catalog(), 'defaults': deepcopy(list(DEFAULT_ACTIONS))}
 
-    def save_action(self, scope, op, record, request_id=None):
+    def save_action(self, scope, op, record, request_id=None, expected_revision=None):
         if op not in {'create', 'update', 'delete', 'import'} or not isinstance(record, dict):
             raise ChatExpressionError('动作操作无效')
         with _LOCK:
             snapshot = self.actions(scope)
+            if expected_revision is not None:
+                if type(expected_revision) is not int or expected_revision < 0:
+                    raise ChatExpressionError('请先读取当前动作版本')
+                if expected_revision != snapshot['revision']:
+                    raise JournalConflict('动作已在其他位置修改，请重新读取后再保存')
             rows = {row['id']: row for row in snapshot['items']}
             if op == 'import':
                 values = record.get('items')
@@ -631,7 +664,24 @@ class ChatExpressions:
         return parts
 
     def bind_user(self, message_scope, preference_scope, submission, record_id, attachments=()):
-        parts = list(submission['parts'])
+        parts = [dict(part) for part in submission['parts']]
+        # This receipt came from the original parser/BodyStore before SDK send,
+        # not from a submitted client field. Persist it with the actual saved
+        # user row so reconnect/history does not lose the interaction outcome.
+        receipt = submission.get('native_touch')
+        if not isinstance(receipt, dict):
+            actual = self.checkpoint_submission(message_scope, submission['checkpoint_id'])
+            receipt = actual.get('native_touch') if actual else None
+        if isinstance(receipt, dict):
+            results = {row.get('fragment_id'): row for row in receipt.get('results', [])
+                       if isinstance(row, dict) and row.get('fragment_id')}
+            for part in parts:
+                result = results.get(part.get('fragment_id'))
+                if part.get('type') == 'action' and part.get('source') == 'user_action' and result is not None:
+                    part['native_result'] = {key: result.get(key) for key in ('state', 'applied', 'parts', 'verb')}
+                    part['native_result'].update(source='tls.chat.native_touch',
+                        character=receipt.get('character'), applied_at=receipt.get('applied_at'),
+                        body_updated_at=receipt.get('body_updated_at'))
         included = {part.get('attachment_id') for part in parts if part.get('attachment_id')}
         parts.extend(dict(part) for part in attachments if part.get('attachment_id') not in included)
         with _LOCK:
@@ -736,7 +786,8 @@ class ChatExpressions:
             return None
         query = _normalize(text)
         terms = _terms(query) - _GENERIC_TERMS
-        emotions = {emotion for emotion, triggers in _EMOTIONS.items() if any(word in query for word in triggers)}
+        emotions = {emotion for emotion, triggers in _EMOTIONS.items()
+                    if any(_positive_contains(query, word) for word in triggers)}
         context = context if isinstance(context, dict) else {}
         surroundings = _normalize(' '.join(str(context.get(key) or '') for key in
             ('persona_id', 'scene', 'input_text', 'conversation_text')))[-5000:]
@@ -751,17 +802,22 @@ class ChatExpressions:
                 continue
             tags = [_normalize(tag) for tag in row['tags'] if _normalize(tag) not in _GENERIC_TAGS]
             meaning = _normalize(row['meaning'])
-            score = sum(10 for tag in tags if len(tag) > 1 and tag in query)
+            score = sum(10 for tag in tags if len(tag) > 1 and _positive_contains(query, tag))
             score += sum(9 for emotion in emotions if any(emotion in tag for tag in tags) or emotion in meaning)
-            score += min(6, len(terms & (_terms(meaning) - _GENERIC_TERMS)))
-            if score < 2:
+            overlap = {term for term in terms & (_terms(meaning) - _GENERIC_TERMS)
+                       if _positive_contains(query, term)}
+            # Two incidental bigrams used to be enough to pick an unrelated
+            # reaction. Require a label/emotion hit or at least three concrete
+            # lexical overlaps; preferences never manufacture semantic evidence.
+            if score == 0 and len(overlap) < 3:
                 continue
-            score += (3 if user['favorite'] else 0) + (2 if user.get('liked') else 0)
-            score += texas['weight'] * 2
-            score += sum(3 for scenario in [*row['scenarios'], *texas['contexts']]
+            score += min(6, len(overlap))
+            preference_score = (3 if user['favorite'] else 0) + (2 if user.get('liked') else 0)
+            preference_score += texas['weight'] * 2
+            preference_score += sum(3 for scenario in [*row['scenarios'], *texas['contexts']]
                 if _normalize(scenario) and _normalize(scenario) in query + ' ' + surroundings)
             # Context is a tie-breaker only. It cannot turn an unrelated image
             # into a match or override the user's hide/dislike or the cooldown.
             # Prefer an equally relevant asset that has not been used recently.
-            ranked.append((score, -(texas['last_used'] or 0), row['id'], row))
-        return max(ranked, key=lambda item: item[:3])[3] if ranked else None
+            ranked.append((score, preference_score, -(texas['last_used'] or 0), row['id'], row))
+        return max(ranked, key=lambda item: item[:4])[4] if ranked else None

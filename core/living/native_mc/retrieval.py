@@ -23,7 +23,7 @@ from .profile_quality import PROFILE_MEMORY_TYPES, profile_quality_decision
 from .store import MemoryStore
 from .time_intent import TimeIntent
 from .visibility import VisibilityPolicy
-from ..memory_routing_strategy import working_expired
+from ..memory_routing_strategy import is_roleplay_record, working_expired
 
 
 class RetrievalEngine:
@@ -2117,8 +2117,7 @@ class RetrievalEngine:
     ) -> tuple[str, str]:
         if working_expired(memory):
             return "", "working_memory_expired"
-        routing = memory.metadata.get('memory_routing') if isinstance(memory.metadata, dict) else None
-        if (isinstance(routing, dict) and routing.get('bucket') == 'roleplay'
+        if (is_roleplay_record(memory)
                 and getattr(ctx, 'memory_reality_mode', 'chat') != 'roleplay'):
             return "", "roleplay_not_current_reality_mode"
         quality_allowed, quality_reason = self._profile_retrieval_decision(memory)

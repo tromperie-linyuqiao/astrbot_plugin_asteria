@@ -6,7 +6,7 @@
   const FIELDS = ['platform', 'bot_id', 'user_id', 'character_id', 'session_id'];
   const node = (tag, text, cls) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (cls) n.className = cls; return n; };
   const progressLabels = {not_started:'尚未完成',pending:'等待推进',waiting_for_scope:'等待真实会话授权',partial:'部分目标待恢复',applied:'已核对推进结果'};
-  let scope = null, selected = null, records = [], metadata = null, busy = false, serial = 0;
+  let scope = null, selected = null, records = [], goalOptions = [], metadata = null, busy = false, serial = 0;
   const pending = new Map();
   const key = value => JSON.stringify(FIELDS.map(k => value && value[k]));
   const same = value => key(value) === key(scope) && key(value) === key(getScope());
@@ -60,6 +60,8 @@
     target.append(node('h3', record.title), node('p', record.date + ' · ' + record.timezone + ' · 修订 ' + record.revision, 'hint'), node('p', '来源：' + (record.provenance.origin === 'goal_definition_template' ? '已有目标定义整理，未调用模型' : '管理员维护的计划定义') + '；不代表已经执行。', 'hint'));
     for (const item of record.items) {
       const card = node('article', undefined, 'scoped-plan-item'); card.append(node('strong', item.title), node('p', item.description), node('small', roleTime(item.scheduled_at, record.timezone)), node('p', (item.status === 'pending' ? '待完成' : item.status === 'completed' ? '角色活动已明确完成' : '已取消') + ' · ' + (progressLabels[item.progress_state] || item.progress_state), 'hint'));
+      const linked = item.goal_ids;
+      card.append(node('p', linked === undefined ? '目标关联：旧记录仍按原文字匹配，可编辑指定目标。' : linked.length ? '关联目标：' + linked.map(id => goalOptions.find(goal => goal.id === id)?.title || '已保留的目标').join('、') : '仅记录活动，不推进目标。', 'hint'));
       if (item.progress_report) card.append(node('p', '匹配目标 ' + item.progress_report.matched + '；本次推进 ' + item.progress_report.advanced + '；既有收据 ' + item.progress_report.duplicate, 'hint'));
       const buttons = node('div', undefined, 'actions');
       if (!record.archived && record.status === 'active' && item.status === 'pending') {
@@ -97,9 +99,23 @@
     const title = text('活动名称', 'text', item && item.title, 100); title.dataset.itemTitle = ''; title.required = true;
     text('说明', 'textarea', item && item.description, 300).dataset.itemDescription = '';
     const at = text('角色时间', 'time', item && minutes !== null ? new Date(item.scheduled_at * 1000 + minutes * 60000).toISOString().slice(11, 16) : ''); at.dataset.itemTime = ''; at.required = true;
+    const links = node('label', '关联目标（可多选；不选则只记录活动）', 'scoped-plan-goal-links');
+    const picker = node('select'); picker.multiple = true; picker.size = Math.min(4, Math.max(2, goalOptions.length)); picker.dataset.itemGoals = '';
+    const linked = item && item.goal_ids || [];
+    for (const goal of goalOptions) {
+      if ((goal.archived || goal.status !== 'active') && !linked.includes(goal.id)) continue;
+      const option = node('option', goal.title + (goal.status === 'active' && !goal.archived ? '' : '（目前不推进）'));
+      option.value = goal.id; option.selected = linked.includes(goal.id); picker.append(option);
+    }
+    links.append(picker); row.append(links);
+    if (item && item.goal_ids === undefined) {
+      const legacy = node('label', undefined, 'scoped-plan-check'), keep = node('input'); keep.type = 'checkbox'; keep.checked = true; keep.dataset.itemLegacyMatching = '';
+      legacy.append(keep, node('span', '保留此旧活动的文字匹配规则')); row.append(legacy);
+      picker.addEventListener('change', () => { keep.checked = false; });
+    }
     if (item) { row.dataset.originalTime = at.value; row.dataset.originalDay = selected.date; row.dataset.scheduledAt = String(item.scheduled_at); }
     const fixed = item && item.status !== 'pending';
-    if (fixed) { for (const control of row.querySelectorAll('input,textarea')) control.disabled = true; row.dataset.fixed = JSON.stringify({id:item.id,title:item.title,description:item.description,scheduled_at:item.scheduled_at}); row.append(node('p', '已完成或取消的活动保留历史，不能改写。', 'hint')); }
+    if (fixed) { for (const control of row.querySelectorAll('input,textarea,select')) control.disabled = true; row.dataset.fixed = JSON.stringify({id:item.id,title:item.title,description:item.description,scheduled_at:item.scheduled_at,...(item.goal_ids === undefined ? {} : {goal_ids:item.goal_ids})}); row.append(node('p', '已完成或取消的活动保留历史，不能改写。', 'hint')); }
     else { const remove = node('button', '移除此活动'); remove.type = 'button'; remove.addEventListener('click', () => row.remove()); row.append(remove); }
     return row;
   }
@@ -128,7 +144,7 @@
     if (op !== 'update' || b.title !== undefined && record.title !== b.title) return false;
     return b.items === undefined || b.items.length === record.items.length && b.items.every((item,index)=>{
       const actual=record.items[index];
-      return (!item.id || item.id===actual.id) && ['title','description','scheduled_at'].every(k=>item[k]===actual[k]);
+      return (!item.id || item.id===actual.id) && ['title','description','scheduled_at'].every(k=>item[k]===actual[k]) && (item.goal_ids === undefined || JSON.stringify(item.goal_ids) === JSON.stringify(actual.goal_ids));
     });
   }
   async function load() {
@@ -147,6 +163,7 @@
       const list = await call('GET', 'list', {...target, day:$('day').value, include_archived:$('archives').checked, limit:64}, target);
       if (!same(target) || own !== serial) return;
       records = list.records || [];
+      goalOptions = list.goal_options || [];
       if (selected) selected = records.find(x => x.id === selected.id) || null;
       const unknown = pending.get(key(target));
       if (unknown) {
@@ -195,12 +212,14 @@
         const time = row.querySelector('[data-item-time]').value;
         const scheduled = row.dataset.scheduledAt && row.dataset.originalDay === $('day').value && row.dataset.originalTime === time ? Number(row.dataset.scheduledAt) : Date.parse($('day').value + 'T' + time + ':00Z') / 1000 - minutes * 60;
         if (!Number.isFinite(scheduled)) throw Error('请填写每项活动的角色时间。');
-        return {...(row.dataset.id ? {id:row.dataset.id} : {}),title:row.querySelector('[data-item-title]').value.trim(),description:row.querySelector('[data-item-description]').value.trim(),scheduled_at:scheduled};
+        const legacy = row.querySelector('[data-item-legacy-matching]');
+        const links = legacy && legacy.checked ? {} : {goal_ids:[...row.querySelector('[data-item-goals]').selectedOptions].map(option => option.value)};
+        return {...(row.dataset.id ? {id:row.dataset.id} : {}),title:row.querySelector('[data-item-title]').value.trim(),description:row.querySelector('[data-item-description]').value.trim(),scheduled_at:scheduled,...links};
       });
       if (!items.length) throw Error('至少保留一项活动。');
       const body = {scope:{...scope},title:$('title').value.trim(),items};
       if (selected) {
-        const prior = selected.items.map(item => ({id:item.id,title:item.title,description:item.description,scheduled_at:item.scheduled_at}));
+        const prior = selected.items.map(item => ({id:item.id,title:item.title,description:item.description,scheduled_at:item.scheduled_at,...(item.goal_ids === undefined ? {} : {goal_ids:item.goal_ids})}));
         if (JSON.stringify(items) === JSON.stringify(prior)) delete body.items;
         mutate('update', {...body,id:selected.id,expected_revision:selected.revision});
       }
@@ -208,7 +227,7 @@
     } catch (error) { notice(error.message, true); }
   });
   function scopeChanged() {
-    scope = getScope(); selected = null; records = []; metadata = null; busy = false; serial++;
+    scope = getScope(); selected = null; records = []; goalOptions = []; metadata = null; busy = false; serial++;
     $('editor').hidden = true; $('day').value = ''; $('zone').textContent = '';
     drawList(); drawDetail(); notice(scope ? '范围已变化，请刷新读取当前计划。' : '先选择完整会话。'); controls();
   }

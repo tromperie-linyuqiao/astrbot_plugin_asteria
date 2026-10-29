@@ -167,6 +167,8 @@ class NativeScopedDailyPlanWebApi:
                         legacy_global_plan_retained=True)
             if name == 'list':
                 body.update(result)
+                body['goal_options'] = await asyncio.to_thread(service.goal_options, scope)
+                self._same(resources)
             else:
                 body['status' if name == 'status' else 'record'] = result
             return json_response(body, headers={'Cache-Control': 'no-store'})

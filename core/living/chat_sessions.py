@@ -13,10 +13,31 @@ import time
 from astrbot.core.agent.message import TextPart
 
 from .chat_expressions import ChatExpressions, ChatExpressionError
+from .journal import JournalConflict
 
 NAMESPACE = 'tls.chat.session.state'
-DEFAULTS = {'archived': False, 'mode': 'chat', 'scene': '', 'reply_format': 'auto'}
+PREFERENCE_DEFAULTS = {'reply_style': 'inherit', 'reply_length': 'inherit', 'rp_intensity': 'inherit'}
+PREFERENCE_OPTIONS = {'reply_style': {'inherit', 'natural', 'warm', 'direct'},
+                      'reply_length': {'inherit', 'short', 'balanced', 'detailed'},
+                      'rp_intensity': {'inherit', 'light', 'balanced', 'immersive'}}
+MODEL_ROUTE_DEFAULTS = {'model_provider_id': '', 'model_fallback_provider_id': ''}
+DEFAULTS = {'archived': False, 'mode': 'chat', 'scene': '', 'reply_format': 'auto', **PREFERENCE_DEFAULTS,
+            **MODEL_ROUTE_DEFAULTS}
 MODES = {'chat', 'roleplay', 'technical'}
+
+
+def session_preference_context(state):
+    """Finite, bounded prompt hints. Inherit contributes no extra instruction."""
+    hints = {'reply_style': {'natural': '语气自然连贯。', 'warm': '语气温和体贴，避免刻意奉承。',
+                            'direct': '直接说明重点，减少客套。'},
+             'reply_length': {'short': '优先简短回复；复杂问题保留必要信息。',
+                              'balanced': '回复长度适中，解释到足以理解。',
+                              'detailed': '需要时充分解释，并使用具体例子；避免重复。'},
+             'rp_intensity': {'light': '虚构互动轻量点到为止，少量动作描写。',
+                              'balanced': '虚构互动中平衡动作描写与对话。',
+                              'immersive': '虚构互动保持场景连续和沉浸感，不把剧情当作现实观察。'}}
+    return '\n'.join(hints[key][state[key]] for key in hints
+        if state.get(key) in hints[key] and (key != 'rp_intensity' or state.get('mode') == 'roleplay'))
 
 
 def touch_catalog(plugin):
@@ -37,8 +58,16 @@ def touch_catalog(plugin):
         if any(word in {'腹部', '肚子', '肚皮'} for word in [part.get('label'), *aliases]) and '肚皮' not in aliases:
             aliases.append('肚皮')
         parts.append({'id': part['id'], 'label': part.get('label') or part['id'], 'aliases': aliases})
+    # The original parser decides valid pairs. This is a display-only copy;
+    # APP aliases never change the role configuration or QQ parser vocabulary.
+    aliases = {part['id']: part['aliases'] for part in parts}
+    parse_profile = dict(profile, parts=[dict(part, aliases=aliases.get(part.get('id'), []))
+                                         for part in profile.get('parts', [])])
+    verbs = [{'word': word, 'part_ids': [part['id'] for part in parts
+              if any(event['part'] == part['id'] for event in events.extract_events(word + part['label'], parse_profile))]}
+             for word in events._action_words(profile)]
     return {'available': True, 'character': character, 'name': profile.get('name') or character,
-            'verbs': [{'word': word} for word in events._action_words(profile)],
+            'verbs': verbs,
             'parts': parts}
 
 
@@ -49,6 +78,9 @@ def validate_touch(catalog, value):
             or value['verb'] not in {row['word'] for row in catalog['verbs']}
             or value['part'] not in {row['id'] for row in catalog['parts']}):
         raise ChatExpressionError('触觉动作或部位已变化，请刷新后重新选择')
+    verb = next(row for row in catalog['verbs'] if row['word'] == value['verb'])
+    if 'part_ids' in verb and value['part'] not in verb['part_ids']:
+        raise ChatExpressionError('原生触觉未支持这个动作与部位组合，请重新选择')
     return dict(value)
 
 
@@ -70,14 +102,16 @@ def apply_chat_touch(plugin, username, session_id, parts):
     if not catalog.get('available'):
         if any(part.get('native_touch') for part in selected):
             raise ChatExpressionError(catalog.get('reason') or 'TLS触觉未接入')
-        return {'state': 'roleplay_input', 'applied': 0, 'scope': 'owned_webchat', 'source': 'user_action'}
+        return {'state': 'roleplay_input', 'applied': 0, 'scope': 'owned_webchat', 'source': 'user_action',
+                'results': [{'fragment_id': part.get('fragment_id'), 'action_id': part.get('action_id'),
+                    'state': 'roleplay_input', 'applied': 0, 'parts': [], 'verb': None} for part in selected]}
     profile = plugin._profiles.get(catalog.get('character'))
     # The APP's display aliases apply only to this parse. Never modify the
     # configured profile or the free-text QQ observer's vocabulary.
     aliases = {part['id']: part['aliases'] for part in catalog['parts']}
     profile = dict(profile, parts=[dict(part, aliases=aliases.get(part.get('id'), part.get('aliases', [])))
                                    for part in profile.get('parts', [])])
-    evs = []
+    evs, action_results = [], []
     for part in selected:
         if part.get('native_touch'):
             value = validate_touch(catalog, part['native_touch'])
@@ -98,15 +132,28 @@ def apply_chat_touch(plugin, username, session_id, parts):
                 description = description.replace(role_name + '的', '')
             parsed = events.extract_events(description, profile)
         evs.extend(parsed)
+        action_results.append({'fragment_id': part.get('fragment_id'), 'action_id': part.get('action_id'),
+            'state': 'native_touch_applied' if parsed else 'roleplay_input', 'applied': len(parsed),
+            'parts': list(dict.fromkeys(event['part'] for event in parsed)),
+            'verb': part['native_touch']['verb'] if part.get('native_touch') else None})
     if not evs:
-        return {'state': 'roleplay_input', 'applied': 0, 'scope': 'owned_webchat', 'source': 'user_action'}
+        return {'state': 'roleplay_input', 'applied': 0, 'scope': 'owned_webchat', 'source': 'user_action',
+                'results': action_results}
     now = time.time()
     for event in evs:
         event['t'] = now
     result = plugin._advance_session(catalog['character'], _touch_session(username, session_id), evs, now)
     if result is None:
         raise ChatExpressionError('TLS身体服务正在更新，互动未确认')
-    return {'state': 'native_touch_applied', 'character': catalog['character'], 'applied': len(evs), 'scope': 'owned_webchat', 'source': 'user_action'}
+    # _advance_session returns only after the original BodyStore save. Read its
+    # timestamp rather than inventing a state revision or claiming every event
+    # necessarily increased a value (cooldowns/phase rules may suppress it).
+    load = getattr(plugin._store, 'load', None)
+    stored = load(catalog['character'], _touch_session(username, session_id)) if callable(load) else None
+    return {'state': 'native_touch_applied', 'character': catalog['character'], 'applied': len(evs),
+            'scope': 'owned_webchat', 'source': 'user_action', 'applied_at': now,
+            'body_updated_at': stored.get('updated_at') if isinstance(stored, dict) else None,
+            'results': action_results}
 
 
 def chat_body_snapshot(plugin, username, session_id):
@@ -156,9 +203,18 @@ class ChatSessionState:
         return dict(DEFAULTS, **(record['data'] if record else {}),
                     session_id=session_id, revision=record['revision'] if record else 0)
 
-    def save(self, username, session_id, changes, *, expected_revision=None):
+    def save(self, username, session_id, changes, *, expected_revision=None, reset_preferences=False):
         if not isinstance(changes, dict) or set(changes) - set(DEFAULTS):
-            raise ChatExpressionError('会话设置只接受归档、模式和剧情简介')
+            raise ChatExpressionError('会话设置含不支持的字段')
+        if type(reset_preferences) is not bool or reset_preferences and set(changes) & set(PREFERENCE_DEFAULTS):
+            raise ChatExpressionError('恢复继承不能同时指定回复偏好')
+        for key, options in PREFERENCE_OPTIONS.items():
+            if key in changes and (not isinstance(changes[key], str) or changes[key] not in options):
+                raise ChatExpressionError('会话回复偏好无效')
+        for key in MODEL_ROUTE_DEFAULTS:
+            if key in changes and (not isinstance(changes[key], str) or len(changes[key]) > 160
+                    or changes[key] != changes[key].strip() or any(ord(c) < 32 for c in changes[key])):
+                raise ChatExpressionError('会话模型编号无效')
         if 'archived' in changes and type(changes['archived']) is not bool:
             raise ChatExpressionError('归档状态须为开关')
         if 'mode' in changes and changes['mode'] not in MODES:
@@ -172,6 +228,10 @@ class ChatSessionState:
             raise ChatExpressionError('会话设置版本无效')
         old = self.get(username, session_id)
         value = {key: changes.get(key, old[key]) for key in DEFAULTS}
+        if value['model_provider_id'] and value['model_provider_id'] == value['model_fallback_provider_id']:
+            raise ChatExpressionError('会话首选与备选模型不能相同')
+        if reset_preferences:
+            value.update(PREFERENCE_DEFAULTS)
         self.journal.put(NAMESPACE, 'settings', ChatExpressions.message_scope(username, session_id),
                          value, expected_revision=old['revision'] if expected_revision is None else expected_revision,
                          authorize=self.current)
@@ -202,13 +262,28 @@ async def inject_chat_session_context(plugin, event, req):
     state = await asyncio.to_thread(ChatSessionState(journal, current=current).get, username, session_id)
     if not current() or state['archived']:
         return
+    # Bind the real SDK occurrence to its server checkpoint. Saved DB IDs and
+    # SDK event UUIDs differ; later quickviews use this exact link, never text.
+    from .chat_message_memory import bind_event_source
+    try:
+        await asyncio.to_thread(bind_event_source, journal, username, session_id, payload,
+                                mode=state['mode'], current=current)
+    except (RuntimeError, OSError, ValueError, JournalConflict, PermissionError):
+        # Optional provenance may be unavailable (including Journal capacity).
+        # The quickview then reports no exact link; generation keeps its hints.
+        pass
+    if not current():
+        return
     event.set_extra('tls_chat_session_mode',dict(schema=1,mode=state['mode'],session_id=session_id,
         username=username,revision=state['revision'],source='tls.chat.session_state'))
     # User-maintained conversation context, not an observation or a rewrite of
     # Persona. Existing TLS RP/memory assembly remains responsible for its data.
-    mode_text = {'chat': '自然日常聊天，回复简洁连贯', 'roleplay': '沿用当前角色进行连续的虚构剧情互动',
+    mode_text = {'chat': '自然日常聊天，回复连贯', 'roleplay': '沿用当前角色进行连续的虚构剧情互动',
                  'technical': '清晰讨论和解释问题，避免无关表情与机械分段'}[state['mode']]
     block = '[Texas Chat 当前会话设置，来自用户明确维护]\n' + mode_text
+    preferences = session_preference_context(state)
+    if preferences:
+        block += '\n本会话回复偏好（仅影响后续表达）：\n' + preferences
     block += '\n用户的聊天表情和互动动作是交流表达。自然回应其情绪与动作，不将表情称为上传照片、发图或识图；普通图片附件仍按实际内容处理。'
     if state['scene']:
         block += '\n本会话剧情/讨论简介（用户设定，不是现实观察）：' + json.dumps(state['scene'], ensure_ascii=False)

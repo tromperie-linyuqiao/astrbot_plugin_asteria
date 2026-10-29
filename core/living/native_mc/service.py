@@ -84,7 +84,7 @@ from .summarizer import MemorySummarizer
 from .time_intent import TimeIntent, parse_time_intent
 from .turn_signal import analyze_turn_signal, message_terms
 from .visibility import VisibilityPolicy
-from ..memory_routing_strategy import route as memory_route, route_derived, settings_for as memory_strategy_settings, summary_plan, capture_mode
+from ..memory_routing_strategy import route as memory_route, route_derived, settings_for as memory_strategy_settings, summary_plan, capture_mode, is_roleplay_record
 
 
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
@@ -4119,6 +4119,7 @@ class MemoryCompanionService:
             persona_id=ctx.persona_id,
             message_id=ctx.message_id,
             message_text=ctx.message_text,
+            memory_reality_mode=ctx.memory_reality_mode,
             strict_session_only=ctx.strict_session_only,
             preferred_address=ctx.preferred_address,
             preferred_address_locked=ctx.preferred_address_locked,
@@ -4681,7 +4682,7 @@ class MemoryCompanionService:
         payload: dict[str, Any],
         summary_memory_id: str,
     ) -> int:
-        if ctx.scope != "group":
+        if ctx.scope != "group" or any(is_roleplay_record(row) for row in rows):
             return 0
         facts = payload.get("bot_self_facts") if isinstance(payload, dict) else None
         if not isinstance(facts, list):
@@ -4797,6 +4798,11 @@ class MemoryCompanionService:
         payload: dict[str, Any],
         memory_id: str,
     ) -> int:
+        # Both new summaries and maintenance backfill use this entry. The
+        # existing graph has no reality namespace; keep fictional facts in
+        # their RP summary rather than merging them into real fact/topic nodes.
+        if is_roleplay_record(record):
+            return 0
         topics = self._kg_list(payload.get("topics"), limit=8, item_limit=80)
         key_facts = self._kg_list(payload.get("key_facts"), limit=10, item_limit=180)
         participants = self._kg_list(payload.get("participants"), limit=12, item_limit=80)

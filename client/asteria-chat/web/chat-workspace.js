@@ -3,6 +3,7 @@
 /* Existing TLS agenda and explicit permissions through one authenticated bridge. */
 window.ChatWorkspace = (() => {
   let owner='',epoch=0,serial=0,busy=0,snapshot=null,calendar=null,edit=null,mode='create',requestId='',formTimezone='',editorOwner='',proactiveSerial=0;
+  let dates=null,dateEdit=null,dateRequest='',dateOwner='',datesSerial=0,calendarNear=true;
   const pendingWrites=new Map(),REPEATS={none:'不重复',daily:'每天',weekly:'每周',monthly:'每月',yearly:'每年'};
   const DESTINATIONS={qq:'保留QQ',chat_text:'纯文本改发Chat',chat_all:'文字、图片与语音均发Chat'};
   const $id=id=>document.getElementById(id),scope=()=>JSON.stringify([state.server,state.username,state.activeId]);
@@ -74,6 +75,11 @@ window.ChatWorkspace = (() => {
     $id('workspace-clear-pending').hidden=pending?.phase!=='unknown';
     $id('workspace-clear-pending').disabled=busy!==0||pending?.readChecked!==true;
     for(const n of $id('calendar-list').querySelectorAll('button'))n.disabled=blocked;
+    if($id('calendar-zone'))$id('calendar-zone').disabled=blocked||!writable||calendar?.capabilities?.periodic!==true;
+    if($id('important-date-form')){
+      for(const n of $id('important-date-form').querySelectorAll('input,textarea,select,button'))n.disabled=blocked||dates?.writable!==true;
+      for(const n of $id('important-date-list').querySelectorAll('button'))n.disabled=blocked;
+    }
   }
   function begin(){if(busy||!owner)return null;const op={owner,epoch,id:++serial,sessionId:state.activeId};busy=op.id;controls();return op;}
   function end(op){if(current(op)&&busy===op.id){busy=0;controls();}}
@@ -95,6 +101,7 @@ window.ChatWorkspace = (() => {
     const due=row&&Date.parse(row.due_at)>Date.now()?row.due_at:Date.now()+3600000;
     $id('calendar-time').value=localDate(due);
     formTimezone=row?.metadata?.recurrence?.timezone||row?.timezone||deviceTimezone();
+    if($id('calendar-zone'))$id('calendar-zone').value=formTimezone;
     recurrenceControls(row?.metadata?.recurrence?.repeat||'none');
     $id('calendar-form-title').textContent=mode==='restore'?'恢复已取消日程':row?'编辑日程':'安排提醒';
     $id('calendar-save').textContent=mode==='restore'?'恢复提醒':row?'保存修改':'添加日程';controls();
@@ -121,7 +128,7 @@ window.ChatWorkspace = (() => {
   }
   function draw(){
     const box=$id('calendar-list');box.replaceChildren();const day=$id('calendar-day').value;
-    const rows=calendar.items.filter(row=>!day||localDate(row.due_at).slice(0,10)===day);
+    const rows=calendar.items.filter(row=>day?localDate(row.due_at).slice(0,10)===day:!calendarNear||(Date.parse(row.due_at)>=Date.now()&&Date.parse(row.due_at)<=Date.now()+30*86400000));
     for(const row of rows){
       const item=make('article','','workspace-card'),recurrence=row.metadata?.recurrence;
       item.append(make('strong',row.content),make('p',new Date(row.due_at).toLocaleString()+' · '+(row.source==='qq'?'QQ事项（只读）':'Chat提醒')));
@@ -134,7 +141,7 @@ window.ChatWorkspace = (() => {
       }
       box.append(item);
     }
-    if(!rows.length)box.append(make('p',day?'这一天没有日程。':'暂无可读取的日程。'));
+    if(!rows.length)box.append(make('p',day?'这一天没有日程。':calendarNear?'未来30天没有可读取的日程。':'暂无可读取的日程。'));
     const notes=$id('workspace-notes');notes.replaceChildren();
     for(const note of calendar.notes||[]){const f=note.fields||{};notes.append(make('li',(f.title||f.content||'便签')+(f.due_at?' · '+new Date(f.due_at*1000).toLocaleString():'')));}
     if(!notes.children.length)notes.append(make('li','暂无可读取的待办。'));
@@ -147,16 +154,20 @@ window.ChatWorkspace = (() => {
     const pending=pendingWrites.get(owner);if(!pending||pending.phase!=='unknown')return false;pending.readChecked=true;
     let matched=false;
     if(pending.kind==='settings')matched=Object.entries(pending.body.changes).every(([key,value])=>snapshot.settings.values[key]===value);
-    else if(pending.body.id){
+    else if(pending.kind==='important'){
+      const body=pending.body,row=dates?.records?.find(r=>body.id?r.id===body.id:r.provenance?.source_ref===body.request_id&&r.source==='chat');
+      matched=!!row&&(body.action==='archive'?row.archived===true:body.action==='restore'?row.archived===false:
+        Object.entries(body.fields).every(([k,v])=>row.fields?.[k]===v))&&(!body.expected_revision||row.revision>body.expected_revision);
+    }else if(pending.body.id){
       const row=calendar.items.find(r=>r.id===pending.body.id),body=pending.body;
       if(body.action==='cancel')matched=row?.status==='cancelled';
       else matched=!!row&&row.status==='active'&&row.revision>body.expected_revision
         &&Date.parse(row.due_at)===Date.parse(body.due_at)&&String(row.content||'').replace(/^【日程】/,'')===body.text;
     }
-    if(matched){pendingWrites.delete(owner);if(pending.kind==='calendar'&&pending.body.action!=='cancel')form();return true;}return false;
+    if(matched){pendingWrites.delete(owner);if(pending.kind==='calendar'&&pending.body.action!=='cancel')form();if(pending.kind==='important')dateForm();return true;}return false;
   }
   async function read(){
-    const op=begin();if(!op)return;say('正在读取TLS…');readProactive();
+    const op=begin();if(!op)return;say('正在读取TLS…');readProactive();readDates();
     try{
       const [settings,data]=await Promise.all([apiClient.json('GET',route('workspace',op.sessionId)),apiClient.json('GET',route('calendar',op.sessionId))]);
       if(!current(op))return;
@@ -168,11 +179,12 @@ window.ChatWorkspace = (() => {
   }
   async function write(kind,body,success){
     if(locked())return;const op=begin();if(!op)return;
+    if(kind==='important')datesSerial++;
     const pending={kind,body,phase:'inflight',readChecked:false};pendingWrites.set(op.owner,pending);controls();
     try{
-      await apiClient.json('POST',kind==='settings'?'/chat/workspace':'/chat/calendar',body);
+      await apiClient.json('POST',kind==='settings'?'/chat/workspace':kind==='important'?'/chat/important-dates':'/chat/calendar',body);
       if(pendingWrites.get(op.owner)===pending)pendingWrites.delete(op.owner);
-      if(current(op)){if(kind==='calendar'&&body.action!=='cancel')form();say(success);}
+      if(current(op)){if(kind==='calendar'&&body.action!=='cancel')form();if(kind==='important')dateForm();say(success);}
     }catch(e){pending.phase='unknown';pending.failure=errorText(e);if(current(op))say(pending.failure+' 请刷新核对；不会自动重试。');}
     finally{end(op);}if(current(op))await read();
   }
@@ -195,7 +207,8 @@ window.ChatWorkspace = (() => {
     const body={session_id:state.activeId,action:edit?mode:'create',...(edit?{id:edit.id,expected_revision:edit.revision}:{request_id:requestId}),due_at:date.toISOString(),text};
     if(calendar.capabilities?.periodic===true){
       const repeat=$id('calendar-repeat').value,old=edit?.metadata?.recurrence?.repeat||'none';
-      if(!edit||repeat!==old){body.repeat=repeat;body.timezone=formTimezone;}
+      const zone=$id('calendar-zone').value.trim();if(!zone){say('请填写明确的日程时区。');return;}
+      if(!edit||repeat!==old||zone!==formTimezone){body.repeat=repeat;body.timezone=zone;}
     }
     await write('calendar',body,mode==='restore'?'日程已恢复。':'日程已保存。');
   }
@@ -203,10 +216,65 @@ window.ChatWorkspace = (() => {
     if(locked()||owner!==scope()||row.editable!==true||row.source==='qq'||unsafe(row))return;
     await write('calendar',{session_id:state.activeId,action:'cancel',id:row.id,expected_revision:row.revision},'日程已取消。');
   }
-  function invalidate(){epoch++;proactiveSerial++;owner='';busy=0;snapshot=null;calendar=null;}
+  function dateForm(row=null){
+    dateEdit=row;dateOwner=owner;dateRequest='chat-date-'+Date.now()+'-'+Math.random().toString(16).slice(2);
+    const f=row?.fields||{};
+    for(const [key,fallback]of [['title',''],['date',''],['type','重要日期'],['note',''],['timezone',deviceTimezone()],['remind_days',7],['priority',50]])$id('important-date-'+key).value=f[key]??fallback;
+    for(const key of ['enabled','repeat_yearly'])$id('important-date-'+key).checked=f[key]!==false;
+    $id('important-date-save').textContent=row?'保存日期修改':'添加重要日期';controls();
+  }
+  function drawDates(){
+    const box=$id('important-date-list');box.replaceChildren();
+    for(const value of dates?.birthdays||[]){
+      const profile=value.profile||{},item=make('article','','workspace-card');
+      item.append(make('strong','已登记的生日'),make('p',(profile.calendar==='solar'?'公历 · ':'')+String(profile.month).padStart(2,'0')+'-'+String(profile.day).padStart(2,'0')+' · 每年'+(value.timezone?' · '+value.timezone:'')),
+        make('small','来源：已绑定QQ原生日设置（只读）'+(profile.source?' · '+profile.source:'')));
+      box.append(item);
+    }
+    for(const row of dates?.records||[]){
+      const f=row.fields||{},item=make('article','','workspace-card');
+      item.append(make('strong',f.title||'重要日期'),make('p',(f.date||'日期未提供')+' · '+(f.type||'重要日期')+' · '+(f.repeat_yearly?'每年':'单次')+' · '+(f.timezone||'时区未提供')),
+        make('small',(row.archived?'已移除':f.enabled?'已启用':'已停用')+' · 来源：'+(row.source==='qq'?'已绑定QQ（只读）':'当前Chat')+' · 修订 '+row.revision));
+      if(f.note)item.append(make('p',f.note));
+      item.append(make('p','提前 '+f.remind_days+' 天进入关注范围 · 更新于 '+readTime(row.updated_at),'appearance-help'));
+      if(row.editable===true&&row.source==='chat'){
+        if(!row.archived)item.append(button('编辑',()=>{if(!locked()){dateForm(row);$id('important-date-title').focus();}}),button(f.enabled?'停用':'启用',()=>changeDate(row,'update',{...f,enabled:!f.enabled})),button('移除',()=>changeDate(row,'archive')));
+        else if(dates.capabilities?.restore===true)item.append(button('恢复',()=>changeDate(row,'restore')));
+      }
+      box.append(item);
+    }
+    if(!box.children.length)box.append(make('p','当前授权范围暂无重要日期。'));
+    $id('important-date-form').hidden=dates?.writable!==true;
+    $id('important-date-status').textContent=dates?.writable?'生日与纪念日保存到当前TLS日期定义；由原有重要日期上下文与日历规则使用；关注日期不等于已安排定时发送。':'当前会话尚未登记可写范围；正常聊天后刷新即可维护。';
+    if(dates?.sources?.some(s=>s.state==='scope_unavailable'))$id('important-date-status').textContent+=' 部分来源当前不可查阅。';
+    controls();
+  }
+  async function readDates(){
+    const op={owner,epoch,id:++datesSerial,sessionId:state.activeId};$id('important-date-status').textContent='正在读取重要日期…';
+    try{const data=await apiClient.json('GET',route('important-dates',op.sessionId));if(!current(op)||op.id!==datesSerial)return;
+      if(!Array.isArray(data.records))throw Error('服务器未返回完整的重要日期。');dates=data;if(dateOwner!==owner)dateForm();drawDates();
+      if(pendingWrites.get(owner)?.kind==='important'&&reconcile())say('重要日期已回读，与上次修改一致。');
+    }catch(e){if(current(op)&&op.id===datesSerial){dates=null;$id('important-date-list').replaceChildren();$id('important-date-form').hidden=true;$id('important-date-status').textContent=e.status===404?'当前服务器尚未提供Chat重要日期入口。':errorText(e);controls();}}
+  }
+  async function changeDate(row,action,fields){
+    if(locked()||owner!==scope()||dates?.writable!==true||row.editable!==true||row.source!=='chat')return;
+    await write('important',{session_id:state.activeId,action,id:row.id,expected_revision:row.revision,...(fields?{fields}:{})},'重要日期已保存，正在回读…');
+  }
+  async function saveDate(event){
+    event.preventDefault();if(locked()||owner!==scope()||dateOwner!==owner||dates?.writable!==true)return;
+    const fields={};for(const key of ['title','date','type','note','timezone'])fields[key]=$id('important-date-'+key).value.trim();
+    for(const key of ['enabled','repeat_yearly'])fields[key]=$id('important-date-'+key).checked;
+    for(const key of ['remind_days','priority'])fields[key]=Number($id('important-date-'+key).value);
+    if(!fields.title||!fields.timezone||!/^(?:\d{4}-)?\d{2}-\d{2}$/.test(fields.date)||(!fields.repeat_yearly&&fields.date.length!==10)){say('请填写名称、明确时区和公历日期；单次日期需包含年份。');return;}
+    const body={session_id:state.activeId,action:dateEdit?'update':'create',fields,...(dateEdit?{id:dateEdit.id,expected_revision:dateEdit.revision}:{request_id:dateRequest})};
+    await write('important',body,'重要日期已保存，正在回读…');
+  }
+  function invalidate(){epoch++;proactiveSerial++;datesSerial++;owner='';busy=0;snapshot=null;calendar=null;dates=null;}
   function open(){
     if(!state.authenticated||!state.activeId){showNotice('先连接伙伴。');return;}
-    hideMoreMenu();epoch++;owner=scope();busy=0;snapshot=null;calendar=null;
+    hideMoreMenu();epoch++;owner=scope();busy=0;snapshot=null;calendar=null;dates=null;
+    $id('important-date-list').replaceChildren();$id('important-date-form').hidden=true;
+    if(dateOwner!==owner)dateForm();
     $id('calendar-list').replaceChildren();$id('workspace-notes').replaceChildren();$id('workspace-binding').textContent='正在读取…';$id('calendar-form').hidden=true;
     for(const id of ['permission-memory','permission-calendar','permission-activity','permission-perception'])$id(id).checked=false;
     $id('permission-activity-field').hidden=true;$id('permission-perception-field').hidden=true;$id('workspace-destination').replaceChildren();
@@ -218,6 +286,12 @@ window.ChatWorkspace = (() => {
     const d=document.createElement('dialog');d.id='workspace-dialog';d.className='settings-dialog';
     d.innerHTML='<div class="settings-form"><div class="dialog-heading"><h2>日程与权限</h2><button id="workspace-close" class="icon-button" aria-label="关闭" type="button">×</button></div><p id="workspace-binding"></p><details><summary>查阅权限与主动消息</summary><p class="appearance-help">只控制已确认绑定双方的资料共享，不申请手机日历、定位或全盘访问。</p><label class="experience-field"><span><input type="checkbox" id="permission-memory"> 双向查阅长期记忆</span></label><label class="experience-field"><span><input type="checkbox" id="permission-calendar"> 在Chat查阅已绑定QQ的日程与待办</span></label><label class="experience-field" id="permission-activity-field" hidden><span><input type="checkbox" id="permission-activity"> 两端聊天互相免打扰</span><small class="appearance-help">任一端近期正在聊天时，减少另一端的主动打扰；不复制消息或授予发送权限。</small></label><label class="experience-field" id="permission-perception-field" hidden><span><input type="checkbox" id="permission-perception"> 在Chat使用已绑定手机的感知与音乐</span><small class="appearance-help">复用原PPB设备授权和原数据，用于当前角色上下文与应用陪伴；不新增采集权限，可随时关闭。</small></label><label class="experience-field">主动消息发送位置<select id="workspace-destination"></select></label><p id="workspace-route-note" class="appearance-help"></p><button id="workspace-save" class="secondary-button" type="button">保存权限与发送位置</button></details><div class="appearance-actions"><label>查看日期 <input id="calendar-day" type="date"></label><button id="calendar-all" type="button" class="text-button">全部日期</button><button id="workspace-refresh" type="button" class="text-button">刷新</button></div><p id="workspace-source" class="appearance-help"></p><div id="calendar-list"></div><form id="calendar-form"><h3 id="calendar-form-title">安排提醒</h3><label class="experience-field">内容<textarea id="calendar-text" maxlength="3000" rows="3" required></textarea></label><label class="experience-field">手机本地时间<input id="calendar-time" type="datetime-local" required></label><label class="experience-field" id="calendar-repeat-field" hidden>重复<select id="calendar-repeat"><option value="none">不重复</option></select></label><p id="calendar-timezone" class="appearance-help"></p><div class="appearance-actions"><button id="calendar-save" type="submit" class="primary-button">添加日程</button><button id="calendar-new" type="button" class="text-button">清空编辑</button></div></form><details><summary>已有待办</summary><ul id="workspace-notes"></ul></details><p id="workspace-status" role="status" class="appearance-help"></p><button id="workspace-clear-pending" type="button" class="text-button" hidden>已核对，继续编辑</button></div>';
     document.body.append(d);
+    const near=button('近期30天',()=>{calendarNear=true;$id('calendar-day').value='';if(calendar)draw();});$id('calendar-all').before(near);
+    const zone=make('label',undefined,'experience-field');zone.append(make('span','日程规则时区'));
+    const zoneInput=make('input');zoneInput.id='calendar-zone';zoneInput.maxLength=80;zoneInput.placeholder='Asia/Shanghai 或 UTC+08:00';zone.append(zoneInput);$id('calendar-repeat-field').after(zone);
+    const important=make('details',undefined,'workspace-important-dates');important.id='important-dates-section';
+    important.innerHTML='<summary>生日与重要日期</summary><p id="important-date-status" class="appearance-help" role="status"></p><div id="important-date-list"></div><form id="important-date-form" hidden><h3>维护日期</h3><label class="experience-field">名称<input id="important-date-title" maxlength="40" required></label><label class="experience-field">公历日期<input id="important-date-date" placeholder="MM-DD 或 YYYY-MM-DD" maxlength="10" required></label><label class="experience-field">类别<input id="important-date-type" list="important-date-types" maxlength="30" required><datalist id="important-date-types"><option value="生日"><option value="纪念日"><option value="重要日期"></datalist></label><label class="experience-field">备注<textarea id="important-date-note" rows="2" maxlength="120"></textarea></label><label class="experience-field">时区<input id="important-date-timezone" placeholder="Asia/Shanghai 或 UTC+08:00" maxlength="80" required></label><div class="compose-checks"><label><input type="checkbox" id="important-date-enabled"> 启用</label><label><input type="checkbox" id="important-date-repeat_yearly"> 每年重复</label></div><label class="experience-field">提前关注天数<input id="important-date-remind_days" type="number" min="0" max="365" step="1" required></label><label class="experience-field">优先级<input id="important-date-priority" type="number" min="0" max="1000" step="1" required></label><div class="appearance-actions"><button id="important-date-save" type="submit" class="primary-button">添加重要日期</button><button id="important-date-new" type="button" class="text-button">新建日期</button></div></form>';
+    $id('calendar-form').after(important);$id('important-date-form').onsubmit=saveDate;$id('important-date-new').onclick=()=>{if(!locked())dateForm();};
     const proactive=make('section',undefined,'workspace-proactive');proactive.setAttribute('aria-label','当前主动消息状态');
     const proactiveHead=make('div',undefined,'workspace-state-heading'),proactiveRefresh=button('读取状态',readProactive);proactiveRefresh.id='workspace-proactive-refresh';
     proactiveHead.append(make('h3','现在会主动来找我吗？'),proactiveRefresh);const proactiveBody=make('div');proactiveBody.id='workspace-proactive-body';
@@ -226,7 +300,7 @@ window.ChatWorkspace = (() => {
     $id('workspace-close').onclick=()=>d.close();$id('workspace-refresh').onclick=read;$id('workspace-save').onclick=saveSettings;
     $id('calendar-form').onsubmit=saveCalendar;$id('calendar-new').onclick=()=>{const p=pendingWrites.get(owner);if(p?.phase==='inflight')return;pendingWrites.delete(owner);form();say('已开始新的日程草稿；原操作未重发，请先核对列表避免重复。');};
     $id('workspace-clear-pending').onclick=()=>{const p=pendingWrites.get(owner);if(!busy&&p?.phase==='unknown'&&p.readChecked){pendingWrites.delete(owner);say('已结束本次等待；原请求仍可能稍后完成。请核对后再提交新修改。');controls();}};
-    $id('calendar-day').onchange=()=>calendar&&draw();$id('calendar-all').onclick=()=>{$id('calendar-day').value='';if(calendar)draw();};
+    $id('calendar-day').onchange=()=>{calendarNear=false;if(calendar)draw();};$id('calendar-all').onclick=()=>{calendarNear=false;$id('calendar-day').value='';if(calendar)draw();};
     d.addEventListener('close',()=>{if(!d.open)invalidate();});
     $id('more-menu').append(button('日程与权限',open));
   },{once:true});

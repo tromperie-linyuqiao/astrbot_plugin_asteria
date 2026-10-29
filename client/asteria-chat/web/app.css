@@ -406,3 +406,27 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .message-row.continued.event-reminder .message-event-label,.message-row.continued.event-proactive .message-event-label{margin-top:3px}
 .notice[data-kind="error"]{border-inline-start:3px solid var(--danger)}
 @media(max-width:600px){.message-event-label{font-size:11px;gap:6px;margin-bottom:6px}.message-row.event-reminder .message-bubble{box-shadow:inset 2px 0 0 var(--accent)}}
+
+/* Account-scoped saved history and explicit native notification preferences. */
+.chat-cache-settings,.notification-preferences{margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+.cache-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.chat-cache-settings h3,.notification-preferences h3{margin:0;font-size:14px;font-weight:550;color:var(--text-strong)}
+.cache-details{display:grid;grid-template-columns:auto minmax(0,1fr);gap:9px 12px;margin:14px 0;font-size:11px;line-height:1.7}
+.cache-details dt{color:var(--muted)}.cache-details dd{margin:0;text-align:right;overflow-wrap:anywhere;color:var(--text)}
+.chat-cache-settings .secondary-button{margin-top:12px;min-height:40px;font-size:11px}
+.cache-clear-scope{color:var(--text-soft);font-size:10px;line-height:1.8;margin:8px 0 0}
+.cache-attachments{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.cache-attachments>strong{font-size:12px;font-weight:500}
+#chat-cache-account,#chat-cache-error,#chat-cache-note{overflow-wrap:anywhere}
+.notification-preferences{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px 14px}
+.notification-preferences>h3,.notification-preferences>p,.notification-preferences>button{grid-column:1/-1}
+.notification-preferences>label{display:flex;align-items:center;gap:8px;margin:0;line-height:1.65;color:var(--text-soft);font-size:11px}
+.notification-preferences>label:has(select){grid-column:1/-1;flex-wrap:wrap}
+.notification-preferences input[type=checkbox]{width:16px;height:16px;margin:0;flex:none;accent-color:var(--accent)}
+.notification-preferences>label:has(input[type=time]){flex-direction:column;align-items:stretch}
+.notification-preferences input[type=time]{width:100%;min-width:0;padding:9px;font-size:12px}
+.notification-preferences select{min-width:0;flex:1;font-size:12px}
+.notification-preferences>p{margin:0;color:var(--muted);font-size:10px;line-height:1.8}
+.notification-preferences>button{justify-self:start;border:1px solid var(--line);background:var(--surface-panel);padding:10px 14px;border-radius:11px;font-size:11px;min-height:40px}
+.message-row.notification-target .message-body{outline:2px solid var(--accent);outline-offset:5px;border-radius:12px}
+@media(max-width:360px){.notification-preferences{grid-template-columns:minmax(0,1fr)}.cache-heading{align-items:flex-start}.cache-heading .text-button{max-width:100px}}

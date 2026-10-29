@@ -6,7 +6,7 @@ desc: >-
   可搭配 Asteria Chat 在 Android 上聊天，并通过原生管理页面维护角色与资料。
 author: tromperie-linyuqiao
 maintainer: tromperie-linyuqiao
-version: 0.66.1
+version: 0.69.0
 astrbot_version: ">=4.26.6,<5.0.0"
 repo: https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria
 tags:

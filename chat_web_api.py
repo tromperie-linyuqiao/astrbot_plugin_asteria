@@ -16,8 +16,10 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import time
 import unicodedata
 import uuid
+from sqlalchemy.exc import SQLAlchemyError
 
 from copy import deepcopy
 from types import SimpleNamespace
@@ -32,8 +34,16 @@ from astrbot.dashboard.services.session_management_service import SessionManagem
 
 from .core.living.chat_expressions import ChatExpressions, ChatExpressionError, ChatUserProfile, avatar_source, avatar_crop, avatar_preview
 from .core.living.chat_sessions import ChatSessionState, touch_catalog, apply_chat_touch, chat_body_snapshot
+from .core.living.chat_message_memory import (
+    source_for_saved, associated_memory, save_important, message_candidate, operate_candidate,
+    search_related_memory)
+from .core.living.chat_delivery_center import delivery_center_view
+from .core.living.chat_important_dates import important_dates_view, important_dates_save
+from .core.living.chat_model_route import ChatModelRoute
 from .core.living.chat_identity import QQ_PLATFORMS, identity_service, linked_memory
 from .core.living.chat_notifications import drain_inbox
+from .core.living.chat_receipts import ChatReceipts
+from .core.living.chat_sync import saved_after, cursor as sync_cursor
 from .core.living.chat_workspace import ChatWorkspace, actual_app_scope, calendar_view
 from .core.living.journal import JournalConflict
 from .core.living.delivery_store import DeliveryConflict
@@ -77,14 +87,21 @@ class NativeChatWebApi:
                 ('sessions', self.sessions, 'GET'), ('personas', self.personas, 'GET'),
                 ('new', self.new, 'POST'), ('connect', self.connect, 'POST'),
                 ('bookmarks', self.bookmarks_get, 'GET'), ('bookmarks', self.bookmarks_save, 'POST'),
-                ('history', self.history, 'GET'), ('send', self.send, 'POST'),
+                ('history', self.history, 'GET'), ('sync', self.sync, 'GET'), ('send', self.send, 'POST'),
+                ('receipts', self.receipts_get, 'GET'), ('receipts', self.receipts_save, 'POST'),
                 ('rename', self.rename, 'POST'),
                 ('remove', self.remove, 'POST'),
                 ('session-state', self.session_state_get, 'GET'),
                 ('session-state', self.session_state_save, 'POST'),
+                ('model-route', self.model_route_get, 'GET'),
+                ('model-route', self.model_route_save, 'POST'),
                 ('search', self.search, 'GET'), ('context', self.chat_context, 'GET'),
                 ('proactive-state', self.proactive_state, 'GET'),
                 ('memory-detail', self.memory_detail, 'GET'), ('memory-correct', self.memory_correct, 'POST'),
+                ('message-memory', self.message_memory_get, 'GET'),
+                ('message-memory', self.message_memory_save, 'POST'),
+                ('memory-search', self.memory_search, 'GET'),
+                ('delivery-center', self.delivery_center_get, 'GET'),
                 ('regenerate', self.regenerate, 'POST'),
                 ('expression-settings', self.expression_settings_get, 'GET'),
                 ('expression-settings', self.expression_settings_save, 'POST'),
@@ -94,6 +111,8 @@ class NativeChatWebApi:
                 ('expression-metadata', self.expression_metadata, 'POST'),
                 ('actions', self.actions_get, 'GET'), ('actions', self.actions_save, 'POST'),
                 ('body-state', self.body_state, 'GET'),
+                ('important-dates', self.important_dates_get, 'GET'),
+                ('important-dates', self.important_dates_save, 'POST'),
                 ('identity', self.identity_get, 'GET'),
                 ('identity/challenge', self.identity_challenge, 'POST'),
                 ('identity/revoke', self.identity_revoke, 'POST'),
@@ -404,9 +423,137 @@ class NativeChatWebApi:
                 state = await asyncio.to_thread(state_store.get, username, session_id)
             except (RuntimeError, OSError, ValueError):
                 state = {'state': 'unavailable'}
-            return self._ok(dict(snapshot, persona=persona, tls_state=state, proactive_inbox=inbox_state))
+            payload = dict(snapshot, persona=persona, tls_state=state, proactive_inbox=inbox_state,
+                receipt_transport=ChatReceipts.capability())
+            # A transport revision covers the complete final owned snapshot.
+            # Matching it never skips SDK ownership, inbox or typed-state reads.
+            revision = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                separators=(',', ':'), allow_nan=False).encode('utf-8')).hexdigest()
+            known = request.query.get('known_revision')
+            if isinstance(known, str) and re.fullmatch(r'[0-9a-f]{64}', known) and known == revision:
+                return self._ok(dict(not_modified=True, history_revision=revision,
+                    receipt_transport=payload['receipt_transport']))
+            return self._ok(dict(payload, history_revision=revision))
         except (_RequestError, ChatServiceError) as exc:
             return self._error(exc)
+
+    def _model_route(self, service, username, session_id, session):
+        expressions = self._expressions(service)
+        return ChatModelRoute(ChatSessionState(expressions.journal, current=expressions.current),
+            getattr(self.plugin, '_task_model_router', None), username=username,
+            session_id=session_id, umo=build_webchat_unified_msg_origin(session))
+
+    async def sync(self):
+        """Append catch-up for the existing watcher, not a push connection."""
+        try:
+            query = dict(request.query or {})
+            if set(query) - {'session_id', 'after_id', 'limit'} or 'session_id' not in query:
+                raise _RequestError('同步只接受当前会话、游标和批次大小')
+            session_id = _session_id(query['session_id'])
+            after = sync_cursor(query.get('after_id'), optional=True)
+            limit = sync_cursor(query.get('limit', '100'))
+            if not 1 <= limit <= 100:
+                raise _RequestError('同步批次为1至100条')
+            username, service, _, session = await self._owned_chat(session_id)
+            # Preserve the existing confirmed-QQ inbox semantics; an uncertain
+            # copy is only reconciled by its original stable task reference.
+            inbox_state = 'available'
+            try:
+                await drain_inbox(self.plugin, service, username, session_id, lock=self._inbox_lock)
+            except (RuntimeError, OSError, ValueError, PermissionError, JournalConflict):
+                inbox_state = 'unavailable'
+            result = await saved_after(service.db, session_id, after, limit=limit)
+            if result['history']:
+                try:
+                    expressions = self._expressions(service)
+                    persona = await self._configured_persona(service, username, session_id)
+                    result = await asyncio.to_thread(self._typed_history, expressions,
+                        expressions.message_scope(username, session_id),
+                        expressions.preference_scope(username, persona.get('configured_id')), result)
+                except (RuntimeError, OSError, ValueError, KeyError):
+                    result = dict(result, expression_state='unavailable')
+            # An owner removed/changed while reading cannot receive the result.
+            await self._recheck_owned_session(username, service, session_id)
+            return self._ok(dict(result, session_id=session_id, proactive_inbox=inbox_state,
+                receipt_transport=ChatReceipts.capability()))
+        except (_RequestError, ChatServiceError, PermissionError, RuntimeError, OSError,
+                ValueError, KeyError, sqlite3.Error, SQLAlchemyError) as exc:
+            return self._expression_error(exc)
+
+    async def model_route_get(self):
+        try:
+            session_id = _session_id(request.query.get('session_id'))
+            username, service, _, session = await self._owned_chat(session_id)
+            route = self._model_route(service, username, session_id, session)
+            return self._ok(await asyncio.to_thread(route.view))
+        except (_RequestError, ChatServiceError, ChatExpressionError, JournalConflict,
+                ValueError, RuntimeError, OSError) as exc:
+            return self._expression_error(exc)
+
+    async def model_route_save(self):
+        try:
+            body = await self._body(limit=6000)
+            if set(body) != {'session_id', 'expected_revision', 'changes'}:
+                raise _RequestError('模型路由字段无效')
+            session_id = _session_id(body['session_id'])
+            username, service, _, session = await self._owned_chat(session_id)
+            route = self._model_route(service, username, session_id, session)
+            return self._ok(await asyncio.to_thread(route.save, body['changes'], body['expected_revision']))
+        except (_RequestError, ChatServiceError, ChatExpressionError, JournalConflict,
+                ValueError, RuntimeError, OSError) as exc:
+            return self._expression_error(exc)
+
+    async def receipts_get(self):
+        try:
+            session_id = _session_id(request.query.get('session_id'))
+            username, service, snapshot, _ = await self._owned_chat(session_id)
+            expressions = self._expressions(service)
+            receipts = ChatReceipts(expressions.journal, current=expressions.current)
+            return self._ok(await asyncio.to_thread(receipts.view, username, session_id, snapshot))
+        except (_RequestError, ChatServiceError) as exc:
+            return self._error(exc)
+        except (RuntimeError, OSError, ValueError):
+            return error_response('收件状态暂不可用，聊天记录仍然保留', status_code=503)
+
+    async def receipts_save(self):
+        try:
+            body = await self._body(limit=10000)
+            if set(body) != {'session_id', 'phase', 'message_ids'}:
+                raise _RequestError('收件确认字段无效')
+            session_id = _session_id(body['session_id'])
+            username, service, snapshot, _ = await self._owned_chat(session_id)
+            expressions = self._expressions(service)
+            receipts = ChatReceipts(expressions.journal, current=expressions.current)
+            # Incremental sync can legitimately consume saved rows older than
+            # the SDK's newest-1000 history window. Validate only the bounded
+            # reported IDs against the same original SDK table and session.
+            ids = body['message_ids']
+            if isinstance(ids, list) and 1 <= len(ids) <= 32:
+                known = {str(row.get('id')) for row in snapshot.get('history', []) if isinstance(row, dict)}
+                history = list(snapshot.get('history', []))
+                for identity in dict.fromkeys(x for x in ids if isinstance(x, str)):
+                    if identity in known or not re.fullmatch(r'[1-9][0-9]{0,18}', identity):
+                        continue
+                    if int(identity) > 9223372036854775807:
+                        continue
+                    record = await service.db.get_platform_message_history_by_id(int(identity))
+                    if (record is not None and record.platform_id == 'webchat'
+                            and record.user_id == session_id):
+                        from astrbot.dashboard.services.chat_service import serialize_history_entry
+                        history.append(serialize_history_entry(record))
+                snapshot = dict(snapshot, history=history)
+            await self._recheck_owned_session(username, service, session_id)
+            result = await asyncio.to_thread(receipts.report, username, session_id, snapshot,
+                body['phase'], body['message_ids'])
+            return self._ok(result)
+        except (_RequestError, ChatServiceError) as exc:
+            return self._error(exc)
+        except PermissionError:
+            return error_response('收件服务已变化，请稍后同步', status_code=409)
+        except ValueError as exc:
+            return error_response(str(exc), status_code=400)
+        except (RuntimeError, OSError):
+            return error_response('收件确认暂不可保存，消息不会因此重发', status_code=503)
 
     def _expressions(self, service):
         host = getattr(getattr(self.plugin, '_presence', None), 'living_host', None)
@@ -496,21 +643,70 @@ class NativeChatWebApi:
     async def actions_save(self):
         try:
             body = await self._body()
-            if set(body) - {'session_id', 'op', 'record', 'request_id'} or not {'session_id', 'op', 'record'} <= set(body):
+            if set(body) - {'session_id', 'op', 'record', 'request_id', 'expected_revision'} or not {'session_id', 'op', 'record'} <= set(body):
                 raise _RequestError('动作保存需要会话、操作及完整动作资料')
             _, _, expressions, scope = await self._owned_expression(_session_id(body['session_id']))
             return self._ok(await asyncio.to_thread(expressions.save_action,
-                scope, body['op'], body['record'], body.get('request_id')))
+                scope, body['op'], body['record'], body.get('request_id'),
+                expected_revision=body.get('expected_revision')))
         except (_RequestError, ChatServiceError, ChatExpressionError, KeyError, RuntimeError, OSError, ValueError) as exc:
             return self._expression_error(exc)
 
     async def body_state(self):
         try:
             session_id = _session_id(request.query.get('session_id'))
-            username, _, _, _ = await self._owned_chat(session_id)
-            return self._ok(chat_body_snapshot(self.plugin, username, session_id))
+            username, service, _, _ = await self._owned_chat(session_id)
+            snapshot = chat_body_snapshot(self.plugin, username, session_id)
+            try:
+                expressions = self._expressions(service)
+                snapshot['tls_state'] = await asyncio.to_thread(ChatSessionState(expressions.journal,
+                    current=expressions.current).get, username, session_id)
+            except (RuntimeError, OSError, ValueError):
+                snapshot['tls_state'] = {'state': 'unavailable'}
+            return self._ok(dict(snapshot, source='owned_webchat_virtual_body', read_at=time.time(),
+                validity='stored_snapshot' if snapshot.get('initialized') else
+                         'not_initialized' if snapshot.get('available') else 'unavailable'))
         except (_RequestError, ChatServiceError, ChatExpressionError, KeyError, RuntimeError, OSError, ValueError) as exc:
             return self._expression_error(exc)
+
+    async def important_dates_get(self):
+        try:
+            if set(dict(request.query or {})) != {'session_id'}:
+                raise _RequestError('重要日期只接受当前会话')
+            session_id = _session_id(request.query.get('session_id'))
+            username, _, _, session = await self._owned_chat(session_id)
+            return self._ok(await important_dates_view(self.plugin, username, session_id, session))
+        except (_RequestError, ChatServiceError) as exc:
+            return self._error(exc)
+        except JournalConflict:
+            return error_response('日期已更新，请重新读取后再保存', status_code=409)
+        except PermissionError:
+            return error_response('重要日期来源或授权已变化，请重新读取', status_code=403)
+        except KeyError:
+            return error_response('这条重要日期不存在', status_code=404)
+        except ValueError as exc:
+            return error_response(str(exc), status_code=400)
+        except (RuntimeError, OSError):
+            return error_response('重要日期服务暂不可用', status_code=503)
+
+    async def important_dates_save(self):
+        try:
+            body = await self._body()
+            session_id = _session_id(body.get('session_id'))
+            username, _, _, session = await self._owned_chat(session_id)
+            return self._ok(await important_dates_save(self.plugin, username, session_id, session, body))
+        except (_RequestError, ChatServiceError) as exc:
+            return self._error(exc)
+        except JournalConflict:
+            return error_response('日期已更新，请重新读取后再保存', status_code=409)
+        except PermissionError:
+            return error_response('重要日期来源或授权已变化，请重新读取', status_code=403)
+        except KeyError:
+            return error_response('这条重要日期不存在', status_code=404)
+        except ValueError as exc:
+            return error_response(str(exc), status_code=400)
+        except (RuntimeError, OSError):
+            return error_response('日期操作结果请重新读取核对，不要重复提交', status_code=503)
 
     async def _avatar_view(self, service, username, profile):
         result = {key: profile[key] for key in ('crop', 'revision', 'updated_at')}
@@ -600,6 +796,17 @@ class NativeChatWebApi:
             raise _RequestError('这个入口只接受自己的私有 APP 会话', 403)
         return username, service, snapshot, session
 
+    async def _recheck_owned_session(self, username, service, session_id):
+        """Same original ownership rule after an asynchronous extended read."""
+        session = await service.db.get_platform_session_by_id(session_id)
+        fresh_username, fresh_service = self._bound()
+        if fresh_username != username or fresh_service is not service:
+            raise _RequestError('当前连接已变化，请重新读取', 409)
+        if (session is None or session.creator != username or session.session_id != session_id
+                or session.platform_id != 'webchat' or session.is_group != 0):
+            raise _RequestError('会话归属已变化，请重新连接', 403)
+        return session
+
     def _app_memory_resources(self, username, session):
         """An owned SDK session is not itself a live private-memory grant."""
         host = getattr(getattr(self.plugin, '_presence', None), 'living_host', None)
@@ -619,6 +826,12 @@ class NativeChatWebApi:
         current = self._app_memory_resources(username, session)
         if any(a is not b for a, b in zip(current[:4], resources[:4])) or current[4] != resources[4]:
             raise _RequestError('记忆来源已变化，请重新读取，不要重复提交', 409)
+        return True
+
+    def _message_memory_current(self, username, session, resources, expressions):
+        if expressions.current() is not True:
+            raise PermissionError('message-memory Journal authority changed')
+        return self._same_app_memory_resources(username, session, resources)
 
     @staticmethod
     def _chat_memory_record(record):
@@ -688,6 +901,43 @@ class NativeChatWebApi:
                 RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
             return self._chat_memory_error(exc)
 
+    async def memory_search(self):
+        """Search actual current APP memory and explicitly linked read-only material."""
+        try:
+            query = dict(request.query or {})
+            if set(query) - {'session_id', 'query', 'include_roleplay'} or not {'session_id', 'query'} <= set(query):
+                raise _RequestError('记忆搜索只接受当前会话、关键词和剧情选项')
+            session_id = _session_id(query['session_id'])
+            text = query['query']
+            if not isinstance(text, str) or not 1 <= len(text.strip()) <= 200:
+                raise _RequestError('请输入1至200字的记忆关键词')
+            include = query.get('include_roleplay', 'false')
+            if include not in {'true', 'false'}:
+                raise _RequestError('剧情搜索选项无效')
+            username, service, _, session = await self._owned_chat(session_id)
+            resources = self._app_memory_resources(username, session)
+            expressions = self._expressions(service)
+            def current():
+                return self._message_memory_current(username, session, resources, expressions)
+            result = await asyncio.to_thread(search_related_memory, resources[2], resources[4],
+                text.strip(), include_roleplay=include == 'true', current=current)
+            links = identity_service(self.plugin)
+            row = await asyncio.to_thread(links.get, username, session_id)
+            shared = dict(state='not_linked', sections=[])
+            if row is not None and row.get('app_scope') == resources[4]:
+                shared = await linked_memory(self.plugin, links, row, direction='app', query=text.strip())
+            await self._recheck_owned_session(username, service, session_id)
+            current()
+            if shared.get('sections') and (links.current() is not True
+                    or links.get(username, session_id) != row
+                    or ChatWorkspace(links).settings(username, session_id)['values']['shared_memory'] is not True):
+                shared = dict(state='revoked', sections=[])
+            return self._ok(dict(result, session_id=session_id, shared=shared,
+                shared_read_only=True, cross_session='only_authorized_existing_scope_or_confirmed_link'))
+        except (ChatServiceError, _RequestError, NativeMemoryConflict, PermissionError, KeyError,
+                RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
+            return self._chat_memory_error(exc)
+
     async def memory_correct(self):
         try:
             body = await self._body()
@@ -715,6 +965,108 @@ class NativeChatWebApi:
             self._same_app_memory_resources(username, session, resources)
             return self._ok(dict(session_id=session_id, record=record, editable=True,
                 shared_qq_read_only=True, state='corrected'))
+        except (ChatServiceError, _RequestError, NativeMemoryConflict, PermissionError, KeyError,
+                RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
+            return self._chat_memory_error(exc)
+
+    async def delivery_center_get(self):
+        try:
+            if set(dict(request.query or {})) != {'session_id'}:
+                raise _RequestError('消息状态只接受当前会话')
+            session_id = _session_id(request.query.get('session_id'))
+            username, service, snapshot, session = await self._owned_chat(session_id)
+            expressions = self._expressions(service)
+            result = await asyncio.to_thread(delivery_center_view, self.plugin, username, session_id,
+                snapshot, session, expressions.journal, expressions.current)
+            return self._ok(result)
+        except (_RequestError, ChatServiceError) as exc:
+            return self._error(exc)
+        except PermissionError:
+            return error_response('当前会话消息状态来源已变化，请重新读取', status_code=409)
+        except (RuntimeError, OSError, ValueError):
+            return error_response('当前会话消息状态暂不可用', status_code=503)
+
+    async def _message_memory_target(self, values):
+        session_id = _session_id(values.get('session_id'))
+        identity = values.get('message_id')
+        if type(identity) not in (str, int) or not str(identity).isdigit() or int(identity) < 1:
+            raise _RequestError('需要已保存的真实消息编号')
+        username, service, _, session = await self._owned_chat(session_id)
+        saved = await service.db.get_platform_message_history_by_id(int(identity))
+        if (saved is None or str(saved.id) != str(int(identity)) or saved.platform_id != 'webchat'
+                or saved.user_id != session_id or not isinstance(saved.content, dict)
+                or saved.content.get('type') not in {'user', 'bot'}):
+            raise _RequestError('只能查看当前私有会话的真实消息记忆', 403)
+        resources = self._app_memory_resources(username, session)
+        expressions = self._expressions(service)
+        source = await asyncio.to_thread(source_for_saved, expressions.journal, expressions,
+            username, session_id, saved)
+        self._same_app_memory_resources(username, session, resources)
+        return session_id, username, session, saved, expressions, resources, source
+
+    async def message_memory_get(self):
+        try:
+            values = dict(request.query or {})
+            if set(values) != {'session_id', 'message_id'}:
+                raise _RequestError('消息记忆只接受当前会话与已保存消息编号')
+            session_id, username, session, _, expressions, resources, source = await self._message_memory_target(values)
+            current = lambda: self._message_memory_current(username, session, resources, expressions)
+            result = await asyncio.to_thread(associated_memory, resources[2], resources[4], source, current=current)
+            candidate = await asyncio.to_thread(message_candidate, expressions.journal, username,
+                session_id, source['message_id'], current=current)
+            current()
+            return self._ok(dict(session_id=session_id, message=source, pending_candidate=candidate,
+                candidate_status=candidate['status'] if candidate else 'not_proposed', **result))
+        except (ChatServiceError, _RequestError, NativeMemoryConflict, PermissionError, KeyError,
+                RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
+            return self._chat_memory_error(exc)
+
+    async def message_memory_save(self):
+        try:
+            values = await self._body()
+            legacy = set(values) == {'session_id', 'message_id', 'confirm'} and values.get('confirm') is True
+            required = {'session_id', 'message_id', 'action', 'request_id', 'expected_revision'}
+            if values.get('action') == 'confirm':
+                required.add('confirm')
+            if not legacy and set(values) != required:
+                raise _RequestError('记忆候选操作需要明确动作、稳定请求编号与原版本；长期保存还须明确确认')
+            session_id, username, session, saved, expressions, resources, source = await self._message_memory_target(values)
+            parts = await asyncio.to_thread(expressions.saved_parts,
+                expressions.message_scope(username, session_id), source['role'], saved.id)
+            # Recover the original typed user speech, not its SDK projection
+            # that also contains quoted/reference/action descriptions.
+            if source['role'] == 'user' and parts is not None:
+                text = '\n'.join(part['text'] for part in parts if isinstance(part, dict)
+                    and part.get('type') in {'text', 'plain'} and part.get('source') == 'user_speech'
+                    and isinstance(part.get('text'), str))
+                if any(part.get('type') == 'action' for part in parts if isinstance(part, dict)):
+                    source = dict(source, mode='roleplay')
+            else:
+                text = self._record_text(saved.content)
+                if source['role'] == 'assistant':
+                    from .core.living.structured_reply import display
+                    text = display(text)
+                elif any(marker in text for marker in ('【引用当前会话', '【用户角色互动输入',
+                        '【用户主动选择的角色互动', '【用户用聊天表情')):
+                    raise _RequestError('这条组合消息缺少可核对的原始用户文字，不能把引用或动作投影保存为事实')
+            current = lambda: self._message_memory_current(username, session, resources, expressions)
+            if legacy:
+                record = await asyncio.to_thread(save_important, resources[2], resources[4], source, text, current=current)
+                candidate = await asyncio.to_thread(message_candidate, expressions.journal,
+                    username, session_id, source['message_id'], current=current)
+            else:
+                candidate = await asyncio.to_thread(operate_candidate, expressions.journal, username,
+                    session_id, resources[2], resources[4], source, text, action=values.get('action'),
+                    request_id=values.get('request_id'), expected_revision=values.get('expected_revision'),
+                    confirm=values.get('confirm', False), current=current)
+                record = (await asyncio.to_thread(resources[3].get, resources[4], candidate['memory_id'], True)
+                          if candidate.get('memory_id') else None)
+            current()
+            result = await asyncio.to_thread(associated_memory, resources[2], resources[4], source, current=current)
+            current()
+            return self._ok(dict(session_id=session_id, message=source,
+                saved_record=self._chat_memory_record(record) if record else None,
+                pending_candidate=candidate, candidate_status=candidate['status'] if candidate else 'not_proposed', **result))
         except (ChatServiceError, _RequestError, NativeMemoryConflict, PermissionError, KeyError,
                 RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
             return self._chat_memory_error(exc)
@@ -1007,17 +1359,19 @@ class NativeChatWebApi:
     async def session_state_save(self):
         try:
             body = await self._body()
-            if set(body) - {'session_id', 'archived', 'mode', 'scene', 'reply_format', 'expected_revision'}:
+            if set(body) - {'session_id', 'archived', 'mode', 'scene', 'reply_format',
+                            'reply_style', 'reply_length', 'rp_intensity', 'reset_preferences', 'expected_revision'}:
                 raise _RequestError('会话设置含不支持的字段')
             session_id = _session_id(body.get('session_id'))
             username, service, _, _ = await self._owned_chat(session_id)
             expressions = self._expressions(service)
             store = ChatSessionState(expressions.journal, current=expressions.current)
-            changes = {key: body[key] for key in ('archived', 'mode', 'scene', 'reply_format') if key in body}
-            if not changes:
+            changes = {key: body[key] for key in ('archived', 'mode', 'scene', 'reply_format',
+                'reply_style', 'reply_length', 'rp_intensity') if key in body}
+            if not changes and body.get('reset_preferences') is not True:
                 raise _RequestError('没有需要保存的会话设置')
             state = await asyncio.to_thread(store.save, username, session_id, changes,
-                expected_revision=body.get('expected_revision'))
+                expected_revision=body.get('expected_revision'), reset_preferences=body.get('reset_preferences', False))
             return self._ok(state)
         except (_RequestError, ChatServiceError, RuntimeError, OSError, ValueError) as exc:
             return self._expression_error(exc)
@@ -1384,7 +1738,9 @@ class NativeChatWebApi:
                     payload['enable_streaming']=False
                 router=getattr(self.plugin,'_task_model_router',None)
                 if router is not None and not payload.get('selected_provider'):
-                    routed=router.select_provider_id('rp'if session_state['mode']=='roleplay'else'chat')
+                    route = ChatModelRoute(state_store, router, username=username,
+                        session_id=session_id, umo=build_webchat_unified_msg_origin(session))
+                    routed = await asyncio.to_thread(route.selected_provider_id)
                     if routed:payload['selected_provider']=routed
                 expression_context.update(persona_id=persona.get('configured_id'),
                     mode=session_state['mode'], scene=session_state['scene'],

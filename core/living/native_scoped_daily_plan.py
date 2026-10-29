@@ -16,7 +16,7 @@ import re
 from .journal import JournalConflict, LivingJournal
 from .models import canonical, plain, private_scope
 from .native_important_dates import date_zone
-from .native_personal_goals import NativePersonalGoals, activity_event
+from .native_personal_goals import NativePersonalGoals, activity_event, linked_goal_ids
 
 NAMESPACE = 'tls.native.scoped_daily_plan.v1'
 SOURCE = 'tls.scoped_daily_plan'
@@ -109,6 +109,8 @@ class NativeScopedDailyPlans:
             _text(item['title'], 100)
             _text(item['description'], 300, empty=True)
             _epoch(item['scheduled_at'])
+            if 'goal_ids' in item:
+                linked_goal_ids(item['goal_ids'])
             event = item.get('activity')
             if item['status'] == 'completed':
                 checked = activity_event(event)
@@ -155,14 +157,27 @@ class NativeScopedDailyPlans:
         self._scope(scope)
         return dict(records=records[offset:offset + limit], total=len(records), limit=limit, offset=offset)
 
-    def _items(self, values, identity, day, *, previous=None, check_future=True, zone=None):
+    def _goal_options(self, scope):
+        snapshot = self.goal_reader(scope)
+        rows = snapshot['records'] if isinstance(snapshot, dict) else snapshot
+        return {row['id']: row for row in rows}
+
+    def goal_options(self, scope):
+        """Owned definitions for the plan editor; reading does not grant activity authority."""
+        scope = self._scope(scope)
+        rows = self._goal_options(scope)
+        self._scope(scope)
+        return [dict(id=row['id'], title=row['fields']['title'], status=row['status'],
+                     archived=row['archived'], progress=row['progress']) for row in rows.values()]
+
+    def _items(self, values, identity, day, *, previous=None, check_future=True, zone=None, scope=None):
         if type(values) is not list or not 1 <= len(values) <= MAX_ITEMS:
             raise ValueError('a plan requires 1–12 items')
         prior = {item['id']: item for item in (previous or [])}
         result, seen = [], set()
         now = self._now()
         for index, value in enumerate(values):
-            if type(value) is not dict or set(value) - {'id', 'title', 'description', 'scheduled_at'}:
+            if type(value) is not dict or set(value) - {'id', 'title', 'description', 'scheduled_at', 'goal_ids'}:
                 raise ValueError('unknown plan item field')
             title = _text(value.get('title'), 100)
             description = _text(value.get('description', ''), 300, empty=True)
@@ -174,16 +189,28 @@ class NativeScopedDailyPlans:
                 raise ValueError('unique stable item ID required')
             seen.add(item_id)
             old = prior.get(item_id)
+            # Omitting links while editing an existing item preserves them;
+            # an explicit empty list means this activity advances no goal.
+            goals = linked_goal_ids(value.get('goal_ids', old.get('goal_ids') if old else None))
             if old is not None and old['status'] != 'pending':
-                if (title, description, scheduled) != (old['title'], old['description'], old['scheduled_at']):
+                if ((title, description, scheduled) != (old['title'], old['description'], old['scheduled_at'])
+                        or goals != old.get('goal_ids')):
                     raise JournalConflict('completed or cancelled item history cannot be rewritten')
                 result.append(dict(old))
                 continue
             if check_future and scheduled < now:
                 raise ValueError('new or edited plan items must be in the future')
-            result.append(dict(id=item_id, title=title, description=description, scheduled_at=scheduled,
+            if check_future and goals is not None and (old is None or goals != old.get('goal_ids')):
+                available = self._goal_options(scope)
+                if any(goal_id not in available or available[goal_id]['archived']
+                       or available[goal_id]['status'] != 'active' for goal_id in goals):
+                    raise ValueError('only active goals in this private scope may be newly linked')
+            item = dict(id=item_id, title=title, description=description, scheduled_at=scheduled,
                                status='pending', activity=None, completed_at=None, cancelled_at=None,
-                               progress_state='not_started', progress_report=None, completion_request=None))
+                               progress_state='not_started', progress_report=None, completion_request=None)
+            if goals is not None:
+                item['goal_ids'] = goals
+            result.append(item)
         if any(item['status'] != 'pending' and item['id'] not in seen for item in (previous or [])):
             raise JournalConflict('completed or cancelled item history must be retained')
         return result
@@ -199,7 +226,7 @@ class NativeScopedDailyPlans:
         with self.journal._lock:
             existing = self._get(scope, identity)
             normalized = self._items(items, identity, day, check_future=existing is None,
-                                     zone=date_zone(existing['timezone']) if existing else None)
+                                     zone=date_zone(existing['timezone']) if existing else None, scope=scope)
             signature = _digest([title, day, normalized, actor, origin, generation_limit])
             if existing is not None:
                 if existing['creation_signature'] != signature:
@@ -249,7 +276,7 @@ class NativeScopedDailyPlans:
             fields = row['fields']
             items.append(dict(title=(fields.get('next_step') or fields['title'])[:100],
                               description=('为角色目标“%s”安排的虚构活动；提出计划不代表已经完成。'
-                                           % fields['title'])[:300], scheduled_at=at))
+                                           % fields['title'])[:300], scheduled_at=at, goal_ids=[row['id']]))
         if not items:
             raise ValueError('no future time remains in that day; select a later date')
         return self.create(scope, request_id, title='目标专用日计划', day=day, items=items,
@@ -269,7 +296,7 @@ class NativeScopedDailyPlans:
                 row['title'] = _text(title, 80)
             if items is not None:
                 row['items'] = self._items(items, identity, row['date'], previous=row['items'],
-                                           zone=date_zone(row['timezone']))
+                                           zone=date_zone(row['timezone']), scope=scope)
             return self._write(scope, row, expected_revision)
 
     @staticmethod
@@ -344,7 +371,8 @@ class NativeScopedDailyPlans:
                 # A crash between per-goal commits and this receipt can replay only
                 # that same ID; the original goal ledger decides duplicate/old events.
                 try:
-                    report = self.goals.apply_activity(scope, item['activity'])
+                    report = self.goals.apply_activity(scope, item['activity'],
+                                                       goal_ids=item.get('goal_ids'))
                 except PermissionError:
                     item['progress_state'] = 'waiting_for_scope'
                     row = self._write(scope, row, row['revision'])

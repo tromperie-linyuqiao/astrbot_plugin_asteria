@@ -212,7 +212,7 @@ class NativePCDailyLifecycle:
             for hour, title in slots:
                 at = datetime.combine(target, time(hour, 0), self.plans.timezone).timestamp()
                 if at <= now: continue
-                items.append(dict(title=title, description='目标之外的虚构角色日常；仅在到时或明确完成后记为角色事件。', scheduled_at=at))
+                items.append(dict(title=title, description='目标之外的虚构角色日常；仅在到时或明确完成后记为角色事件。', scheduled_at=at, goal_ids=[]))
             if not items:
                 raise ValueError('today has no future routine slot; choose tomorrow')
             plan = self.plans.create(scope, request, title='明确归属的虚构日常', day=day, items=items, actor=actor)

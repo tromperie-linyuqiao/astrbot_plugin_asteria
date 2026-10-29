@@ -14,7 +14,11 @@
 .night-dialog label{display:grid;gap:8px;color:var(--text-soft);font-size:12px;margin-top:15px}.night-dialog input[type="range"]{width:100%;accent-color:var(--accent)}
 .night-dialog [role="status"]{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.7;color:var(--text-soft)}
 .body-state-dialog #body-state-values>div,.body-state-dialog details>div{display:flex;justify-content:space-between;gap:15px;padding:9px 0;font-size:12px;color:var(--text-soft)}
-.body-state-dialog strong{font-weight:500;color:var(--text);text-align:right}.body-state-dialog details{border-top:1px solid var(--line);padding:9px 0}.body-state-dialog summary{font-size:13px;color:var(--text);cursor:pointer;padding:5px 0}.body-state-dialog #body-state-values{max-height:40vh;overflow:auto;overscroll-behavior:contain;margin:8px 0 16px}
+.body-state-dialog strong{font-weight:500;color:var(--text);text-align:right;white-space:pre-wrap;overflow-wrap:anywhere}.body-state-dialog details{border-top:1px solid var(--line);padding:9px 0}.body-state-dialog summary{font-size:13px;color:var(--text);cursor:pointer;padding:5px 0}.body-state-dialog #body-state-values{max-height:40vh;overflow:auto;overscroll-behavior:contain;margin:8px 0 16px}
+.body-state-rp { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
+.body-state-rp h3 { font-size: 13px; }
+.body-state-rp > div { display:flex; justify-content:space-between; gap:15px; padding:8px 0; font-size:12px; }
+.body-state-rp > div > span { flex:none; color:var(--text-soft); }
 @media(max-width:600px){dialog.night-dialog{margin:auto auto 14px;max-height:75dvh;border-radius:22px;width:calc(100vw - 20px)}.night-dialog .settings-form{padding:20px}.night-dialog .appearance-actions{flex-wrap:wrap}.body-state-dialog #body-state-values{max-height:36dvh}}
 
 /* Pairing command uses the external stylesheet permitted by the existing CSP. */

@@ -89,7 +89,7 @@ final class AppearanceImageProcessor {
         } catch (OutputLimit exceeded) { return null; }
     }
 
-    private static Matrix orientation(byte[] source, int length) {
+    static Matrix orientation(byte[] source, int length) {
         Matrix matrix = new Matrix();
         try {
             ExifInterface exif = new ExifInterface(new ByteArrayInputStream(source, 0, length));

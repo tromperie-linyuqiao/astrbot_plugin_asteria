@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
@@ -247,6 +248,77 @@ def scan_plugin_conflicts(plugin_root: Path) -> list[dict[str, Any]]:
     return found
 
 
+def _worker_snapshot(task: Any, status: Any) -> dict[str, Any]:
+    """Observe existing tasks; never start, retry or consume their work."""
+    status = status if isinstance(status, dict) else {}
+    error_type = None
+    if task is None:
+        state = "not_started"
+    elif not isinstance(task, asyncio.Task):
+        state = "unknown"
+    elif not task.done():
+        state = "running"
+    elif task.cancelled():
+        state = "cancelled"
+    else:
+        error = task.exception()
+        state = "failed" if error is not None else "finished"
+        error_type = type(error).__name__ if error is not None else None
+    return {
+        "task_state": state,
+        "last_state": clean_text(status.get("state"), 40) or None,
+        "last_completed_at": clean_text(status.get("last_completed_at"), 80) or None,
+        "last_error_present": bool(status.get("last_error")),
+        "task_error_type": error_type,
+    }
+
+
+def memory_pipeline_snapshot(service: Any) -> dict[str, Any]:
+    """The actual native MC instance's bounded, content-free runtime view.
+
+    Configured, in-flight and last-reported states are separate: a saved flag
+    or an old ``scheduled`` value cannot turn a dead worker into a live one.
+    This snapshot is not per-turn end-to-end delivery or model evidence.
+    """
+    workers = getattr(service, "_summary_workers", {})
+    task_states = [_worker_snapshot(task, {})["task_state"] for task in workers.values()]
+    closing, closed = bool(getattr(service, "_closing", False)), bool(getattr(service, "_closed", False))
+    result = {
+        "schema": 1,
+        "state": "closed" if closed else "closing" if closing else "ready",
+        "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "capture": {
+            "enabled": service.config.bool("memory_capture.enabled", True),
+            "user_messages": service.config.bool("memory_capture.capture_user_messages", True),
+            "bot_responses": service.config.bool("memory_capture.capture_bot_responses", True),
+            "stable_extraction": service.config.bool("memory_capture.extract_stable_facts", True),
+        },
+        "summary": {
+            "enabled": service.config.bool("memory_summary.enabled", True),
+            "running_workers": task_states.count("running"),
+            "pending_sessions": len(getattr(service, "_summary_pending", ())),
+            "finished_workers": task_states.count("finished"),
+            "failed_workers": task_states.count("failed"),
+            "cancelled_workers": task_states.count("cancelled"),
+            "unknown_workers": task_states.count("unknown"),
+        },
+        "snapshot_only": True,
+        "historical_identity_remap": False,
+    }
+    for name, flag in (
+        ("maintenance", "maintenance.auto_schedule_enabled"),
+        ("portrait", "portrait.daily_dispatch_enabled"),
+        ("wal_checkpoint", "maintenance.wal_checkpoint_enabled"),
+    ):
+        prefix = "_wal_checkpoint" if name == "wal_checkpoint" else "_" + name + "_dispatch"
+        result[name] = {
+            "enabled": service.config.bool(flag, True),
+            **_worker_snapshot(getattr(service, prefix + "_task", None),
+                               getattr(service, prefix + "_status", {})),
+        }
+    return result
+
+
 async def build_operational_report(service: Any) -> dict[str, Any]:
     stats = await service.store.stats()
     token = service.token_usage_summary()
@@ -297,6 +369,7 @@ async def build_operational_report(service: Any) -> dict[str, Any]:
             "by_task": token.get("by_task") if isinstance(token.get("by_task"), dict) else {},
         },
         "memory": stats,
+        "pipeline": memory_pipeline_snapshot(service),
         "conflicts": conflicts,
         "warnings": warnings,
         "benchmark_note": "不同插件尚未在同一模型、数据集和硬件下比较。",

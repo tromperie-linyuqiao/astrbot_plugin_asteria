@@ -2,7 +2,7 @@
   "$meta": {
     "schema_version": 1,
     "name": "星栖 Asteria for AstrBot",
-    "version": "2026-10-28",
+    "version": "2026-10-29",
     "homepage": "https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria",
     "repository": "https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria",
     "description": "Asteria单插件来源；非AstrBot官方收录声明。"
@@ -10,7 +10,7 @@
   "tromperie-linyuqiao/astrbot_plugin_virtual_body": {
     "author": "tromperie-linyuqiao",
     "name": "astrbot_plugin_virtual_body",
-    "version": "0.66.1",
+    "version": "0.69.0",
     "repo": "https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria",
     "display_name": "星栖 Asteria · AstrBot 伴侣系统",
     "short_desc": "AstrBot 角色陪伴插件，整合记忆、状态、互动与日程。",
