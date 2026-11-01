@@ -142,20 +142,28 @@ def delivery_center_view(plugin, username, session_id, snapshot, session, journa
                 and id(store) not in seen):
             owners.append((name, owner, store))
             seen.add(id(store))
-    queue_items, counts, sources = [], {}, []
+    def queue_current(name, owner, store, selected_scope):
+        # The reminder lane has an independently revocable read permission.
+        # Keep it alongside the host and owner checks for the entire read.
+        reminder_check = getattr(owner, '_authorized', None) if name == 'reminders' else None
+        return bool(still_current() and getattr(runtime, name, None) is owner
+            and owner.active is True and getattr(owner, 'store', None) is store
+            and host.authorized_scope(selected_scope) is True
+            and (not callable(reminder_check) or reminder_check(selected_scope) is True))
+
+    queue_items, counts, sources, readers = [], {}, [], []
     limited = False
     for name, owner, store in owners:
         for source, selected_scope in scopes:
             def authorized():
-                return bool(still_current() and getattr(runtime, name, None) is owner
-                    and owner.active is True and getattr(owner, 'store', None) is store
-                    and host.authorized_scope(selected_scope) is True)
+                return queue_current(name, owner, store, selected_scope)
             # Reuse the reminder service's more restrictive original read ACL.
             reminder_check = getattr(owner, '_authorized', None) if name == 'reminders' else None
             if callable(reminder_check) and reminder_check(selected_scope) is not True:
                 continue
             selected_counts, items = _queue_rows(store, selected_scope, source=source,
                 destination=settings['values']['proactive_destination'], authorize=authorized)
+            readers.append((name, owner, store, selected_scope))
             sources.append(dict(source=source, lane=name, state='available'))
             for state, count in selected_counts.items():
                 counts[state] = counts.get(state, 0) + count
@@ -192,7 +200,7 @@ def delivery_center_view(plugin, username, session_id, snapshot, session, journa
             kind=kind if kind in {'proactive', 'reminder'} else 'reply', stages=stages,
             # History proves persistence, never transport completion or a read.
             user_read_proven=False))
-    if still_current() is not True:
+    if still_current() is not True or any(not queue_current(*reader) for reader in readers):
         raise PermissionError('delivery read authority changed')
     return dict(schema=1, supported=True, read_only=True, limit=LIMIT,
         messages=messages[-LIMIT:], history_window_only=True,

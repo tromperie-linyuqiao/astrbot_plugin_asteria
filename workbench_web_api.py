@@ -19,7 +19,7 @@ from astrbot.api.web import error_response, json_response, request
 PREFIX = '/astrbot_plugin_virtual_body/page/workbench'
 KEY = 'living_workbench_layouts'
 SCHEMA = 'tls.workbench.layout.v1'
-ENTRIES = frozenset('overview modules memory tasks history expression assets phone agenda narrative config body space mood weather materials status maintenance memo_notes music_library brief preferences timeline rules phone_service phone_flow insight personal_goals profile_candidates mc_summary scoped_daily_plan native_ownership pc_daily_native proactive_native memory-native pc-native'.split())
+ENTRIES = frozenset('overview modules memory tasks history expression assets phone agenda narrative config body space mood weather materials status maintenance memo_notes music_library brief preferences timeline rules phone_service phone_flow insight personal_goals profile_candidates mc_summary scoped_daily_plan autonomous_life native_ownership pc_daily_native proactive_native memory-native pc-native'.split())
 
 
 class LayoutConflict(RuntimeError): pass

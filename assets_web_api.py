@@ -79,6 +79,9 @@ class NativeAssetsWebApi:
                 getattr(self, 'assets_admin_' + name),
                 ['GET' if name in {'list', 'detail', 'preview'} else 'POST'],
                 'TLS authenticated administrator expression assets ' + name)
+        self.plugin.context.register_web_api(PAGE_API_PREFIX + '/admin-scopes',
+            self.assets_admin_scopes, ['GET'],
+            'TLS authenticated administrator persisted image source directory')
 
     def _resources(self):
         presence = getattr(self.plugin, '_presence', None)
@@ -241,6 +244,33 @@ class NativeAssetsWebApi:
     async def assets_restore(self): return await self._respond('restore')
 
     async def assets_admin_list(self): return await self._respond('list', administrative=True)
+
+    async def assets_admin_scopes(self):
+        try: username = getattr(request, 'username', None)
+        except RuntimeError: username = None
+        if not isinstance(username, str) or not username.strip():
+            return error_response('需要通过 AstrBot 管理后台认证', status_code=401)
+        try:
+            data = dict(getattr(request, 'query', None) or {})
+            if set(data) - {'limit'}:
+                raise _InvalidRequest('图片来源查询只接受 limit')
+            limit = _integer(data.get('limit', 100), 'limit', 1, 100)
+            resources = self._resources()
+            def operate():
+                self._same_resources(resources)
+                sources = resources[3].scopes(limit=limit)
+                self._same_resources(resources)
+                return sources
+            sources = await asyncio.to_thread(operate)
+            self._same_resources(resources)
+            return json_response(dict(ok=True, access='authenticated_administrator',
+                sources=sources, llm_calls=0, sends=0), headers={'Cache-Control': 'no-store'})
+        except _InvalidRequest as error:
+            return error_response(str(error), status_code=400)
+        except (ExpressionAssetError, RuntimeError, sqlite3.Error, OSError):
+            return error_response('原生图片来源目录暂不可用或正在重载', status_code=503)
+        except Exception:
+            return error_response('图片来源目录读取失败，请稍后重试', status_code=500)
 
     async def assets_admin_detail(self): return await self._respond('detail', administrative=True)
 

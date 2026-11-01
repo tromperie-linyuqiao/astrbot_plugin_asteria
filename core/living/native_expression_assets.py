@@ -320,6 +320,36 @@ class NativeExpressionAssets:
             self._scope(scope)
             return [row for row in rows if include_deleted or not row['deleted']][offset:offset+limit]
 
+    def scopes(self,*,limit=100):
+        """Persisted image-source directory for the authenticated admin API.
+
+        This is metadata only: it never grants a live scope, changes ownership,
+        opens original files or copies images into the currently selected chat.
+        """
+        if type(limit) is not int or not 1<=limit<=100:raise ValueError('bounded source directory required')
+        with self._resources(),self.journal._lock:
+            self.journal._ensure_open()
+            if self.active is not True:raise ExpressionAssetError('expression asset service unavailable')
+            records=self.journal._db.execute('SELECT key,scope,data FROM checkpoints WHERE namespace=? ORDER BY scope,key LIMIT ?',
+                (NAMESPACE,self.journal.max_records+1)).fetchall()
+            if len(records)>self.journal.max_records:raise ExpressionAssetError('expression asset checkpoint capacity reached')
+            sources={}
+            for record in records:
+                try:
+                    scope=private_scope(json.loads(record['data'])['scope'])
+                    key=scope_key(scope)
+                    if key!=record['scope']:raise ValueError('source scope mismatch')
+                except (ValueError,TypeError,KeyError):
+                    raise ExpressionAssetError('expression asset source metadata unavailable') from None
+                row=self._load(self.journal._db,scope,record['key'])
+                if row is None:raise ExpressionAssetError('expression asset source metadata unavailable')
+                source=sources.setdefault(key,dict(scope=scope,total=0,active=0,deleted=0))
+                source['total']+=1
+                source['active']+=int(row['enabled'] and not row['deleted'])
+                source['deleted']+=int(row['deleted'])
+            if self.active is not True:raise ExpressionAssetError('expression asset service unavailable')
+            return [sources[key] for key in sorted(sources,key=lambda key:(-sources[key]['total'],key))][:limit]
+
     def _change(self,scope,identity,patch,expected_revision,operation):
         scope=self._scope(scope);_identity(identity);_revision(expected_revision)
         if not isinstance(patch,dict) or not patch or set(patch)-{'caption','tags','enabled','deleted'}:

@@ -1,13 +1,21 @@
 'use strict';
 /* Receipt metadata only. No message retry, extra poller or read-status guess. */
 window.ChatReceipts = (() => {
-  let busy = false, active = null, known = new Set(), lastState = null, lastError = '';
+  let busy = false, active = null, known = new Set(), receivedKey = '', lastState = null, lastError = '';
   const phases = ['client_received', 'system_notification_posted', 'user_opened'];
   function context(id) {
     return state.authenticated && state.server && state.username && id
       ? { id, key: 'asteria-chat.receipts.' + JSON.stringify([state.server, state.username, id]) } : null;
   }
   const current = selected => selected && context(state.activeId)?.key === selected.key;
+  function clearOpenedNotification(selected, messageId) {
+    if (!current(selected) || receivedKey !== selected.key || !known.has(messageId)
+        || state.cacheDisplay || !recoveryForeground()) return;
+    const bridge = window.AsteriaChat;
+    if (typeof bridge?.clearMessageNotification !== 'function') return;
+    try { bridge.clearMessageNotification(selected.id, messageId); }
+    catch (_) { /* Local cancellation is independent of server receipt metadata. */ }
+  }
   function read(selected) {
     try { const value = JSON.parse(localStorage.getItem(selected.key) || '{}');
       return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
@@ -65,16 +73,19 @@ window.ChatReceipts = (() => {
     const selected = context(sessionId);
     if (!current(selected)) return;
     if (active?.key !== selected.key) { lastState = null; lastError = ''; }
+    receivedKey = selected.key;
+    known = new Set((Array.isArray(snapshot?.history) ? snapshot.history : [])
+      .filter(row => row?.content?.type === 'bot' && row.id != null).map(row => String(row.id)));
     active = snapshot?.receipt_transport?.schema === 1 && snapshot.receipt_transport.supported === true ? selected : null;
-    if (!active) { known = new Set(); render(); return; }
-    known = new Set(snapshot.history.filter(row => row?.content?.type === 'bot' && row.id != null).map(row => String(row.id)));
-    const ids = [...known].slice(-32);
-    if (ids.length) enqueue(selected, ids, 'client_received');
     const opened = read(selected).$opened;
-    if (typeof opened === 'string' && known.has(opened) && recoveryForeground()) {
-      enqueue(selected, [opened], 'user_opened');
+    if (typeof opened === 'string' && known.has(opened) && !state.cacheDisplay && recoveryForeground()) {
+      clearOpenedNotification(selected, opened);
+      if (active) enqueue(selected, [opened], 'user_opened');
       const pending = read(selected); delete pending.$opened; write(selected, pending);
     }
+    if (!active) { render(); return; }
+    const ids = [...known].slice(-32);
+    if (ids.length) enqueue(selected, ids, 'client_received');
     void flush(selected);
   }
   function notificationOpened(sessionId, messageId) {
@@ -86,10 +97,13 @@ window.ChatReceipts = (() => {
   }
   function messageOpened(sessionId, messageId) {
     const selected = context(sessionId);
-    if (!current(selected) || active?.key !== selected.key || !known.has(messageId)
+    if (!current(selected) || receivedKey !== selected.key || !known.has(messageId)
         || state.cacheDisplay || !recoveryForeground()) return false;
-    enqueue(selected, [messageId], 'user_opened');
-    void flush(selected);
+    clearOpenedNotification(selected, messageId);
+    if (active?.key === selected.key) {
+      enqueue(selected, [messageId], 'user_opened');
+      void flush(selected);
+    }
     return true;
   }
   function render() {

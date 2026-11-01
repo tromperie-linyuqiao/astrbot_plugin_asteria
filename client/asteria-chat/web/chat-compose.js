@@ -4,8 +4,8 @@
    both preference sets live on TLS; only unsent composition stays on-device. */
 window.ChatComposer = (() => {
   const model = { scope: '', serial: 0, epoch: 0, operation: null, actionEditorSerial: 0, preferenceEditorSerial: 0, loaded: false, loading: false, error: '',
-    assets: [], actions: [], actionRevision: undefined, defaultActions: [], stickers: [], extras: [], order: [], panel: '', filter: 'all', query: '', touchCatalog:null, touchVerb:'', touchPart:'', touchQuick:true, touchUnknown:false,
-    pickMode: 'attach', selected: null, actionEditing: null, batch: null, batchSerial: 0, defaultsSerial: 0, busy: false,
+    assets: [], actions: [], actionRevision: undefined, defaultActions: [], selfActions: [], selfSupported: false, actionTarget:'character', actionFilter:'quick', selfVerb:'', selfPart:'', stickers: [], extras: [], order: [], panel: '', filter: 'all', query: '', touchCatalog:null, touchVerb:'', touchPart:'', touchQuick:true, touchUnknown:false,
+    pickMode: 'attach', category: '', selected: null, actionEditing: null, batch: null, batchSerial: 0, defaultsSerial: 0, busy: false,
     previews: new Map(), nativeViewport: null, watch: null, watchTarget: '', pendingWatch: '', notificationId: null };
   const node = id => document.getElementById(id);
   const scope = () => state.authenticated && state.activeId
@@ -53,7 +53,8 @@ window.ChatComposer = (() => {
   }
   function actionPart(value) {
     return { type: 'action', action_id: value.id || value.action_id, label: value.label,
-      description: value.description || value.action, source: 'user_action' };
+      description: value.description || value.action, actor:'user', target:value.target||'character',
+      target_part:value.target_part||value.native_touch?.part||'', source:value.target==='self'?'user_self_action':'user_action' };
   }
   function identity(prefix = 'fragment') { return prefix + '-' + (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)); }
   function parts(text) {
@@ -70,6 +71,7 @@ window.ChatComposer = (() => {
   function snapshot(text) {
     const structured = state.pendingActions.length || model.stickers.length || model.extras.length;
     if (structured && !model.loaded) throw new Error('组合表达服务尚未连接；已保留草稿，普通文字仍可发送。');
+    if(state.pendingActions.some(value=>value.target==='self')&&!model.selfSupported)throw new Error('当前服务器尚未支持自身动作，组合草稿保留，请更新服务器后再发。');
     const ordered=structured || model.loaded ? parts(text) : null;
     if(ordered&&ordered.length>24)throw new Error('每条组合消息最多 24 个片段，请减少片段后发送。');
     return { parts: ordered,
@@ -102,7 +104,7 @@ window.ChatComposer = (() => {
     if(expanded) for(const [index,value] of values.entries()) {
       const row=document.createElement('div');row.className='composition-item';
       const names={text:'话语',action:'动作',sticker:'表情',attachment:'附件',image:'图片',file:'文件',record:'语音',video:'视频',reference:'引用'};
-      const label=button((names[value.type]||'片段')+' · '+(value.label||value.text||value.filename||value.description||'消息').slice(0,70),()=>{
+      const label=button((value.type==='action'?(value.target==='self'?'自己的动作':'对伙伴的动作'):names[value.type]||'片段')+' · '+(value.label||value.text||value.filename||value.description||'消息').slice(0,70),()=>{
         if(value.type==='text') {
           const editor=node('compose-text-editor');model.editingText=value.fragment_id;editor.value=value.text;node('compose-text-dialog').showModal();
         } else if(value.type==='action') { const action=model.actions.find(v=>v.id===value.action_id);if(action)editAction(action); }
@@ -141,7 +143,7 @@ window.ChatComposer = (() => {
     for(const value of parts(node('draft').value.trim())){
       const item=document.createElement('article');item.className='composition-preview-fragment';
       if(value.type==='sticker')item.append(renderPart({type:'sticker',asset_id:value.asset_id,name:value.label}));
-      else {const label=document.createElement('small');label.textContent=value.type==='action'?'你的互动动作':value.type==='reference'?'引用消息':value.type==='text'?'你的话语':'待发送附件';
+      else {const label=document.createElement('small');label.textContent=value.type==='action'?(value.target==='self'?'你描述自己的动作':'你对伙伴的互动'):value.type==='reference'?'引用消息':value.type==='text'?'你的话语':'待发送附件';
         const content=document.createElement('p');content.textContent=value.text||value.description||value.filename||value.label||'附件';item.append(label,content);}
       box.append(item);
     }
@@ -216,12 +218,12 @@ window.ChatComposer = (() => {
   async function sync(force = false) {
     flushNotification(); updateWatchTarget();
     const current = scope();
-    if (!current) { if (model.scope) { invalidateOperations();closeActive(); closeBatchActions(); model.serial++; model.scope = ''; model.assets = []; model.actions = []; model.actionRevision=undefined; model.defaultActions=[]; model.touchCatalog=null; model.touchVerb=''; model.touchPart=''; model.loaded = false; restore(); } return; }
+    if (!current) { if (model.scope) { invalidateOperations();closeActive(); closeBatchActions(); model.serial++; model.scope = ''; model.assets = []; model.actions = []; model.actionRevision=undefined; model.defaultActions=[]; model.touchCatalog=null; model.touchVerb=''; model.touchPart=''; model.loaded = false; clearExpressionSearch(); restore(); } return; }
     if (model.scope !== current) {
       invalidateOperations();
       closeActive(); closeBatchActions(); model.selected = null; model.actionEditing = null;
-      model.serial++; model.scope = current; model.loaded = false; model.loading = false;
-      model.assets = []; model.actions = []; model.actionRevision=undefined; model.defaultActions=[]; model.touchCatalog=null; model.touchVerb=''; model.touchPart=''; model.touchUnknown=false; model.previews.clear(); model.error = ''; restore();
+      model.serial++; model.scope = current; model.loaded = false; model.loading = false; clearExpressionSearch();
+      model.assets = []; model.actions = []; model.actionRevision=undefined; model.defaultActions=[]; model.selfActions=[]; model.selfSupported=false; model.actionTarget='character'; model.selfVerb=''; model.selfPart=''; model.touchCatalog=null; model.touchVerb=''; model.touchPart=''; model.touchUnknown=false; model.previews.clear(); model.error = ''; restore();
     }
     if (model.loading || !force && (model.loaded || model.error)) return;
     model.loading = true; const serial = ++model.serial;
@@ -233,7 +235,9 @@ window.ChatComposer = (() => {
       model.actions = Array.isArray(actions.items) ? actions.items : [];
       model.actionRevision = Number.isInteger(actions.revision) && actions.revision >= 0 ? actions.revision : undefined;
       model.defaultActions = Array.isArray(actions.defaults) ? actions.defaults : [];
-      for(const staged of state.pendingActions){const saved=model.actions.find(value=>value.id===staged.id);if(saved){staged.label=saved.label;staged.description=saved.description;}}
+      model.selfActions = Array.isArray(actions.self_actions) ? actions.self_actions : [];
+      model.selfSupported=Array.isArray(actions.action_targets)&&actions.action_targets.includes('self');
+      for(const staged of state.pendingActions){const saved=model.actions.find(value=>value.id===staged.id);if(saved){staged.label=saved.label;staged.description=saved.description;staged.actor='user';staged.target=saved.target||'character';staged.target_part=saved.target_part||'';}}
       persist();renderPreview();
       model.touchCatalog=actions.native_touch||null;if(force)model.touchUnknown=false;
       if(!allowedTouchParts(model.touchVerb).some(part=>part.id===model.touchPart))model.touchPart='';
@@ -259,8 +263,10 @@ window.ChatComposer = (() => {
     pending.then(url => { if (current === scope() && image.isConnected) { image.src = url; image.classList.add('loaded'); } })
       .catch(() => { if (current === scope() && image.isConnected) image.alt = asset.name || '图片暂不可用'; });
   }
-  function filteredAssets() {
-    const query = model.query.trim().toLowerCase();
+  const searchKey=value=>String(value||'').normalize('NFKC').toLocaleLowerCase();
+  const assetTags=value=>Array.isArray(value.tags)?[...new Map(value.tags.filter(tag=>typeof tag==='string'&&tag.trim()).map(tag=>[searchKey(tag.trim()),tag.trim()])).values()]:[];
+  function clearExpressionSearch(){model.category='';model.query='';const input=node('shared-expression-search');if(input)input.value='';}
+  function expressionBase() {
     let values = model.filter === 'hidden' ? model.assets.filter(value => actorPref(value, 'user').hidden)
       : model.filter === 'disabled' ? model.assets.filter(value => value.enabled === false)
       : model.assets.filter(value => value.enabled !== false && !actorPref(value, 'user').hidden);
@@ -273,15 +279,42 @@ window.ChatComposer = (() => {
     if (model.filter === 'disliked') values = values.filter(value => actorPref(value, 'user').disliked);
     if(!['recent','frequent'].includes(model.filter)) values.sort((a,b)=>(actorPref(a,'user').quick_order||0)-(actorPref(b,'user').quick_order||0)
       ||Number(!!actorPref(b,'user').favorite)-Number(!!actorPref(a,'user').favorite)||String(a.name||'').localeCompare(String(b.name||'')));
-    return query ? values.filter(value => [value.name, value.meaning, ...(value.tags || []), ...(Array.isArray(value.scenarios) ? value.scenarios : [value.scenarios])]
-      .filter(Boolean).join(' ').toLowerCase().includes(query)) : values;
+    return values;
+  }
+  function filteredAssets(base=expressionBase()) {
+    const words=searchKey(model.query).split(/[\s、，,]+/u).filter(Boolean);
+    return base.filter(value=>(!model.category||assetTags(value).some(tag=>searchKey(tag)===model.category))
+      &&(!words.length||words.every(word=>searchKey([value.name,value.meaning,...assetTags(value),
+        ...(Array.isArray(value.scenarios)?value.scenarios:[value.scenarios]),value.pairing].filter(Boolean).join(' ')).includes(word))));
+  }
+  function discovery(base,matching,message){
+    const rail=node('expression-tag-rail');if(!rail)return;
+    const counts=new Map();for(const asset of base)for(const tag of assetTags(asset)){const key=searchKey(tag);const old=counts.get(key);counts.set(key,{name:old?.name||tag,count:(old?.count||0)+1});}
+    if(model.category&&!counts.has(model.category))counts.set(model.category,{name:model.category,count:0});
+    const previous=rail.scrollLeft;rail.replaceChildren();
+    const add=(key,name,count)=>{const item=button(name+(key?' '+count:''),()=>{model.category=key;renderAssets();},'expression-tag');item.dataset.expressionTag=key;item.title=name;item.setAttribute('aria-pressed',String(model.category===key));rail.append(item);};
+    add('','全部标签',base.length);
+    for(const [key,value]of [...counts].sort((a,b)=>b[1].count-a[1].count||a[1].name.localeCompare(b[1].name,'zh-CN')))add(key,value.name,value.count);
+    rail.scrollLeft=previous;rail.hidden=!counts.size;
+    setText('expression-match-count',message||matching.length+' / '+base.length+' 张'+(model.query.trim()?' · 多词同时匹配':''));
+    node('expression-clear-search').hidden=!model.category&&!model.query.trim();
+  }
+  function mountDiscovery(){
+    if(node('expression-tag-rail'))return;
+    const rail=document.createElement('nav');rail.id='expression-tag-rail';rail.className='expression-tag-rail';rail.setAttribute('aria-label','按素材真实标签筛选');
+    const meta=node('expression-status');meta.classList.add('expression-discovery-meta');
+    const count=document.createElement('span');count.id='expression-match-count';count.setAttribute('role','status');count.setAttribute('aria-live','polite');
+    const reset=button('清除搜索与标签',()=>{clearExpressionSearch();renderAssets();},'text-button');reset.id='expression-clear-search';reset.hidden=true;meta.append(count,reset);
+    meta.before(rail);
+    node('shared-expression-search').placeholder='搜索表情，多词可用空格或逗号分隔';
+    node('shared-expression-search').setAttribute('aria-label','搜索表情名称、含义、标签和场景，多词同时匹配');
   }
   function renderAssets() {
     const grid = node('shared-expression-grid'); if (!grid) return;
     grid.replaceChildren();
-    setText('expression-status', !scope() ? '先打开一个对话，再使用服务器共享素材。'
-      : model.loading ? '正在读取共享素材…' : model.error || '与伙伴使用同一份素材与人工语义标注');
-    for (const asset of filteredAssets()) {
+    const info=!scope()?'先打开一个对话，再使用服务器共享素材。':model.loading?'正在读取共享素材…':model.error;
+    const base=expressionBase(),matching=filteredAssets(base);discovery(base,matching,info);
+    for (const asset of matching) {
       const card = document.createElement('div'); card.className = 'shared-expression';
       const pick = button('', () => model.pickMode === 'send' || actorPref(asset, 'user').quick_send
         ? sendNow([{ type: 'sticker', asset_id: assetId(asset) }]) : attachAsset(asset), 'expression-pick');
@@ -291,13 +324,14 @@ window.ChatComposer = (() => {
       const label = document.createElement('span'); label.textContent = asset.name || '表情'; pick.append(label);
       const controls = document.createElement('div'); controls.className = 'expression-controls';
       const star = button(actorPref(asset, 'user').favorite ? '★' : '☆', () => savePreference(assetId(asset), 'user', { favorite: !actorPref(asset, 'user').favorite }), 'expression-star');
-      star.setAttribute('aria-label', '收藏 ' + (asset.name || '表情'));
+      star.setAttribute('aria-label', (actorPref(asset,'user').favorite?'取消收藏 ':'收藏 ') + (asset.name || '表情'));
+      star.setAttribute('aria-pressed',String(!!actorPref(asset,'user').favorite));
       const detail = button('偏好', () => openPreference(asset), 'text-button'); controls.append(star, detail);
       card.append(pick, controls); grid.append(card); thumbnail(image, asset);
     }
     if (!grid.children.length && model.loaded) {
       const empty = document.createElement('p'); empty.className = 'compose-empty';
-      empty.textContent = model.query ? '没有匹配的名称、标签或含义。' : '这里还没有符合条件的已启用素材。'; grid.append(empty);
+      empty.textContent = model.query||model.category ? '当前筛选中没有匹配表情，可清除搜索或标签。' : '这里还没有符合条件的已启用素材。'; grid.append(empty);
     }
   }
   function attachAsset(asset) {
@@ -310,7 +344,7 @@ window.ChatComposer = (() => {
     if (value.enabled === false) {showNotice('这个动作已停用，可在编辑中重新启用。');return;}
     if (interactionBusy()) {showNotice('当前消息或文件仍在处理，请完成后再添加互动。');return;}
     if (state.pendingActions.length >= 4) { showNotice('一条消息最多附加 4 个动作。'); return; }
-    state.pendingActions.push({ id: value.id, label: value.label, description: value.description });
+    state.pendingActions.push({ id: value.id, label: value.label, description: value.description, actor:'user', target:value.target||'character', target_part:value.target_part||value.native_touch?.part||'' });
     persist(); renderPreview(); renderChrome();
   }
   async function sendNow(parts) {
@@ -323,8 +357,11 @@ window.ChatComposer = (() => {
     const list = node('shared-action-list'); if (!list) return;
     list.replaceChildren();
     renderTouchBuilder();
-    setText('action-status', model.loading ? '正在读取动作…' : model.error || '动作是明确的用户互动输入，不是已经发生的现实行为。');
-    const values = orderedActions();
+    setText('action-status', model.loading ? '正在读取动作…' : model.error || (model.actionTarget==='self'?'描述自己的行为，交给伙伴理解和回应；不会触发她的身体状态。':'你对伙伴发起互动，发送后由 TLS 处理。'));
+    const filters=document.createElement('div');filters.className='action-target-tabs';
+    for(const [id,label]of [['quick','常用与全部'],['recent','最近使用']]){const pick=button(label,()=>{model.actionFilter=id;renderActions();},'text-button');pick.setAttribute('aria-pressed',String(model.actionFilter===id));filters.append(pick);}list.append(filters);
+    let values = orderedActions().filter(value=>(value.target||'character')===model.actionTarget);
+    if(model.actionFilter==='recent')values=values.filter(value=>value.last_used).sort((a,b)=>(b.last_used||0)-(a.last_used||0)).slice(0,12);
     const others = document.createElement('details'); others.className = 'other-actions';
     const summary = document.createElement('summary'); summary.textContent = '其他动作与停用项'; others.append(summary);
     for (const value of values) {
@@ -342,7 +379,7 @@ window.ChatComposer = (() => {
       if (value.quick === false || value.enabled === false) others.append(row); else list.append(row);
     }
     if (others.children.length > 1) list.append(others);
-    if (!values.length && model.loaded) setText('action-status', '还没有动作，可以创建或导入本机原有互动。');
+    if (!values.length && model.loaded && model.actionFilter==='recent')list.append(Object.assign(document.createElement('p'),{className:'compose-status',textContent:'这个对象还没有已发送的动作记录。'}));
   }
   function touchPartLabel(part){
     const labels=[part.label,...(part.aliases||[])];
@@ -383,6 +420,9 @@ window.ChatComposer = (() => {
   }
   function renderTouchBuilder(){
     const box=node('native-touch-picker');if(!box)return;box.replaceChildren();
+    const targets=document.createElement('div');targets.className='action-target-tabs';targets.setAttribute('aria-label','动作对象');
+    for(const [id,label]of [['character','对伙伴'],['self','描述自己']]){const pick=button(label,()=>{model.actionTarget=id;renderActions();},'touch-choice');pick.setAttribute('aria-pressed',String(model.actionTarget===id));pick.disabled=id==='self'&&!model.selfSupported;targets.append(pick);}box.append(targets);
+    if(model.actionTarget==='self'){renderSelfBuilder(box);return;}
     const catalog=model.touchCatalog;
     if(!catalog||!catalog.available){box.append(Object.assign(document.createElement('p'),{className:'compose-status',textContent:catalog&&catalog.reason||'正在连接TLS原生动作与部位…'}));return;}
     const heading=document.createElement('div');heading.className='touch-path';
@@ -406,6 +446,36 @@ window.ChatComposer = (() => {
       const controls=document.createElement('div');controls.className='touch-confirm';controls.append(button('加入当前消息',()=>useTouch(false),'secondary-button'),button('预览后直接互动',()=>useTouch(true),'primary-button'));box.append(controls);
     }
     if(model.touchVerb&&!Array.isArray(catalog.verbs.find(item=>item.word===model.touchVerb)?.part_ids))box.append(Object.assign(document.createElement('p'),{className:'compose-status',textContent:'旧版服务器未提供组合适配信息，提交时仍由原生解析器确认。'}));
+  }
+  function renderSelfBuilder(box){
+    if(!model.selfSupported){box.append(Object.assign(document.createElement('p'),{className:'compose-status',textContent:'服务器尚未支持自身动作，请更新后使用。'}));return;}
+    const selected=model.selfActions.find(value=>value.id===model.selfVerb),target=selected?.targets?.find(value=>value.id===model.selfPart);
+    const heading=document.createElement('div');heading.className='touch-path';heading.append(button(selected?.label||'① 选择自己的动作',()=>{model.selfVerb='';model.selfPart='';renderTouchBuilder();},'touch-breadcrumb'),Object.assign(document.createElement('strong'),{textContent:target?.label||'② 选择目标'}));box.append(heading);
+    const choices=document.createElement('div');choices.className='touch-choices';
+    if(!selected){for(const value of model.selfActions)choices.append(button(value.label,()=>{model.selfVerb=value.id;model.selfPart='';renderTouchBuilder();},'touch-choice'));}
+    else for(const value of selected.targets||[]){const pick=button(value.label,()=>{model.selfPart=value.id;renderTouchBuilder();},'touch-choice');pick.setAttribute('aria-pressed',String(value.id===model.selfPart));choices.append(pick);}
+    box.append(choices);
+    if(selected&&target){
+      const preview=document.createElement('div');preview.className='touch-selection-preview';preview.append(Object.assign(document.createElement('strong'),{textContent:selected.label+' · '+target.label}),Object.assign(document.createElement('p'),{textContent:selected.description+' 对象：自己；作为叙事输入，不推进伙伴的身体。'}));box.append(preview);
+      const controls=document.createElement('div');controls.className='touch-confirm';controls.append(button('加入当前消息',()=>useSelfAction(false),'secondary-button'),button('直接发送这个动作',()=>useSelfAction(true),'primary-button'));box.append(controls);
+    }
+  }
+  async function useSelfAction(direct){
+    if(model.busy||!model.loaded||!model.selfSupported||model.touchUnknown)return;
+    const selected=model.selfActions.find(value=>value.id===model.selfVerb),target=selected?.targets?.find(value=>value.id===model.selfPart);if(!selected||!target)return;
+    const op=beginOperation();if(!op)return;
+    try{
+      let action=model.actions.find(value=>value.enabled!==false&&value.target==='self'&&value.self_template===selected.id&&value.target_part===target.id);
+      if(!action){
+        const record={id:identity('self'),label:selected.label,description:selected.description+'（目标：'+target.label+'）',actor:'user',target:'self',target_part:target.id,self_template:selected.id,enabled:true,quick:true,order:model.actions.length};
+        const result=await call('POST','/chat/actions',{session_id:op.sessionId,op:'create',record,request_id:record.id,expected_revision:op.actionRevision});
+        if(!operationCurrent(op))return;model.actions=result.items||[];model.actionRevision=result.revision;action=model.actions.find(value=>value.id===record.id);
+      }
+      if(!action)throw Error('服务器尚未回读这个自身动作。');
+      endOperation(op);if(direct)await sendNow([actionPart(action)]);else attachAction(action);
+      renderActions();
+    }catch(error){if(operationCurrent(op)){model.touchUnknown=true;showNotice(errorText(error)+' 请刷新核对已保存动作，不会重复新建。',null,true);}}
+    finally{endOperation(op);}
   }
   async function useTouch(direct){
     if(model.busy||!model.loaded||!model.touchVerb||!model.touchPart)return;
@@ -446,7 +516,7 @@ window.ChatComposer = (() => {
     try{const parsed=JSON.parse(node('action-batch-source').value);const items=Array.isArray(parsed)?parsed:parsed.items;
       if(!Array.isArray(items)||!items.length||items.length>64)throw Error('每批需要1至64项。');
       const ids=new Set();for(const item of items){if(!item||typeof item.id!=='string'||!item.label||!item.description||ids.has(item.id))throw Error('请填写唯一ID、名称和动作说明。');ids.add(item.id);}
-      model.batch={...batch,items};const existing=new Set(model.actions.map(v=>v.id));node('action-batch-preview').textContent=items.map(v=>(existing.has(v.id)?'更新':'新增')+' · '+v.label+(v.native_touch?' · TLS原生触觉':' · 角色语义动作')).join('\n');node('action-batch-save').disabled=false;
+      model.batch={...batch,items};const existing=new Set(model.actions.map(v=>v.id));node('action-batch-preview').textContent=items.map(v=>(existing.has(v.id)?'更新':'新增')+' · '+v.label+(v.target==='self'?' · 描述自己':v.native_touch?' · TLS原生触觉':' · 对伙伴的语义动作')).join('\n');node('action-batch-save').disabled=false;
     }catch(error){model.batch={...batch,items:null};node('action-batch-save').disabled=true;node('action-batch-preview').textContent='未能预览：'+error.message;}
   }
   async function saveBatchActions(){
@@ -526,6 +596,9 @@ window.ChatComposer = (() => {
     setText('compose-action-title', value ? '编辑动作' : '新建动作');
     node('compose-action-label').value = value && value.label || '';
     node('compose-action-description').value = value && value.description || '';
+    node('compose-action-target').value=value?.target||model.actionTarget;
+    node('compose-action-target-part').value=value?.target_part||'';
+    node('compose-action-target').querySelector('option[value="self"]').disabled=!model.selfSupported;
     node('compose-action-quick').checked = !value || value.quick !== false;
     node('compose-action-enabled').checked = !value || value.enabled !== false;
     node('compose-action-order').value = value && value.order || 0;
@@ -539,7 +612,7 @@ window.ChatComposer = (() => {
       if(value?.native_touch?.verb&&!(catalog?.verbs||[]).some(item=>item.word===value.native_touch.verb))option(verb,value.native_touch.verb,'原绑定动作（当前不可用）');
       verb.disabled=part.disabled=!(catalog&&catalog.available);
       verb.value=value&&value.native_touch&&value.native_touch.verb||'';part.value=value&&value.native_touch&&value.native_touch.part||'';
-      filterEditorParts(part.value);
+      filterEditorParts(part.value);editorTargetChanged();
     setText('compose-action-error', ''); node('compose-action-dialog').showModal();
   }
   async function saveAction(event) {
@@ -548,9 +621,11 @@ window.ChatComposer = (() => {
     if (!label || !description) { setText('compose-action-error', '请填写名称和动作语义。'); return; }
     if ([...label].length>32 || [...description].length>500) { setText('compose-action-error', '动作名称最多32字，动作语义最多500字。'); return; }
     const record = { ...(model.actionEditing ? { id: model.actionEditing.id } : {}), label, description,
+      actor:'user',target:node('compose-action-target').value,target_part:node('compose-action-target-part').value.trim(),self_template:null,
       quick: node('compose-action-quick').checked, enabled: node('compose-action-enabled').checked,
       order: Number(node('compose-action-order').value) || 0 };
-      if(model.touchCatalog&&model.touchCatalog.available){
+      if(record.target==='self')record.native_touch=null;
+      else if(model.touchCatalog&&model.touchCatalog.available){
         const verb=node('compose-action-native-verb').value,part=node('compose-action-native-part').value;
         if(verb&&!part){setText('compose-action-error','选择了原生动作后，还需要选择部位。');return;}
         if(verb&&!allowedTouchParts(verb).some(item=>item.id===part)&&!(model.actionEditing?.native_touch?.verb===verb&&model.actionEditing?.native_touch?.part===part)){setText('compose-action-error','这个组合不在当前适用部位内，请重新选择。');return;}
@@ -603,10 +678,12 @@ window.ChatComposer = (() => {
       if (part.type === 'reference') return [{...part,type:'reference'}];
       if (part.type === 'attachment') return [{...mediaPart({...part,type:part.media_type||'file',source:'upload'}),...identity}];
       if (part.type === 'action') {
-        const receipt=part.source==='user_action'&&part.native_result?.source==='tls.chat.native_touch'
+        const receipt=part.source==='user_action'&&part.target!=='self'&&part.native_result?.source==='tls.chat.native_touch'
           &&['native_touch_applied','roleplay_input'].includes(part.native_result.state)
           &&Number.isInteger(part.native_result.applied)&&part.native_result.applied>=0?{...part.native_result}:null;
-        return [{ ...identity,type: 'action', action_id: part.action_id, label: part.label || '互动', description: part.description || part.text || '', source: part.source || 'user_action',...(receipt?{native_result:receipt}:{}) }];
+        const event={};for(const key of ['event_id','actor_id','target_id','session_id'])if(typeof part[key]==='string')event[key]=part[key];if(Number.isFinite(part.event_at))event.event_at=part.event_at;
+        const isUser=!part.source||['user_action','user_self_action'].includes(part.source);
+        return [{ ...identity,...event,type: 'action', action_id: part.action_id, actor:part.actor||(isUser?'user':'character'),target:part.target||(isUser?(part.source==='user_self_action'?'self':'character'):'unspecified'),target_part:part.target_part||'', label: part.label || '互动', description: part.description || part.text || '', source: part.source || 'user_action',...(receipt?{native_result:receipt}:{}) }];
       }
       if (part.type === 'sticker' && typeof part.asset_id === 'string') return [{ ...identity,type: 'sticker', asset_id: part.asset_id, name: part.name || part.label || '表情' }];
       if (['image', 'file', 'record', 'video'].includes(part.type)) return [{...mediaPart({ ...part, source: part.source || 'history' }),...identity}];
@@ -617,7 +694,7 @@ window.ChatComposer = (() => {
     if(part.type==='reference') {const quote=document.createElement('blockquote');quote.className='typed-reference';quote.textContent=(part.role==='assistant'?'伙伴':'你')+' · '+(part.text||'引用的附件消息');return quote;}
     if (part.type === 'action') {
       const action = document.createElement('span'); action.className = 'typed-action';
-      action.textContent = part.source === 'user_action' ? '你 · ' + part.label : part.description || part.text || part.label;
+      action.textContent = part.source === 'user_self_action' || part.target==='self' ? '你 · '+part.label+'（自己）' : part.source === 'user_action' ? '你 → 伙伴 · ' + part.label : part.description || part.text || part.label;
       const result=part.native_result;
       if(part.source==='user_action'&&result?.source==='tls.chat.native_touch'){
         const status=document.createElement('small');status.className='typed-action-result';
@@ -631,6 +708,12 @@ window.ChatComposer = (() => {
     const card = document.createElement('div'); card.className = 'typed-sticker';
     const image = document.createElement('img'); image.width = 128; image.height = 128;
     image.alt = part.name || '表情'; card.append(image); thumbnail(image, { id: part.asset_id, name: part.name }); return card;
+  }
+  function editorTargetChanged(){
+    const self=node('compose-action-target').value==='self';
+    node('compose-action-target-part').closest('label').hidden=!self;
+    node('compose-action-native-verb').closest('details').hidden=self;
+    if(self)setText('compose-action-error','描述自己的动作只作为你的叙事输入，不会触发伙伴的身体。');else setText('compose-action-error','');
   }
   function closeActive() {
     if(node('action-defaults-dialog')?.open){model.defaultsSerial++;node('action-defaults-dialog').close();return true;}
@@ -646,7 +729,11 @@ window.ChatComposer = (() => {
   }
   function watchChanged(value) {
     if (!value || typeof value !== 'object') return;
-    model.watch = value;
+    if(Array.isArray(value.accounts)){
+      value=value.accounts.find(row=>row.server===state.server&&row.username===state.username&&row.session_id===state.activeId)
+        ||{state:'stopped',running:false,reason:'current_account_not_enabled'};
+    }
+    value={...value,_page_scope:watchScope()};model.watch = value;
     const active = value.running === true || ['starting', 'running', 'reconnecting'].includes(value.state);
     if (!model.pendingWatch && node('notify-toggle')) node('notify-toggle').checked = active;
     storage.set(pref('notify'), active ? '1' : '');
@@ -679,6 +766,9 @@ window.ChatComposer = (() => {
     else setText('reply-watch-status', '请在系统窗口允许通知；只为本次明确开启操作接续启动。');
   }
   function updateWatchTarget() {
+    if(model.watch?._page_scope!==watchScope()){
+      try{watchChanged(parse(native().getReplyWatchStatus()));}catch(_){model.watch=null;}
+    }
     if (!model.watch || !(model.watch.running === true || ['starting', 'running', 'reconnecting'].includes(model.watch.state))) return;
     const target = watchScope(); if (!target || target === model.watchTarget || state.loading || state.sending) return;
     model.watchTarget = target;
@@ -715,6 +805,7 @@ window.ChatComposer = (() => {
     node('attach-button').setAttribute('aria-controls', 'composer-drawer');
     for (const tab of document.querySelectorAll('[data-compose-tab]')) tab.addEventListener('click', () => setPanel(tab.dataset.composeTab));
     node('compose-close').addEventListener('click', closePanel);
+    mountDiscovery();
     node('shared-expression-search').addEventListener('input', event => { model.query = event.target.value; renderAssets(); });
     for (const filter of document.querySelectorAll('[data-expression-filter]')) filter.addEventListener('click', () => {
       model.filter = filter.dataset.expressionFilter;
@@ -731,12 +822,15 @@ window.ChatComposer = (() => {
     const defaults=document.createElement('dialog');defaults.id='action-defaults-dialog';defaults.className='settings-dialog';
     defaults.innerHTML='<div class="settings-form"><div class="dialog-heading"><h2>恢复默认动作组合</h2><button id="action-defaults-close" type="button" class="icon-button" aria-label="关闭默认组合确认">×</button></div><p class="appearance-help">恢复服务器提供的默认动作名称、语义和排序。自定义组合与已发送历史保留；相同默认 ID 的修改将恢复。</p><div class="appearance-actions"><button id="action-defaults-cancel" type="button" class="secondary-button">取消</button><button id="action-defaults-confirm" type="button" class="primary-button">恢复默认组合</button></div></div>';document.body.append(defaults);
     node('action-defaults-close').onclick=node('action-defaults-cancel').onclick=()=>{model.defaultsSerial++;defaults.close();};node('action-defaults-confirm').onclick=restoreDefaults;
-    const batch=document.createElement('dialog');batch.id='action-batch-dialog';batch.className='settings-dialog';batch.innerHTML='<div class="settings-form"><div class="dialog-heading"><h2>批量维护动作组合</h2><button id="action-batch-close" type="button" class="icon-button" aria-label="关闭批量维护">×</button></div><p class="appearance-help">给外部编辑器的批量入口。JSON只描述动作，不执行代码；原生触觉可填native_touch：character、verb、part，必须来自当前TLS词表和部位。</p><textarea id="action-batch-source" rows="12" spellcheck="false" aria-label="动作组合JSON"></textarea><pre id="action-batch-preview" class="action-batch-preview"></pre><div class="appearance-actions"><button id="action-batch-preview-button" type="button" class="secondary-button">检查并预览</button><button id="action-batch-save" type="button" class="primary-button" disabled>确认批量写入</button></div></div>';document.body.append(batch);
+    const batch=document.createElement('dialog');batch.id='action-batch-dialog';batch.className='settings-dialog';batch.innerHTML='<div class="settings-form"><div class="dialog-heading"><h2>批量维护动作组合</h2><button id="action-batch-close" type="button" class="icon-button" aria-label="关闭批量维护">×</button></div><p class="appearance-help">JSON只描述动作，不执行代码。actor固定user；target为character（对伙伴，旧记录默认）或self（描述自己）；target_part可填自身目标。只有character可关联native_touch：character、verb、part，必须来自当前TLS词表。</p><textarea id="action-batch-source" rows="12" spellcheck="false" aria-label="动作组合JSON"></textarea><pre id="action-batch-preview" class="action-batch-preview"></pre><div class="appearance-actions"><button id="action-batch-preview-button" type="button" class="secondary-button">检查并预览</button><button id="action-batch-save" type="button" class="primary-button" disabled>确认批量写入</button></div></div>';document.body.append(batch);
     node('action-batch-close').onclick=closeBatchActions;node('action-batch-preview-button').onclick=previewBatchActions;node('action-batch-save').onclick=saveBatchActions;
     batch.addEventListener('close',()=>{if(model.batch)closeBatchActions();});
     node('action-batch-source').oninput=()=>{if(batchCurrent(model.batch))model.batch={...model.batch,epoch:++model.batchSerial,items:null};node('action-batch-save').disabled=true;};
     node('compose-choose-file').addEventListener('click', chooseAttachment);
     node('compose-action-form').addEventListener('submit', saveAction);
+    const targets=document.createElement('section');targets.className='action-editor-target';targets.innerHTML='<label>动作对象<select id="compose-action-target"><option value="character">你 → 伙伴</option><option value="self">你 → 自己</option></select></label><label hidden>自身部位或目标<input id="compose-action-target-part" maxlength="80" placeholder="例如眼睛、抱枕或椅背，可留空"></label>';
+    document.querySelector('label[for="compose-action-description"]').before(targets);
+    node('compose-action-target').onchange=editorTargetChanged;
     const binding=document.createElement('details');binding.className='other-actions';binding.innerHTML='<summary>关联原生触觉（可选）</summary><p class="compose-status">可以固定动作和部位；未绑定时按动作说明识别，无法识别的动作由角色剧情回应。</p><label>动作<select id="compose-action-native-verb"></select></label><label>部位<select id="compose-action-native-part"></select></label>';node('compose-action-error').before(binding);
     node('compose-action-native-verb').onchange=()=>filterEditorParts();
     node('compose-action-delete').addEventListener('click', deleteAction);

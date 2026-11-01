@@ -454,6 +454,20 @@ class LivingHost:
         runtime.task_model_router=model_router
         self.plugin._task_model_router=model_router
         self.context._tls_task_model_router=model_router
+        from .autonomous_life import AutonomousLife
+        from .autonomous_life_runtime import AutonomousLifeRuntime
+        def confirmed_life_delivery(scope, task_id):
+            task = runtime.delivery.store.get(task_id)
+            return bool(task and task.get('scope') == scope and task.get('state') == 'confirmed')
+        runtime.autonomous_life = AutonomousLife(journal, clock=self.clock, timezone=runtime.personal_goals.timezone,
+            authorize=lambda scope, operation: not self._closed and runtime.active
+                and self.authorized_scope(scope) and self._native_memory_allowed(scope),
+            confirm_delivery=confirmed_life_delivery)
+        from .personal_resources import PersonalResources
+        from .chat_workspace import linked_source_scope
+        PersonalResources(runtime.autonomous_life,
+            authorize_source=lambda target, source: linked_source_scope(self.plugin,target,permission='materials') == source)
+        runtime.life_coordinator = AutonomousLifeRuntime(self, runtime.autonomous_life)
         self.presence.set_accepted_observer(self._observer)
         setattr(self.context, "living_system", runtime)
         services = getattr(runtime, 'native_services', None)
@@ -666,7 +680,12 @@ class LivingHost:
         daily=getattr(self.runtime,'pc_daily_lifecycle',None)
         if daily is None or self._trusted_scope is None:return
         scope=dict(self._trusted_scope)
+        life = getattr(self.runtime, 'life_coordinator', None)
+        life_result = await life.advance(scope) if life is not None else None
+        daily.life_source = getattr(self.runtime, 'autonomous_life', None)
+        daily.life_coordinator = life
         result=await daily.tick(scope)
+        if life_result is not None: result['life'] = life_result
         owner=integrations.pc_full
         if owner is not None and owner.active and self.authorized_scope(scope):
             from datetime import datetime

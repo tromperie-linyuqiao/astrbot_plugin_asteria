@@ -47,6 +47,7 @@ public final class MainActivity extends Activity {
     private static final int MAX_REQUEST = 1024 * 1024;
     private static final int MAX_RESPONSE = 8 * 1024 * 1024;
     private static final int ATTACHMENT_PICKER = 6401;
+    private static final int SPEECH_RECOGNIZER = 6403;
     private static final String CHANNEL_ID = "asteria-chat-replies";
     private static final int NOTIFICATION_PERMISSION = 6402;
     private static final AttachmentCacheRecovery ATTACHMENT_RECOVERY = new AttachmentCacheRecovery();
@@ -56,8 +57,10 @@ public final class MainActivity extends Activity {
     private WebView web;
     private ChatViewportController viewport;
     private NativeBridge bridge;
+    private AsteriaVoice voice;
     private ReplyWatchService.Observer replyWatchObserver;
     private Intent pendingReplyIntent;
+    private boolean replyAccountSwitching;
     private JSONObject attachmentRecovery = json("status", "not_attempted");
 
     private static final class AuthState {
@@ -123,9 +126,10 @@ public final class MainActivity extends Activity {
         settings.setSafeBrowsingEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(true);
         bridge = new NativeBridge();
+        voice = new AsteriaVoice(this, value -> {if(trusted() && web!=null) web.evaluateJavascript("window.ChatVoice&&window.ChatVoice.receive("+value.toString()+")",null);});
         if (bridge.token == null) {
             PhonePerceptionService.stop(this, "login_required");
-            ReplyWatchService.stop(this, "login_required");
+            // Explicit saved background accounts remain independent of the visible login.
         }
         web.addJavascriptInterface(bridge, "AsteriaChat");
         web.setWebViewClient(new WebViewClient() {
@@ -207,7 +211,9 @@ public final class MainActivity extends Activity {
         super.onResume();
         if (destroyed.get()) return;
         foreground.set(true);
+        if (bridge != null) ReplyWatchService.setVisibleAccount(bridge.server, bridge.token);
         ReplyWatchService.setAppForeground(true);
+        ReplyWatchService.resumeEnabled(this);
         if (web != null && !destroyed.get()) web.onResume();
         if (viewport != null) viewport.refresh();
         notifyForegroundChanged();
@@ -215,6 +221,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onPause() {
+        if(voice!=null)voice.background();
         foreground.set(false);
         ReplyWatchService.setAppForeground(false);
         notifyForegroundChanged();
@@ -245,14 +252,27 @@ public final class MainActivity extends Activity {
     }
 
     private void dispatchPendingReply() {
-        if (!trusted() || web == null || bridge == null || pendingReplyIntent == null) return;
+        if (!trusted() || web == null || bridge == null || pendingReplyIntent == null || replyAccountSwitching) return;
         final Intent selected = pendingReplyIntent;
         final String session;
         synchronized (bridge.lock) {
-            if (bridge.token == null) return;
             session = ReplyWatchService.notificationSession(selected, bridge.server, bridge.token);
         }
-        if (session == null) { pendingReplyIntent = null; return; }
+        if (session == null) {
+            final String accountId = selected.getStringExtra("reply_watch_scope");
+            final ReplyWatchAccounts.Record account = ReplyWatchAccounts.find(this, accountId);
+            if (account == null || !account.server.equals(selected.getStringExtra("reply_watch_server"))
+                    || !account.session.equals(selected.getStringExtra("session_id"))
+                    || !ReplyWatchAccounts.matches(this, account)) { pendingReplyIntent = null; return; }
+            replyAccountSwitching = true;
+            web.evaluateJavascript("Boolean(window.AsteriaChatUI&&window.AsteriaChatUI.prepareAccountSwitch&&window.AsteriaChatUI.prepareAccountSwitch())", ready -> {
+                replyAccountSwitching = false;
+                if (!"true".equals(ready) || pendingReplyIntent != selected || destroyed.get()) return;
+                try { bridge.activateSavedReplyAccount(accountId); web.reload(); }
+                catch (Exception unavailable) { pendingReplyIntent = null; }
+            });
+            return;
+        }
         String notifiedMessage = selected.getStringExtra("reply_message_id");
         if (notifiedMessage == null || notifiedMessage.length() > 160) notifiedMessage = "";
         String clickTarget = "conversation".equals(selected.getStringExtra("reply_click_target")) ? "conversation" : "message";
@@ -272,6 +292,7 @@ public final class MainActivity extends Activity {
             replyWatchObserver = null;
         }
         if (viewport != null) { viewport.close(); viewport = null; }
+        if (voice != null) {voice.close();voice=null;}
         if (bridge != null) bridge.close();
         if (web != null) {
             web.removeJavascriptInterface("AsteriaChat");
@@ -284,6 +305,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == SPEECH_RECOGNIZER && bridge != null) bridge.recognitionResult(resultCode,data);
         if (requestCode == ATTACHMENT_PICKER && bridge != null) bridge.selectionResult(resultCode, data);
     }
 
@@ -312,6 +334,7 @@ public final class MainActivity extends Activity {
         private final java.util.Set<HttpURLConnection> active = new java.util.HashSet<>();
         private final java.util.Set<java.io.Closeable> activeSources = new java.util.HashSet<>();
         private PickerRequest picker;
+        private String visibleSession = "";
 
         @JavascriptInterface public String getViewportMetrics() {
             ChatViewportController value = viewport;
@@ -331,6 +354,34 @@ public final class MainActivity extends Activity {
 
         @JavascriptInterface public String getReplyWatchStatus() {
             return trusted() ? ReplyWatchService.snapshot(MainActivity.this) : json("ok", false, "error", "local_page_required").toString();
+        }
+
+        private JSONObject activateSavedReplyAccount(String accountId) throws Exception {
+            ReplyWatchAccounts.Record selected = ReplyWatchAccounts.find(MainActivity.this, accountId);
+            if (selected == null || !ReplyWatchAccounts.matches(MainActivity.this, selected))
+                throw new IllegalStateException("saved_account_unavailable");
+            synchronized (lock) {
+                if (picker != null) throw new IllegalStateException("picker_in_progress");
+                vault.save(selected.server, selected.token);
+                PhonePerceptionService.stop(MainActivity.this, "server_changed");
+                epoch++;
+                runOnUiThread(() -> {if(voice!=null)voice.stop();}); server = selected.server; token = selected.token; visibleSession = selected.session;
+            }
+            ReplyWatchService.setVisibleAccount(selected.server, selected.token);
+            return json("ok", true, "config", decode(getConfig(), "application/json"));
+        }
+
+        @JavascriptInterface public String activateReplyAccount(String accountId) {
+            if (!trusted() || !foreground.get()) return json("ok", false, "error", "foreground_required").toString();
+            try { return activateSavedReplyAccount(accountId).toString(); }
+            catch (Exception unavailable) { return json("ok", false, "error", "saved_account_unavailable").toString(); }
+        }
+
+        @JavascriptInterface public String stopReplyWatchAccount(String accountId) {
+            if (!trusted() || !foreground.get()) return json("ok", false, "error", "foreground_required").toString();
+            if (accountId == null || !accountId.matches("[0-9a-f]{64}")) return json("ok", false, "error", "invalid_account").toString();
+            ReplyWatchService.stopTarget(MainActivity.this, accountId, "user_stopped");
+            return json("ok", true, "account_id", accountId, "stopped", true).toString();
         }
 
         @JavascriptInterface public String getNotificationPreferences() {
@@ -353,6 +404,8 @@ public final class MainActivity extends Activity {
                 synchronized (lock) {
                     requireCurrent(auth);
                     NotificationIdentity.save(MainActivity.this, ReplyWatchService.scope(auth.server, auth.token, sessionId), name, avatarDataUrl);
+                    synchronized (lock) { visibleSession = sessionId; }
+                    ReplyWatchService.setVisibleAccount(auth.server, auth.token);
                 }
                 return json("ok", true).toString();
             } catch (Exception invalid) { return json("ok", false, "error", "notification_identity_unavailable").toString(); }
@@ -541,17 +594,43 @@ public final class MainActivity extends Activity {
                 AuthState auth = attachmentAuth();
                 requireCurrent(auth);
                 boolean updated = ReplyWatchService.acknowledge(auth.server, auth.token, sessionId, serverMessageId);
-                ReplyWatchService.cancelConversationNotices(MainActivity.this, auth.server, auth.token, sessionId);
                 return json("ok", updated, "history_cursor_updated", updated, "service_started", false).toString();
             } catch (RuntimeException unavailable) {
                 return json("ok", false, "error", "watch_ack_unavailable", "service_started", false).toString();
             }
         }
 
+        /* Explicit navigation to one received message only. This also works
+           after the optional watch has stopped, without starting a service. */
+        @JavascriptInterface public String clearMessageNotification(String sessionId, String serverMessageId) {
+            if (!trusted() || !foreground.get()) return json("ok", false, "error", "foreground_required").toString();
+            try {
+                AttachmentPolicy.session(sessionId);
+                if (serverMessageId == null || serverMessageId.isEmpty() || serverMessageId.length() > 160
+                        || serverMessageId.indexOf('\n') >= 0 || serverMessageId.indexOf('\r') >= 0)
+                    throw new IllegalArgumentException("invalid_history_id");
+                AuthState auth = attachmentAuth();
+                requireCurrent(auth);
+                int cleared = ReplyWatchService.cancelMessageNotice(MainActivity.this, auth.server, auth.token, sessionId, serverMessageId);
+                return json("ok", cleared >= 0, "notification_cleared", cleared > 0,
+                        "notifications_cancelled", Math.max(0, cleared), "service_started", false).toString();
+            } catch (RuntimeException unavailable) {
+                return json("ok", false, "error", "notification_clear_unavailable", "service_started", false).toString();
+            }
+        }
+
         @JavascriptInterface public String setReplyWatch(boolean enabled, String sessionId, String title, String lastSeenAssistantServerId) {
             if (!trusted()) return json("ok", false, "error", "local_page_required").toString();
             if (!enabled) {
-                ReplyWatchService.stop(MainActivity.this, "user_stopped");
+                synchronized (lock) {
+                    if (ApiPolicy.jwt(token)) for (ReplyWatchAccounts.Record record : ReplyWatchAccounts.list(MainActivity.this)) {
+                        if (record.server.equals(server) && record.username.equals(AttachmentCache.username(token))
+                                && (visibleSession.isEmpty() || record.session.equals(visibleSession))) {
+                            ReplyWatchService.stopTarget(MainActivity.this, record.id, "user_stopped");
+                            break;
+                        }
+                    }
+                }
                 return json("ok", true, "state", "stopped", "running", false,
                         "verified_session", false, "reason", "user_stopped").toString();
             }
@@ -578,7 +657,7 @@ public final class MainActivity extends Activity {
                         if (!foreground.get()) throw new IllegalStateException("foreground_required");
                         ReplyWatchService.start(MainActivity.this, auth.server, auth.token, sessionId, title, baseline);
                     } catch (RuntimeException unavailable) {
-                        ReplyWatchService.stop(MainActivity.this, "watch_start_unavailable");
+                        // A failed admission must not stop another Bot.
                     }
                 });
                 // Starting is not a claim that Android has launched the service
@@ -598,12 +677,14 @@ public final class MainActivity extends Activity {
                 synchronized (lock) {
                     if (!next.equals(server)) {
                         PhonePerceptionService.stop(MainActivity.this, "server_changed");
-                        ReplyWatchService.stop(MainActivity.this, "server_changed");
+                        // Keep explicitly enabled accounts listening while the visible server changes.
                         epoch++;
+                runOnUiThread(() -> {if(voice!=null)voice.stop();});
                         token = null;
                         vault.clear();
                         vault.server(next);
-                        server = next;
+                        server = next; visibleSession = "";
+                        ReplyWatchService.setVisibleAccount(server, null);
                     }
                     return json("ok", true, "server", server).toString();
                 }
@@ -616,8 +697,9 @@ public final class MainActivity extends Activity {
             if (!trusted()) return json("ok", false, "error", "local_page_required").toString();
             synchronized (lock) {
                 PhonePerceptionService.stop(MainActivity.this, "logged_out");
-                ReplyWatchService.stop(MainActivity.this, "logged_out");
+                ReplyWatchService.stopAccount(MainActivity.this, server, token, "logged_out");
                 epoch++;
+                runOnUiThread(() -> {if(voice!=null)voice.stop();});
                 token = null;
                 boolean saved = vault.clear();
                 return json("ok", saved, "authenticated", false,
@@ -637,6 +719,18 @@ public final class MainActivity extends Activity {
             }
         }
 
+        /** Observe an existing SDK run; this entry cannot submit a message. */
+        @JavascriptInterface public void requestReadStream(String requestId, String path) {
+            try {
+                requireId(requestId);
+                if (!ApiPolicy.streamRequest("GET", path)) throw new IllegalArgumentException("stream_route_not_allowed");
+                request(json("requestId", requestId, "method", "GET", "path", path,
+                        "body", JSONObject.NULL, "stream", true).toString());
+            } catch (Exception invalid) {
+                deliver(requestId, 0, error("invalid_stream_request", "暂时无法接续回复，请同步记录。"));
+            }
+        }
+
         @JavascriptInterface public void request(String input) {
             String id = "";
             try {
@@ -650,7 +744,7 @@ public final class MainActivity extends Activity {
                 final String path = ApiPolicy.requestPath(request.getString("path"));
                 final boolean login = ApiPolicy.isLogin(path);
                 final boolean streaming = request.optBoolean("stream", false);
-                if (streaming && (!method.equals("POST") || !(path.equals("/chat/send") || path.equals("/chat/regenerate"))))
+                if (streaming && !ApiPolicy.streamRequest(method, path))
                     throw new IllegalArgumentException("stream_route_not_allowed");
                 if (login && !method.equals("POST")) throw new IllegalArgumentException("login_requires_post");
                 Object rawBody = request.opt("body");
@@ -661,7 +755,8 @@ public final class MainActivity extends Activity {
                 final String target, bearer;
                 final long generation;
                 synchronized (lock) {
-                    if (login) { PhonePerceptionService.stop(MainActivity.this, "authentication_changed"); ReplyWatchService.stop(MainActivity.this, "authentication_changed"); epoch++; token = null; vault.clear(); }
+                    if (login) { PhonePerceptionService.stop(MainActivity.this, "authentication_changed"); /* Other saved accounts keep listening during explicit login. */ epoch++;
+                runOnUiThread(() -> {if(voice!=null)voice.stop();}); token = null; vault.clear(); }
                     target = server;
                     bearer = token;
                     generation = epoch;
@@ -672,6 +767,73 @@ public final class MainActivity extends Activity {
             } catch (Exception invalid) {
                 deliver(id, 0, error("invalid_request", "请求格式或服务地址无效。"));
             }
+        }
+
+        @JavascriptInterface public void voiceCommand(String requestId, String sessionId, String payload) {
+            try {
+                requireId(requestId);AttachmentPolicy.session(sessionId);final AuthState auth=attachmentAuth();
+                if(payload==null||payload.length()>16000)throw new IllegalArgumentException("voice_payload");
+                final JSONObject input=new JSONObject(payload); input.put("request_id",requestId);
+                runOnUiThread(()->{try{requireCurrent(auth);if(voice==null)throw new IllegalStateException("voice_closed");
+                    voice.command(input,auth.server+"\n"+auth.token+"\n"+sessionId,result->{try{requireCurrent(auth);deliver(requestId,200,result);}catch(Exception changed){deliver(requestId,0,error("voice_scope_changed","账户已变化，原语音操作已结束。"));}});
+                }catch(Exception failure){deliver(requestId,0,error("voice_unavailable","语音操作暂不可用，请确认已登录。"));}});
+            }catch(Exception failure){deliver(requestId,0,error("voice_unavailable","语音请求无效，请打开当前会话。"));}
+        }
+        /** Download only the authenticated TLS audio cache; no provider key enters Android. */
+        @JavascriptInterface public void playCloudVoice(String requestId,String sessionId,String audioId,String messageId) {
+            try {
+                requireId(requestId); AttachmentPolicy.session(sessionId);
+                if(audioId==null || !audioId.matches("[a-f0-9]{64}") || messageId==null || messageId.length()>200)throw new IllegalArgumentException("audio_id");
+                final AuthState auth=attachmentAuth();
+                final String path="/chat/voice/audio?session_id="+java.net.URLEncoder.encode(sessionId,"UTF-8")+"&audio_id="+audioId;
+                runOnUiThread(()->{try{
+                    requireCurrent(auth); final int ticket=voice.beginRemote(messageId,requestId);
+                    submitAttachment(requestId,()->{
+                        HttpURLConnection connection=null;
+                        try {
+                            requireCurrent(auth); long cacheGeneration=AttachmentCache.generation();
+                            String key=AttachmentCache.key(auth.server,auth.token,path);
+                            AttachmentCache.Entry cached=AttachmentCache.find(MainActivity.this,key);
+                            if(cached==null){
+                                connection=attachmentConnection(auth,path,"GET");
+                                int status=connection.getResponseCode();
+                                if(status!=200){attachmentUnauthorized(auth,status);throw new java.io.IOException("audio_unavailable");}
+                                byte[] bytes=read(connection.getInputStream());
+                                if(bytes.length<3 || bytes.length>4*1024*1024 || !(bytes[0]=='I'&&bytes[1]=='D'&&bytes[2]=='3' || (bytes[0]&255)==255&&(bytes[1]&224)==224))throw new java.io.IOException("audio_format");
+                                synchronized(lock){requireCurrent(auth);ATTACHMENT_RECOVERY.admitWriter();cached=AttachmentCache.put(MainActivity.this,key,bytes,"audio/mpeg",cacheGeneration);}
+                            }
+                            final java.io.File file=cached.file;
+                            runOnUiThread(()->{try{requireCurrent(auth);voice.remoteReady(ticket,file);deliver(requestId,200,json("ok",true,"audio_cached",true,"message_id",messageId));}catch(Exception changed){deliver(requestId,0,error("voice_scope_changed","账户已变化，语音未播放。"));}});
+                        }catch(Exception failed){runOnUiThread(()->{if(voice!=null)voice.remoteFailed(ticket,"语音下载未完成，可再次播放已生成的音频。");});deliver(requestId,0,error("voice_download_failed","语音下载未完成，没有重新合成。"));}
+                        finally{finishConnection(connection);}
+                    });
+                }catch(Exception failure){deliver(requestId,0,error("voice_unavailable","语音播放暂不可用。"));}});
+            }catch(Exception failure){deliver(requestId,0,error("voice_unavailable","语音参数无效，请打开当前会话。"));}
+        }
+        @JavascriptInterface public void recognizeSpeech(String requestId,String sessionId,String language) {
+            try {
+                requireId(requestId);AttachmentPolicy.session(sessionId);
+                if(!java.util.Arrays.asList("zh-CN","zh-TW","en-US","ja-JP").contains(language))throw new IllegalArgumentException("language");
+                final PickerRequest selected;
+                synchronized(lock){if(picker!=null)throw new IllegalStateException("picker_busy");selected=new PickerRequest(requestId,sessionId,attachmentAuth(),"recognition");picker=selected;}
+                runOnUiThread(()->{try{requireCurrent(selected.auth);
+                    Intent intent=new Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE,language);
+                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS,1);
+                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT,"识别后加入草稿；确认后再发送。识别服务可能联网。");
+                    startActivityForResult(intent,SPEECH_RECOGNIZER);
+                }catch(Exception missing){synchronized(lock){if(picker==selected)picker=null;}deliver(requestId,0,error("recognizer_unavailable","手机未安装可用的系统语音识别服务，请使用键盘语音输入或录音附件。"));}});
+            }catch(Exception failure){deliver(requestId,0,error("recognizer_busy","请先登录，并关闭其他文件或录音窗口。"));}
+        }
+        private void recognitionResult(int code,Intent data){
+            final PickerRequest selected;synchronized(lock){selected=picker;if(selected==null||!"recognition".equals(selected.kind))return;picker=null;}
+            try{requireCurrent(selected.auth);if(code!=RESULT_OK||data==null){deliver(selected.requestId,200,json("cancelled",true));return;}
+                java.util.ArrayList<String> results=data.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS);
+                String text=results==null||results.isEmpty()?"":results.get(0);
+                if(text==null||text.trim().isEmpty()||text.length()>12000)throw new IllegalArgumentException("recognition_empty");
+                deliver(selected.requestId,200,json("text",text,"session_id",selected.sessionId,"source","android_system_recognizer"));
+            }catch(Exception failure){deliver(selected.requestId,0,error("recognition_failed","没有可用识别结果，草稿保持不变。"));}
         }
 
         /** Explicit system recording; Asteria Chat does not capture the microphone. */
@@ -1006,7 +1168,8 @@ public final class MainActivity extends Activity {
         private void attachmentUnauthorized(AuthState auth, int status) {
             synchronized (lock) {
                 requireCurrent(auth);
-                if (status == 401) { PhonePerceptionService.stop(MainActivity.this, "login_expired"); ReplyWatchService.stop(MainActivity.this, "login_expired"); epoch++; token = null; vault.clear(); }
+                if (status == 401) { PhonePerceptionService.stop(MainActivity.this, "login_expired"); ReplyWatchService.stopAccount(MainActivity.this, server, token, "login_expired"); epoch++;
+                runOnUiThread(() -> {if(voice!=null)voice.stop();}); token = null; vault.clear(); }
             }
         }
 
@@ -1233,14 +1396,19 @@ public final class MainActivity extends Activity {
                             token = received;
                             try { vault.save(target, received); persisted = true; }
                             catch (Exception unavailable) { PhonePerceptionService.stop(MainActivity.this, "authentication_unavailable"); vault.clear(); }
+                            if (persisted) {
+                                try { ReplyWatchService.credentialsChanged(MainActivity.this, target, received); } catch (RuntimeException unavailable) { /* Active login remains valid; background status reports its own result. */ }
+                                ReplyWatchService.setVisibleAccount(target, received);
+                            }
                         }
                         stripTokens(result);
                         ((JSONObject) result).put("authenticated", token != null);
                         ((JSONObject) result).put("auth_persisted", persisted);
                     } else if (status == 401) {
                         PhonePerceptionService.stop(MainActivity.this, "login_expired");
-                        ReplyWatchService.stop(MainActivity.this, "login_expired");
+                        ReplyWatchService.stopAccount(MainActivity.this, server, token, "login_expired");
                         epoch++;
+                runOnUiThread(() -> {if(voice!=null)voice.stop();});
                         token = null;
                         vault.clear();
                     }
@@ -1275,6 +1443,7 @@ public final class MainActivity extends Activity {
         private void close() {
             synchronized (lock) {
                 epoch++;
+                runOnUiThread(() -> {if(voice!=null)voice.stop();});
                 token = null;
                 picker = null;
                 for (java.io.Closeable source : activeSources) {
@@ -1296,7 +1465,7 @@ public final class MainActivity extends Activity {
         if (id == null || id.isEmpty() || id.length() > 128) return;
         final String callback = "window.AsteriaChatUI&&window.AsteriaChatUI.receive("
                 + JSONObject.quote(id) + "," + json("status", status, "body", body).toString() + ")";
-        runOnUiThread(() -> { if (trusted() && web != null) web.evaluateJavascript(callback, null); });
+        runOnUiThread(() -> { if (trusted() && web != null) web.evaluateJavascript(callback, ignored -> dispatchPendingReply()); });
     }
 
     private static JSONObject error(String code, String message) {

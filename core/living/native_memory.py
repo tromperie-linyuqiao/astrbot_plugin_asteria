@@ -419,9 +419,11 @@ class NativeMemoryStore:
             result.append(scope)
         return result
 
-    def search(self, scope, query, limit=8, *, evidence_kinds=None):
+    def search(self, scope, query, limit=8, *, evidence_kinds=None, accept=None):
         key = scope_key(private_scope(scope))
         self._page(limit)
+        if accept is not None and not callable(accept):
+            raise ValueError('pure memory candidate predicate required')
         if not isinstance(query, str) or len(query) > 2000:
             raise ValueError('invalid query')
         # A multi-character query must match a pair/word: an incidental shared
@@ -463,10 +465,13 @@ class NativeMemoryStore:
             row['score'] = round(row['score'], 6)
         ranked = sorted(found, key=lambda row: (-row['score'], -row['importance'],
                       -row['confidence'], -_epoch(row['occurred_at']), row['id']))
-        # De-duplicate before truncating, so repeated utterances with distinct
-        # platform IDs cannot occupy every candidate slot and hide an agreement.
+        # The same existing ranked matches feed all callers. Recall may reject
+        # inadmissible material before it consumes a dedup/output slot; an
+        # administrator's default search retains the unfiltered stored view.
         seen, result = set(), []
         for row in ranked:
+            if accept is not None and accept(row) is not True:
+                continue
             identity = (row['evidence_kind'], _normal(row['content']))
             if identity not in seen:
                 result.append(row)

@@ -92,7 +92,7 @@ class ChatIdentityLinks:
                 issued_at=self.clock(), used=False, notifications=notifications))
             self._check()
         return dict(code=code, command='/TLS绑定 ' + code, expires_at=self.clock() + 600,
-            note='只发送到你与德克萨斯Bot的QQ私聊；确认后共享长期记忆，可随时解除。')
+            note='只发送到你与角色Bot的QQ私聊；确认后共享长期记忆，可随时解除。')
 
     def confirm(self, code, qq_scope, message_id, *, authorize):
         match = CODE.fullmatch(code) if isinstance(code, str) else None
@@ -210,9 +210,24 @@ async def linked_memory(plugin, links, row, *, direction, query='', event=None):
                 return dict(state='memory_policy_denied', sections=[])
     def native_rows():
         if not permitted(): raise PermissionError('sharing revoked')
-        rows = memory.store.search(target, query, limit=24,
-            evidence_kinds=('user_reported', 'real_observation')) if query.strip() else memory.store.list(target, limit=24)
         profiles = getattr(runtime, 'profile_candidates', None)
+        if query.strip():
+            dimensions=(profiles.active_single_dimensions(target) if profiles is not None
+                and profiles.active and profiles.store is memory.store else frozenset())
+            private_policy=NativePrivateMemoryContextPolicy();now=links.clock()
+            def accept(item):
+                # The explicit paired-scope grant above remains the only
+                # authority. Reuse both existing outlets, so valid private
+                # core/material is not reduced to the generic fact policy.
+                if (item.get('memory_type') in {'user_profile','user_preference','user_habit'}
+                        and item.get('source_id')!='tls.chat.profile_candidates'
+                        and isinstance(item.get('metadata'),dict)
+                        and item['metadata'].get('profile_dimension') in dimensions):return False
+                return bool(private_policy.select([item],scope=target,query=query,kind='continuity',
+                    now=now,max_chars=1200)['sections']) or NativeMemoryContextPolicy._candidate(item,target,now)[0] is not None
+            rows=memory.store.search(target,query,limit=24,evidence_kinds=('user_reported','real_observation'),accept=accept)
+        else:
+            rows=memory.store.list(target,limit=24)
         if profiles is not None and profiles.active and profiles.store is memory.store:
             rows = profiles.search(target, query, limit=16) + rows
         if not permitted(): raise PermissionError('sharing revoked')

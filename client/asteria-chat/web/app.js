@@ -34,7 +34,7 @@ const state = { authenticated: false, bridgeAvailable: false, server: '', userna
   messageSearch: { scope: '', open: false, query: '', hits: [], index: -1, limited: false },
   pendingActions: [], stickerBusy: false, stickerSending: '', deleteEditing: null,
   readingScope: '', messageRenderSerial: 0,
-  primaryId: null, primaryAccount: '', remoteRunning: false, replyPhase: 'idle', requestSerial: 0, historySerial: 0, requests: new Map() };
+  primaryId: null, primaryAccount: '', remoteRunning: false, activeRuns: [], replyPhase: 'idle', requestSerial: 0, historySerial: 0, requests: new Map() };
 const storage = {
   get(key) { try { return localStorage.getItem(key) || ''; } catch (_) { return ''; } },
   set(key, value) { try { value ? localStorage.setItem(key, value) : localStorage.removeItem(key); } catch (_) {} }
@@ -65,6 +65,7 @@ function cacheSessions() {
   if (window.ChatCache && state.authenticated) window.ChatCache.sessions(state.server, state.username, state.sessions, state.activeId);
 }
 function restoreCachedHistory(id) {
+  state.activeRuns = [];
   state.cacheDisplay = null;
   if (!state.authenticated || !window.ChatCache) return false;
   const record = window.ChatCache.history(state.server, state.username, id);
@@ -159,8 +160,12 @@ function bridgeRequest(method, path, body, options = {}) {
       if (completeNative) error.nativeCompletionUnknown = true;
       reject(error);
     }, method === 'POST' && [API.send,'/chat/regenerate'].includes(path) ? 180000 : 45000);
-    state.requests.set(requestId, { resolve, reject, timeout, completeNative, authEpoch: chatAuthEpoch });
-    try { if(options.streaming && typeof bridge.requestStream==='function')bridge.requestStream(requestId,path,JSON.stringify(body));else bridge.request(JSON.stringify({ requestId, method, path, body: body === undefined ? null : body })); }
+    state.requests.set(requestId, { resolve, reject, timeout, completeNative, accept: options.accept, authEpoch: chatAuthEpoch });
+    try {
+      if(options.streaming && method==='GET' && typeof bridge.requestReadStream==='function')bridge.requestReadStream(requestId,path);
+      else if(options.streaming && method==='POST' && typeof bridge.requestStream==='function')bridge.requestStream(requestId,path,JSON.stringify(body));
+      else bridge.request(JSON.stringify({ requestId, method, path, body: body === undefined ? null : body }));
+    }
     catch (error) { clearTimeout(timeout); state.requests.delete(requestId); if (completeNative) completeNative(); reject(error); }
   });
 }
@@ -578,6 +583,7 @@ function receive(id, payload) {
   if (pending.expired) { foregroundRecovery.stateChanged(); return; }
   try {
     if (pending.authEpoch !== undefined && pending.authEpoch !== chatAuthEpoch) throw new Error('账户已切换，旧请求结果已忽略。');
+    if (typeof pending.accept === 'function' && !pending.accept()) throw new Error('当前读取已结束，旧结果已忽略。');
     const result = parse(payload);
     if (!result || typeof result.status !== 'number') throw new Error('应用返回了无法识别的连接结果。');
     let body = result.body;
@@ -636,6 +642,9 @@ function createForegroundRecovery({ intervalMs = 3000, idleMs = 30000, maxReads 
   let timer = null, inFlight = false, nativeTicket = null, loadingTicket = null;
   let epoch = 0, scope = null, active = false, waiting = false, reads = 0, errors = 0, deadline = 0, generating = false;
   let nextDelay = intervalMs, reason = 'idle', blockedKey = null, observedRunningKey = null, timeoutLocked = false;
+  let confirmHistory = false;
+  const canWatch = () => typeof window.AsteriaChat?.requestReadStream === 'function';
+  const generationWindow = () => canWatch() ? 600000 : intervalMs * maxReads;
   const sameScope = captured => { const current = recoveryScope(); return !!current && current.key === captured.key; };
   const busy = () => state.sending || state.loading || state.creating || state.attaching || state.appearanceBusy || state.exportBusy || !!state.exportEditing || state.requests.size > 0;
   const clearTimer = () => { if (timer !== null) { clearTimeout(timer); timer = null; } };
@@ -648,7 +657,7 @@ function createForegroundRecovery({ intervalMs = 3000, idleMs = 30000, maxReads 
       : !state.authenticated ? '登录后前台自动同步；后台提醒需在设置中明确开启。'
       : reason === 'errors' || reason === 'authorization' ? '自动同步已暂停，请点同步核对；应用不会重发消息。'
       : reason === 'budget' ? '本轮自动同步已到上限，请点同步核对回复。'
-      : inFlight ? '正在同步记录，不会自动发送或重发消息。'
+      : inFlight ? (reason === 'watching' ? '正在接回这次回复；不会重新发送。' : '正在同步记录，不会自动发送或重发消息。')
       : active && waiting ? '当前操作完成后自动同步。'
       : active ? (generating ? '正在同步生成中的回复。' : '前台每30秒同步新消息；不会自动发送。')
       : '前台同步待启动；后台提醒需在设置中明确开启。';
@@ -660,6 +669,7 @@ function createForegroundRecovery({ intervalMs = 3000, idleMs = 30000, maxReads 
   function cancel(why = 'cancelled', releaseLoading = false) {
     epoch++; active = false; waiting = false; clearTimer(); reason = why; scope = null;
     blockedKey = null; observedRunningKey = null;
+    confirmHistory = false;
     if (releaseLoading && loadingTicket) { loadingTicket = null; state.loading = false; }
     paint();
   }
@@ -677,7 +687,7 @@ function createForegroundRecovery({ intervalMs = 3000, idleMs = 30000, maxReads 
     if (timeoutLocked || blockedKey === captured.key) { paint(); return; }
     epoch++; scope = captured; active = true; waiting = false; reads = 0; errors = 0;
     generating = state.remoteRunning === true;
-    deadline = Date.now() + intervalMs * maxReads; nextDelay = delay; reason = generating ? 'active' : 'idle';
+    deadline = Date.now() + generationWindow(); nextDelay = delay; reason = generating ? 'active' : 'idle';
     if (generating) observedRunningKey = captured.key;
     schedule();
   }
@@ -695,6 +705,30 @@ function createForegroundRecovery({ intervalMs = 3000, idleMs = 30000, maxReads 
       stateChanged();
     };
     try {
+      const run = !confirmHistory && canWatch() && state.remoteRunning
+        ? (state.activeRuns || []).find(row => row.session_id === ticket.scope.sessionId) : null;
+      if (run) {
+        reason = 'watching'; paint();
+        try {
+          const stream = parseStream(await bridgeRequest('GET', '/chat/run-stream?session_id='
+            + encodeURIComponent(ticket.scope.sessionId) + '&run_id=' + encodeURIComponent(run.run_id), undefined,
+            { streaming: true, accept, onNativeComplete }));
+          if (!accept()) return;
+          for(const job of stream.imageJobs||[])window.ChatImageJobs?.streamEvent(job);
+          if (stream.error) throw new Error(stream.error);
+          errors = 0;
+        } catch (error) {
+          if (error?.nativeCompletionUnknown === true) throw error;
+          if (!accept()) return;
+          if (error?.status !== 404) throw error;
+          state.activeRuns = [];
+        }
+        // A subscription window ending is not a message ACK. One normal
+        // history read resolves the saved record and decides whether to watch again.
+        confirmHistory = true; nextDelay = 0; reason = 'active';
+        return;
+      }
+      confirmHistory = false;
       const applied = ticket.scope.sessionId
         ? await loadHistory(ticket.scope.sessionId, { accept, reconcileAttachments: false, preserveUnconfirmed: true, preserveReading: true, onNativeComplete })
         : await loadSessions({ select: false, accept, onNativeComplete });
@@ -702,7 +736,7 @@ function createForegroundRecovery({ intervalMs = 3000, idleMs = 30000, maxReads 
       errors = 0;
       if (!ticket.scope.sessionId) { finish('complete'); }
       else if (state.remoteRunning) {
-        if (!generating) { generating = true; deadline = Date.now() + intervalMs * maxReads; reads = 1; }
+        if (!generating) { generating = true; deadline = Date.now() + generationWindow(); reads = 1; }
         observedRunningKey = ticket.scope.key; nextDelay = intervalMs; reason = 'active';
       } else {
         // Proactive history inserts have no is_running phase. Keep the same
@@ -734,7 +768,7 @@ function createForegroundRecovery({ intervalMs = 3000, idleMs = 30000, maxReads 
       start(current, state.remoteRunning ? intervalMs : idleMs); return;
     }
     if (active && state.remoteRunning && !generating && !inFlight) {
-      generating = true; reads = 0; deadline = Date.now() + intervalMs * maxReads;
+      generating = true; reads = 0; deadline = Date.now() + generationWindow();
       nextDelay = intervalMs; reason = 'active'; clearTimer();
     }
     if (active) {
@@ -1205,6 +1239,7 @@ function renderChrome() {
   if (window.ChatExperience && typeof window.ChatExperience.scopeChanged === 'function') window.ChatExperience.scopeChanged();
   window.ChatDeliveryCenter?.scopeChanged(); window.ChatMessageMemory?.scopeChanged(); window.ChatSessionPreferences?.scopeChanged();
   window.ChatModelRoute?.scopeChanged(); window.ChatNotificationCenter?.scopeChanged();
+  window.ChatVoice?.scopeChanged(); window.ChatImageJobs?.scopeChanged(); window.ChatPersonalSpace?.scopeChanged();
   window.ChatMessageNavigation?.scopeChanged(); window.ChatNavigation?.scopeChanged();
   renderRenameTitle();
   renderMessageSearchControls();
@@ -1236,7 +1271,8 @@ function renderChrome() {
   $('reply-status').hidden = !state.sending && !state.remoteRunning && !['failed','unknown'].includes(phase);
   $('reply-status').dataset.phase=phase;
   const phases={submitting:'正在提交这条消息…',queued:'消息已接收，等待开始回复…',generating:'伙伴正在组织回复…',streaming:'伙伴正在输入…',completed:'回复已生成，正在同步保存记录…',failed:'本轮回复未完成，可同步查看实际记录。',unknown:'连接中断，回复结果待同步；不会自动重发。'};
-  $('reply-status-text').textContent=state.sending?(phases[phase]||'TLS正在处理这轮消息…'):state.remoteRunning?'TLS仍在处理这轮消息，可同步查看。':(phases[phase]||'');
+  $('reply-status-text').textContent=state.sending || state.remoteRunning
+    ? (phases[phase]||'TLS正在处理这轮消息…') : (phases[phase]||'');
   $('empty-login').hidden = state.authenticated;
   $('empty-description').textContent = state.authenticated ? '登录后持续连接伙伴，之前的聊天与日常都会留在这里。' : '连接你的服务器，继续与伙伴的对话。';
   $('draft-status').textContent = attachmentQueue().length ? '文字草稿保存在本机 · 附件在当前页面待发送' : $('draft').value ? '草稿已保存在这台设备' : '草稿仅保存在这台设备';
@@ -1445,9 +1481,15 @@ function appendSearchText(element, text, key, part) {
 }
 function captureMessagePosition(container) {
   if (!container || typeof container.getBoundingClientRect !== 'function') return null;
+  const follow = container.scrollHeight - container.clientHeight - container.scrollTop <= 64;
+  // A reader already at latest needs no history-wide layout walk on each chunk.
+  if (follow && !(state.messageSearch?.open && state.messageSearch.query)) return { follow, top: container.scrollTop, key: null, offset: 0 };
   const top = container.getBoundingClientRect().top;
-  const row = [...container.querySelectorAll('.message-row')].find(node => node.getBoundingClientRect().bottom > top);
-  return { follow: container.scrollHeight - container.clientHeight - container.scrollTop <= 64,
+  const rows = [...container.querySelectorAll('.message-row')];
+  let low = 0, high = rows.length;
+  while (low < high) { const middle = (low + high) >>> 1; if (rows[middle].getBoundingClientRect().bottom <= top) low = middle + 1; else high = middle; }
+  const row = rows[low];
+  return { follow,
     top: container.scrollTop, key: row && row.dataset.messageKey,
     offset: row ? row.getBoundingClientRect().top - top : 0 };
 }
@@ -1465,7 +1507,7 @@ function updateJumpLatest() {
 function jumpToLatest() {
   const box = $('messages');
   if (!box) return;
-  state.readingScope = '';
+  state.readingScope = messageSearchScope();
   state.liveFollowScope = messageSearchScope();
   setMessageScroll(box, box.scrollHeight);
   updateJumpLatest();
@@ -1502,30 +1544,36 @@ function moveMessageSearch(delta) {
   state.messageSearch.index = (state.messageSearch.index + delta + state.messageSearch.hits.length) % state.messageSearch.hits.length;
   jumpMessageSearch();
 }
-function renderMessages({ jumpToSearch = false, forceLatest = false } = {}) {
-  const container = $('messages');
-  const scope = syncMessageSearchScope(), ticket = ++state.messageRenderSerial;
-  const position = state.readingScope === scope ? captureMessagePosition(container) : null;
-  if(forceLatest)state.liveFollowScope=scope;
-  state.readingScope = scope; updateMessageSearchHits();
-  const appearance = currentAppearance();
-  state.previewElements = [];
-  for (const node of [...container.querySelectorAll('.message-row, .message-time')]) node.remove();
-  const spacer = $('messages-spacer');
-  if (spacer) spacer.hidden = state.messages.length === 0;
-  $('empty-state').hidden = !!state.messages.length;
-  let previous = null;
-  for (const message of state.messages) {
-    if (wantsTimeSeparator(previous, message)) container.append(timeSeparator(message));
+function messageRowId(message) { return 'chat-message-' + encodeURIComponent(String(message.id)); }
+function renderMessageRow(message, previous, appearance, existing) {
     const continued = !!previous && previous.role === message.role
       && (previous.notice?.kind || 'chat') === (message.notice?.kind || 'chat')
       && (previous.notice?.source || '') === (message.notice?.source || '')
       && messageStamp(message) - messageStamp(previous) < 5 * 60 * 1000
       && messageStamp(message) >= messageStamp(previous);
-    previous = message;
-    const row = document.createElement('article');
-    row.className = 'message-row ' + message.role + (continued ? ' continued' : '')
-      + (message.delivery === 'unknown' ? ' failed' : '');
+    const parts = messageParts(message), search = state.messageSearch;
+    const searchKey = search.open && search.query ? JSON.stringify([search.query, search.index, search.hits.filter(hit => hit.key === String(message.id))]) : '';
+    const className = 'message-row ' + message.role + (continued ? ' continued' : '') + (message.delivery === 'unknown' ? ' failed' : '');
+    // Only presentation metadata lives on the DOM. state.messages remains the
+    // single message store; plain text itself is compared with its existing span.
+    const shape = JSON.stringify([className, message.serverId, message.checkpoint, message.clientMessageId, message.origin,
+      message.notice, message.generatedImage, appearance.avatar || '', parts.map(part => part.type === 'plain' ? { ...part, text: undefined } : part)]);
+    const row = existing || document.createElement('article');
+    row.messageRecord = message;
+    if (row.messageShape === shape && row.messagePlainSpans) {
+      let changed = false;
+      for (const [index, part] of parts.entries()) {
+        const span = row.messagePlainSpans[index]; if (!span) continue;
+        if (span.textContent !== part.text || span.messageSearchKey !== searchKey) {
+          span.replaceChildren(); appendSearchText(span, part.text, message.id, index); span.messageSearchKey = searchKey; changed = true;
+        }
+      }
+      return { row, changed };
+    }
+    const targeted = existing && row.classList.contains('notification-target');
+    row.replaceChildren(); row.className = className; row.id = messageRowId(message);
+    if (targeted) row.classList.add('notification-target');
+    row.messageShape = shape; row.messagePlainSpans = [];
     if (message.notice && message.delivery === 'confirmed') row.classList.add('event-' + message.notice.kind);
     row.dataset.messageKey = String(message.id);
     const avatar = document.createElement('div'); avatar.className = 'message-avatar'; avatar.setAttribute('aria-hidden', 'true');
@@ -1539,7 +1587,7 @@ function renderMessages({ jumpToSearch = false, forceLatest = false } = {}) {
       const saved = document.createElement('span'); saved.className = 'message-event-state';
       saved.textContent = '已保存至会话'; source.append(saved); body.append(source);
     }
-    const parts = messageParts(message);
+    if(message.generatedImage&&window.ChatImageJobs)body.append(window.ChatImageJobs.renderAssociation(message.generatedImage));
     let bubble=null;
     for (const [partIndex, part] of parts.entries()) {
       if(['action','sticker'].includes(part.type)&&window.ChatComposer){
@@ -1551,6 +1599,7 @@ function renderMessages({ jumpToSearch = false, forceLatest = false } = {}) {
       bubble.classList.add('has-text');
       const text = document.createElement('span'); text.className = 'message-text';
       appendSearchText(text, part.text, message.id, partIndex);
+      text.messageSearchKey = searchKey; row.messagePlainSpans[partIndex] = text;
       bubble.append(text);
     }
     if (message.delivery && message.delivery !== 'confirmed') {
@@ -1572,18 +1621,90 @@ function renderMessages({ jumpToSearch = false, forceLatest = false } = {}) {
       }
       body.append(delivery);
     }
-    row.append(avatar, body); container.append(row);
+    row.append(avatar, body); return { row, changed: true };
+}
+function placeMessageNode(container, node, previous) {
+  if (node.parentNode !== container) {
+    if (previous?.nextSibling) container.insertBefore(node, previous.nextSibling); else container.append(node);
+  } else if (node.previousElementSibling !== previous) container.insertBefore(node, previous ? previous.nextSibling : container.firstChild);
+}
+let pendingMessageReading = null;
+function renderMessages({ jumpToSearch = false, forceLatest = false, streamMessage = null } = {}) {
+  const container = $('messages');
+  const scope = syncMessageSearchScope(), ticket = ++state.messageRenderSerial;
+  // Several patches can finish before the first restore frame. Added message
+  // height is not the reader scrolling away from latest; keep that frame's
+  // original intent unless the actual scroll position or scope has changed.
+  const pending = pendingMessageReading;
+  const sameReading = pending && pending.scope === scope && state.readingScope === scope
+    && Math.abs(container.scrollTop - pending.top) <= 2;
+  const position = sameReading ? pending.position
+    : state.readingScope === scope ? captureMessagePosition(container) : null;
+  if (sameReading && pending.forceLatest) forceLatest = true;
+  if(forceLatest)state.liveFollowScope=scope;
+  const sameScope = container.dataset.renderScope === scope;
+  state.readingScope = scope;
+  const appearance = currentAppearance(), changedRows = [];
+  const tail = state.messages[state.messages.length - 1], previous = state.messages[state.messages.length - 2];
+  const candidate = streamMessage && document.getElementById(messageRowId(streamMessage));
+  const liveRow = candidate?.parentNode === container ? candidate : null;
+  const streamOnly = !!streamMessage && streamMessage === tail && sameScope && !(state.messageSearch.open && state.messageSearch.query)
+    && ((liveRow && container.lastElementChild === liveRow && Number(container.dataset.renderCount) === state.messages.length)
+      || (!liveRow && Number(container.dataset.renderCount) === state.messages.length - 1
+        && (!previous || container.lastElementChild?.dataset.messageKey === String(previous.id))));
+  if (streamOnly) {
+    if (!liveRow && wantsTimeSeparator(previous, streamMessage)) {
+      const time = timeSeparator(streamMessage); time.dataset.messageTimeKey = String(streamMessage.id); container.append(time);
+    }
+    const rendered = renderMessageRow(streamMessage, previous, appearance, liveRow);
+    if (!liveRow) container.append(rendered.row);
+    if (rendered.changed) changedRows.push(rendered.row);
+  } else {
+    updateMessageSearchHits();
+    const existing = new Map(), times = new Map(), retained = new Set();
+    for (const node of container.querySelectorAll('.message-row, .message-time, .unread-divider')) {
+      if (!sameScope || node.classList.contains('unread-divider')) { node.remove(); continue; }
+      if (node.classList.contains('message-row')) existing.set(node.dataset.messageKey, node);
+      else times.set(node.dataset.messageTimeKey, node);
+    }
+    let previousMessage = null, previousNode = $('empty-state') || $('messages-spacer');
+    for (const message of state.messages) {
+      const key = String(message.id);
+      if (wantsTimeSeparator(previousMessage, message)) {
+        const time = times.get(key) || timeSeparator(message), value = fullDateLabel(message.created_at) || '较早的记录';
+        time.dataset.messageTimeKey = key; if (time.textContent !== value) time.textContent = value;
+        placeMessageNode(container, time, previousNode); retained.add(time); previousNode = time;
+      }
+      const rendered = renderMessageRow(message, previousMessage, appearance, existing.get(key));
+      placeMessageNode(container, rendered.row, previousNode); retained.add(rendered.row); previousNode = rendered.row;
+      if (rendered.changed) changedRows.push(rendered.row);
+      previousMessage = message;
+    }
+    for (const node of [...existing.values(), ...times.values()]) if (!retained.has(node)) node.remove();
+    renderAttachments();
   }
-  renderAttachments(); renderChrome(); updateJumpLatest();
+  container.dataset.renderScope = scope; container.dataset.renderCount = String(state.messages.length);
+  state.previewElements = state.previewElements.filter(value => value.img.isConnected);
+  const spacer = $('messages-spacer'); if (spacer) spacer.hidden = state.messages.length === 0;
+  $('empty-state').hidden = !!state.messages.length;
+  renderChrome(); updateJumpLatest();
+  const renderedTop = container.scrollTop;
+  const restore = { scope, position, top: renderedTop, forceLatest };
+  pendingMessageReading = restore;
   requestAnimationFrame(() => {
     if (ticket !== state.messageRenderSerial || scope !== messageSearchScope()) return;
+    if (pendingMessageReading === restore) pendingMessageReading = null;
+    // Scrollbar/keyboard movement after the patch belongs to the reader too.
+    if (!forceLatest && Math.abs(container.scrollTop - renderedTop) > 2) { updateJumpLatest(); return; }
     if (jumpToSearch && state.messageSearch.hits.length) { jumpMessageSearch(); return; }
-    if (position && !forceLatest && state.liveFollowScope!==scope && (!position.follow || (state.messageSearch.open && state.messageSearch.query))) {
+    if (position && !forceLatest && (!position.follow || (state.messageSearch.open && state.messageSearch.query))) {
       const row = [...container.querySelectorAll('.message-row')].find(node => node.dataset.messageKey === position.key);
       if (row) setMessageScroll(container, container.scrollTop + row.getBoundingClientRect().top - container.getBoundingClientRect().top - position.offset);
       else { setMessageScroll(container, position.top); if (position.key && $('notice').hidden) showNotice('原阅读位置已不在本次加载的记录中，已保留附近位置。'); }
     } else setMessageScroll(container, container.scrollHeight);
+    updateJumpLatest();
   });
+  return { rows: changedRows, streamOnly };
 }
 function renderStickers() {
   const panel = $('sticker-grid'); if (!panel) return;
@@ -1762,12 +1883,16 @@ function normalizeHistory(rows) {
     const typed = row.tls_parts || row.content.tls_parts;
     const parts = window.ChatComposer && Array.isArray(typed) ? window.ChatComposer.normalizeParts(typed) : contentParts(row.content);
     const notice = savedMessageNotice(row.content);
+    const generated=row.content.refs?.tls_generated_image;
+    const generatedImage=row.content.type==='bot'&&generated&&/^[a-f0-9]{64}$/.test(generated.job_id||'')
+      &&/^\d{1,24}$/.test(String(generated.parent_message_id||''))
+      ?{job_id:generated.job_id,parent_message_id:String(generated.parent_message_id),purpose:['chat','life','roleplay'].includes(generated.purpose)?generated.purpose:'chat'}:null;
     if (row.content.type === 'bot' && !parts.length && !notice) continue;
     result.push({ id: key, serverId: row.id, checkpoint: row.llm_checkpoint_id,
       clientMessageId: row.client_message_id || row.content.client_message_id || null,
       role: row.content.type === 'user' ? 'user' : 'assistant', text: parts.filter(part => part.type === 'plain').map(part => part.text).join('\n'), parts,
       origin: row.content.refs && ['qq_confirmed_proactive','tls_chat_direct'].includes(row.content.refs.source) ? row.content.refs.source : null,
-      notice,
+      notice, generatedImage,
       created_at: row.created_at, delivery: 'confirmed' });
   }
   return result;
@@ -1862,13 +1987,16 @@ async function loadHistory(id, { accept = () => true, reconcileAttachments = tru
     .flatMap(row => contentParts(row.content)).map(part => part.attachment_id).filter(Boolean));
   if (reconcileAttachments) state.attachmentQueues.set(id, attachmentQueue(id).filter(item => !referenced.has(item.attachment_id)));
   state.remoteRunning = result.is_running === true;
+  state.activeRuns = state.remoteRunning && Array.isArray(result.active_runs)
+    ? result.active_runs.filter(run => run.session_id === id && /^[0-9a-fA-F-]{32,36}$/.test(run.run_id || '')) : [];
   if(!state.sending)state.replyPhase=state.remoteRunning?'processing':'idle';
   if (state.remoteRunning && Array.isArray(result.active_runs)) {
-    for (const run of result.active_runs) {
+    for (const run of state.activeRuns) {
       const text = contentText(run.content);
       const parts = contentParts(run.content);
       if ((text || parts.length) && !state.messages.some(item => item.role === 'assistant' && item.checkpoint === run.llm_checkpoint_id)) {
-        state.messages.push({ id: 'run-' + run.run_id, role: 'assistant', text, parts, delivery: 'unconfirmed' });
+        state.messages.push({ id: 'run-' + run.run_id, runId: run.run_id, checkpoint: run.llm_checkpoint_id,
+          role: 'assistant', text, parts, delivery: 'unconfirmed' });
       }
     }
   }
@@ -1877,6 +2005,7 @@ async function loadHistory(id, { accept = () => true, reconcileAttachments = tru
   locateNotificationMessage();
   if (recoveryForeground() && window.ChatComposer && typeof window.ChatComposer.historyReceived === 'function') window.ChatComposer.historyReceived(id);
   if (window.ChatReceipts) window.ChatReceipts.historyReceived(id, result);
+  window.ChatImageJobs?.historyReceived(id);
   return true;
 }
 async function selectSession(id) {
@@ -1939,7 +2068,7 @@ async function returnToBot() {
 }
 function parseStream(body) {
   if (typeof body !== 'string') throw new Error('服务器未返回可识别的消息流，请先同步记录。');
-  const result = { text: '', parts: [], userParts: null, assistantParts: null, userId: null, messageId: null, ended: false, error: '', phase: '' };
+  const result = { text: '', parts: [], userParts: null, assistantParts: null, userId: null, messageId: null, ended: false, error: '', phase: '', imageJobs: [] };
   let count = 0; let assistantPartsMessageId = null;
   for (const frame of body.replace(/\r\n/g, '\n').split('\n\n')) {
     const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).replace(/^ /, '')).join('\n');
@@ -1947,7 +2076,17 @@ function parseStream(body) {
     if (data === '[DONE]') { result.ended = true; continue; }
     let event; try { event = JSON.parse(data); } catch (_) { continue; }
     count++;
+    if (event.type === 'run_snapshot' && event.data && event.data.content) {
+      result.runId = event.data.run_id; result.sessionId = event.data.session_id;
+      result.checkpoint = event.data.llm_checkpoint_id; result.revision = event.data.revision;
+      result.parts = contentParts(event.data.content);
+      result.phase = result.parts.length ? 'streaming' : 'queued';
+    }
+    if (event.type === 'tls_run_watch_end' && event.data?.source === 'sdk_run_observer') {
+      result.watchEnd = event.data.reason;
+    }
     if(event.type==='tls_generation_state'&&event.data&&['sdk_run_accepted','model_reasoning_received','model_output_received','sdk_error','sdk_stream_finished'].includes(event.data.source)&&['queued','generating','streaming','completed','failed'].includes(event.data.phase))result.phase=event.data.phase;
+    if(event.type==='tls_image_job'&&event.data)result.imageJobs.push(event.data);
     if (event.type === 'tls_parts' && event.data && Array.isArray(event.data.parts) && window.ChatComposer) {
       const typed = window.ChatComposer.normalizeParts(event.data.parts);
       if (event.data.role === 'user') result.userParts = typed;
@@ -2036,6 +2175,7 @@ async function sendMessage(event, prepared = null) {
     jumpToLatest();
     const stream = parseStream(await apiClient.send(sentSession, text, files, composition.parts, clientMessageId));
     if (!current()) return;
+    for(const job of stream.imageJobs||[])window.ChatImageJobs?.streamEvent(job);
     state.replyPhase=stream.error?'failed':'completed';
     userMessage.delivery = stream.userId != null ? 'confirmed' : 'unknown';
     if (stream.userParts) userMessage.parts = stream.userParts;
@@ -2047,7 +2187,7 @@ async function sendMessage(event, prepared = null) {
     renderMessages();
     if (stream.error) {const failure=new Error(stream.error);failure.generationFailed=true;throw failure;}
     if (!stream.ended || stream.messageId == null) showNotice('回复已返回，正在核对服务器保存记录。');
-    await loadHistory(sentSession, { accept: current });
+    await loadHistory(sentSession, { accept: current, preserveReading: true });
     if (!current()) return;
     if (consume && !$('draft').value) storage.set(draftKey(sentSession), '');
     await loadSessions({ select: false, accept: current });
@@ -2108,6 +2248,7 @@ async function login(event) {
     if (config.authenticated !== true) throw new Error('登录响应未建立有效凭证，请核对服务器接口。');
     if (typeof config.username === 'string' && config.username) state.username = config.username;
     state.authenticated = true;
+    window.ChatConnections?.remember();
     restoreCachedConversation();
     $('password').value = '';
     storage.set(pref('username'), state.username);
@@ -2308,9 +2449,26 @@ function init() {
   else if (state.authenticated) showNotice('当前离线，显示本机已保存记录；联网后自动同步，不会自动发送消息。');
   else if (!state.bridgeAvailable) showNotice('当前是本地界面预览；请安装 Android 应用后连接服务器。');
 }
-window.AsteriaChatUI = Object.freeze({ receive:(id,payload)=>receive(id,payload), receiveStream:value=>window.ChatExperience&&window.ChatExperience.receiveStream(value),
+function prepareSavedReplyAccountSwitch() {
+  if(state.sending||state.attaching||state.creating||state.appearanceBusy){
+    showNotice('先等待当前消息或文件处理结束，再打开另一位 Bot 的消息。',null,true);return false;
+  }
+  saveDraft();foregroundRecovery.cancel('saved_account_switch',true);
+  return true;
+}
+window.activateReplyAccount = async accountId => {
+  if(!prepareSavedReplyAccountSwitch())return false;
+  try{
+    const bridge=native();if(typeof bridge.activateReplyAccount!=='function')throw Error('请安装支持多Bot的新版本。');
+    const value=parse(bridge.activateReplyAccount(String(accountId||'')));
+    if(value?.ok!==true)throw Error('这份保存的登录已不可用，请在连接设置中重新登录。');
+    location.reload();return true;
+  }catch(error){showNotice(errorText(error),null,true);foregroundRecovery.signal();return false;}
+};
+window.AsteriaChatUI = Object.freeze({
+  prepareAccountSwitch: prepareSavedReplyAccountSwitch, receive:(id,payload)=>receive(id,payload), receiveStream:value=>window.ChatExperience&&window.ChatExperience.receiveStream(value),
   viewportChanged: value => { if (window.ChatComposer) window.ChatComposer.viewportChanged(value); },
-  replyWatchChanged: value => { if (window.ChatComposer) window.ChatComposer.watchChanged(value); },
+  replyWatchChanged: value => { if (window.ChatComposer) window.ChatComposer.watchChanged(value); window.ChatNotificationStatus?.refresh(); },
   notificationPermissionChanged: granted => { if (window.ChatComposer) window.ChatComposer.permissionChanged(granted); if (window.ChatNotificationStatus) window.ChatNotificationStatus.refresh(); },
   openConversation: (id, messageId, clickTarget = 'message') => {
     if (typeof id !== 'string' || !id || id.length > 256) return;
@@ -2318,6 +2476,6 @@ window.AsteriaChatUI = Object.freeze({ receive:(id,payload)=>receive(id,payload)
     if (window.ChatReceipts) window.ChatReceipts.notificationOpened(id, messageId);
     if (window.ChatComposer) window.ChatComposer.openConversation(id);
   },
-  foregroundChanged: () => { foregroundRecovery.signal(); syncViewport(); if (phonePerceptionPanel) phonePerceptionPanel.foregroundChanged(); if (window.ChatNotificationStatus) window.ChatNotificationStatus.refresh(); },
-  back: () => window.ChatNotificationCenter?.closeActive() || window.ChatModelRoute?.closeActive() || window.ChatSettingsHub?.closeActive() || window.ChatDeliveryCenter?.closeActive() || window.ChatMessageMemory?.closeActive?.() || window.ChatSessionPreferences?.closeActive?.() || window.ChatComposer && window.ChatComposer.closeActive() || closeMessageSearch() || cancelRenameTitle() || cancelConversationExport() });
+  foregroundChanged: () => { foregroundRecovery.signal(); syncViewport(); if (phonePerceptionPanel) phonePerceptionPanel.foregroundChanged(); if (window.ChatNotificationStatus) window.ChatNotificationStatus.refresh(); window.ChatImageJobs?.foregroundChanged(); },
+  back: () => window.ChatVoice?.closeActive() || window.ChatPersonalSpace?.closeActive() || window.ChatLife?.closeActive() || window.ChatImageJobs?.closeActive() || window.ChatNotificationCenter?.closeActive() || window.ChatModelRoute?.closeActive() || window.ChatSettingsHub?.closeActive() || window.ChatDeliveryCenter?.closeActive() || window.ChatMessageMemory?.closeActive?.() || window.ChatSessionPreferences?.closeActive?.() || window.ChatComposer && window.ChatComposer.closeActive() || closeMessageSearch() || cancelRenameTitle() || cancelConversationExport() });
 document.addEventListener('DOMContentLoaded', init, { once: true });

@@ -23,6 +23,7 @@ except Exception:  # pragma: no cover - optional in isolated page tests.
     astrbot_web_request = None
 
 from .bridge import serialize_memory
+from .config import ConfigView
 from .coordination_status import build_coordination_status, project_p6_status
 from .identity import normalize_session_context_fields, parse_scope_from_session
 from .memory_atom import DURABILITY_LEVELS, SENSITIVITY_LEVELS, VALIDITY_STATUSES
@@ -1616,14 +1617,9 @@ class PluginPageApi:
             "embedding_backfill_enabled": bool(payload.get("embedding_backfill_enabled", True)),
             "embedding_backfill_batch_size": max(1, self._int(payload.get("embedding_backfill_batch_size"), 50)),
         }
-        raw.setdefault("retrieval", {})
-        if not isinstance(raw["retrieval"], dict):
-            raw["retrieval"] = {}
-        raw["retrieval"].update(core_values)
-        raw.setdefault("retrieval_advanced", {})
-        if not isinstance(raw["retrieval_advanced"], dict):
-            raw["retrieval_advanced"] = {}
-        raw["retrieval_advanced"].update(advanced_values)
+        for module, values in (("retrieval", core_values), ("retrieval_advanced", advanced_values)):
+            for key, value in values.items():
+                ConfigView.set_value(raw, f"{module}.{key}", value)
         self._write_plugin_config(raw)
         return self._ok(
             {
@@ -1723,14 +1719,10 @@ class PluginPageApi:
         if not isinstance(items, dict):
             return self._err("invalid config module", 400)
 
-        target = raw.setdefault(module, {})
-        if not isinstance(target, dict):
-            target = {}
-            raw[module] = target
         for key, item_schema in items.items():
             if key not in values or not isinstance(item_schema, dict):
                 continue
-            target[key] = self._coerce_config_value(values.get(key), item_schema)
+            ConfigView.set_value(raw, f"{module}.{key}", self._coerce_config_value(values.get(key), item_schema))
         self._write_plugin_config(raw)
         return self._ok(
             {
@@ -2886,18 +2878,10 @@ class PluginPageApi:
 
     def _config_value_with_reverse_alias(self, dotted: str, default: Any = None) -> Any:
         config = self.plugin.service.config
-        marker = object()
-        exact = getattr(config, "_get_exact", None)
         aliases = getattr(config, "ALIASES", {}) or {}
-        if callable(exact):
-            value = exact(dotted, marker)
-            if value is not marker:
-                return value
-            for canonical, alias_list in aliases.items():
-                if dotted in alias_list:
-                    value = exact(canonical, marker)
-                    if value is not marker:
-                        return value
+        for canonical, alias_list in aliases.items():
+            if dotted in alias_list:
+                return config.get(canonical, default)
         return config.get(dotted, default)
 
     def _coerce_config_value(self, value: Any, item_schema: dict[str, Any]) -> Any:

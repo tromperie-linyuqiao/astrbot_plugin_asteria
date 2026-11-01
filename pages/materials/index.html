@@ -89,8 +89,19 @@ button:disabled{opacity:.6;cursor:wait}
 body{background:var(--tls-page-bg);color:var(--tls-page-text)}.card,.panel,.tab,.tab.active,.xnav a,dialog{background:var(--tls-page-panel);border-color:var(--tls-page-line);color:var(--tls-page-text)}input,select,textarea,button{background:var(--tls-page-field);border-color:var(--tls-page-line);color:var(--tls-page-text)}.card h2,.panel h3,b,strong{color:var(--tls-page-heading)}.hint,.meta,.kv,th,.xnav .xt{color:var(--tls-page-muted)}.top h1,.xnav a.cur,.tab.active{color:var(--tls-page-accent)}:root[data-theme="light"] [style*="color:#e6edf3"]{color:var(--tls-page-heading)!important}table{max-width:100%}dialog{max-height:90dvh;overflow:auto}dialog::backdrop{background:#0009}.toast{max-width:min(90vw,600px);overflow-wrap:anywhere}.toast button{margin-left:12px;min-height:30px;padding:3px 8px;color:inherit}.xnav a{min-height:36px;display:inline-flex;align-items:center}
 
 </style>
+<style id="asteria-leaf-style">
+body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.6}
+.aw-leaf-header{max-width:1560px;margin:0 auto 22px;padding:16px 18px;border:1px solid var(--line,var(--edge,#475569));border-radius:12px;background:var(--panel,#161b22);color:var(--text,var(--ink,#e6edf3));display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.aw-leaf-brand{font-weight:650;letter-spacing:.04em;font-size:16px;white-space:nowrap}.aw-leaf-path{flex:1;min-width:180px;font-size:13px;color:var(--muted,#94a3b8)}
+.aw-leaf-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.aw-leaf-tools button,.aw-leaf-tools select{font:inherit;font-size:13px;min-height:38px;border-radius:8px;padding:8px 12px;max-width:260px;width:auto;background:var(--panel,#161b22);color:inherit;border:1px solid var(--line,var(--edge,#475569))}
+.aw-leaf-tools label{display:flex;align-items:center;gap:8px}.aw-leaf-message{flex-basis:100%;margin:0;font-size:13px;color:var(--red,#c65364)}
+body h1{font-size:clamp(21px,2vw,28px);line-height:1.35}body h2{line-height:1.45}body .panel,body .card{border-radius:12px}body input,body textarea,body select{scroll-margin-top:24px}body button:focus-visible,body a:focus-visible{outline:2px solid var(--blue,var(--accent,#7385c9));outline-offset:3px}
+body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto}body pre{overflow-wrap:anywhere;white-space:pre-wrap}body .table-wrap,body .twrap{max-width:100%;overflow:auto}
+@media(max-width:640px){.aw-leaf-header{padding:14px;margin:8px 0 18px;gap:10px}.aw-leaf-path{font-size:12px}.aw-leaf-tools{width:100%}.aw-leaf-tools label{flex:1;min-width:0}.aw-leaf-tools select{min-width:0;width:100%;max-width:100%}.aw-leaf-tools button{flex-shrink:0}body h1{font-size:22px}}
+</style>
 </head>
 <body>
+<header id="asteria-leaf-header" class="aw-leaf-header" data-area="area-resources"><span class="aw-leaf-brand">✧ 星栖 Asteria</span><span class="aw-leaf-path">资料中心 / 触觉材质库</span><div class="aw-leaf-tools"><label>本页<select aria-label="定位本页分区"><option>定位本页分区</option></select></label><button type="button">返回资料中心</button></div><p class="aw-leaf-message" role="status"></p></header>
 <div class="xnav">
   <a data-pg="控制台">控制台</a><span class="xt">存在层页面</span>
   <a data-pg="身体">身体</a>
@@ -745,6 +756,12 @@ function renderRefs(){
 // Navigation is handled by the authenticated SDK listener above.
 
 loadAll();
+</script>
+<script id="asteria-leaf-script">
+(()=>{'use strict';const bar=document.getElementById('asteria-leaf-header'),jump=bar.querySelector('select'),back=bar.querySelector('button'),message=bar.querySelector('[role=status]');let headings=[];
+function fill(){headings=[...document.querySelectorAll('h2,h3')].filter(el=>!el.closest('dialog')&&el.getClientRects().length&&el.textContent.trim());jump.replaceChildren(new Option('定位本页分区',''));headings.forEach((el,i)=>jump.add(new Option(el.textContent.trim().slice(0,70),String(i))));}
+jump.addEventListener('focus',fill);jump.addEventListener('pointerdown',fill);jump.addEventListener('change',()=>{if(jump.value==='')return;const el=headings[Number(jump.value)];if(!el)return;el.scrollIntoView({block:'start'});if(!el.hasAttribute('tabindex'))el.tabIndex=-1;el.focus({preventScroll:true});});
+back.addEventListener('click',async()=>{back.disabled=true;message.textContent='';try{const bridge=window.AstrBotPluginPage;if(!bridge)throw Error('请从 AstrBot 后台重新打开此页面。');await bridge.ready();const theme=document.documentElement.dataset.theme||new URLSearchParams(location.search).get('theme')||'dark';let result=await bridge.apiGet('page/nav',{to:'console',theme,format:'json'});if(result?.data)result=result.data;const url=new URL(result.url,location.href);if(url.origin!==location.origin||url.pathname!=='/api/plugin/page/content/astrbot_plugin_virtual_body/console/'||!url.searchParams.get('asset_token'))throw Error('返回地址未确认，请从后台进入工作台。');url.hash=bar.dataset.area;location.assign(url.href);}catch(error){message.textContent=error.message||'工作台暂时无法打开。';}finally{back.disabled=false;}});fill();})();
 </script>
 </body>
 </html>

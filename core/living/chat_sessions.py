@@ -93,9 +93,11 @@ def _touch_session(username, session_id):
 def apply_chat_touch(plugin, username, session_id, parts):
     """One explicit submit, through the original TLS parser/advance/store."""
     from .. import events
-    selected = [part for part in parts if part.get('type') == 'action' and part.get('source') == 'user_action']
+    def character_input(part):
+        return part.get('actor', 'user') == 'user' and part.get('target', 'character') == 'character'
+    selected = [part for part in parts if character_input(part) and part.get('type') == 'action' and part.get('source') == 'user_action']
     # Compatibility for callers already holding a server-validated native part.
-    selected += [part for part in parts if part.get('native_touch') and part not in selected]
+    selected += [part for part in parts if character_input(part) and part.get('native_touch') and part not in selected]
     if not selected:
         return None
     catalog = touch_catalog(plugin)
@@ -125,7 +127,7 @@ def apply_chat_touch(plugin, username, session_id, parts):
             # Reuse the original parser; unmatched scene actions stay RP input.
             description = part.get('description') or ''
             # The configured role's possessive name is a target, not distance
-            # between verb and part ("戳一下德克萨斯的肚皮"). Keep the original
+            # between verb and part ("戳一下角色的肚皮"). Keep the original
             # quote/negation/question filters and the QQ parser unchanged.
             role_name = catalog.get('name')
             if isinstance(role_name, str) and role_name:
@@ -262,6 +264,14 @@ async def inject_chat_session_context(plugin, event, req):
     state = await asyncio.to_thread(ChatSessionState(journal, current=current).get, username, session_id)
     if not current() or state['archived']:
         return
+    # Keep the window candidate off the assembler until priority 0 has reset
+    # it. The final outlet rechecks actual DB ownership and source history.
+    from .chat_window_continuity import prepare_chat_window_continuity
+    try:
+        await prepare_chat_window_continuity(plugin,event,req,state=state,journal=journal)
+    except Exception:
+        # Optional old words must never suppress the normal session hints.
+        pass
     # Bind the real SDK occurrence to its server checkpoint. Saved DB IDs and
     # SDK event UUIDs differ; later quickviews use this exact link, never text.
     from .chat_message_memory import bind_event_source
@@ -280,7 +290,7 @@ async def inject_chat_session_context(plugin, event, req):
     # Persona. Existing TLS RP/memory assembly remains responsible for its data.
     mode_text = {'chat': '自然日常聊天，回复连贯', 'roleplay': '沿用当前角色进行连续的虚构剧情互动',
                  'technical': '清晰讨论和解释问题，避免无关表情与机械分段'}[state['mode']]
-    block = '[Texas Chat 当前会话设置，来自用户明确维护]\n' + mode_text
+    block = '[Asteria Chat 当前会话设置，来自用户明确维护]\n' + mode_text
     preferences = session_preference_context(state)
     if preferences:
         block += '\n本会话回复偏好（仅影响后续表达）：\n' + preferences
@@ -289,7 +299,7 @@ async def inject_chat_session_context(plugin, event, req):
         block += '\n本会话剧情/讨论简介（用户设定，不是现实观察）：' + json.dumps(state['scene'], ensure_ascii=False)
     from .structured_reply import enabled, PROTOCOL
     if enabled(state):
-        block += '\n[Texas Chat表达协议，仅规定回复格式，不改变人格与权限]\n' + PROTOCOL
+        block += '\n[Asteria Chat表达协议，仅规定回复格式，不改变人格与权限]\n' + PROTOCOL
     # Preserve the Persona's system instructions. This is user-maintained
     # conversational context, carried by the SDK's existing typed user parts.
     req.extra_user_content_parts.append(TextPart(text=block).mark_as_temp())

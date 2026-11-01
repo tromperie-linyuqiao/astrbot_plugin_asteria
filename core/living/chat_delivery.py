@@ -100,13 +100,19 @@ class ChatDeliveryAdapter:
                     target=target, source='tls_chat_direct'), expected_revision=0,
                     authorize=lambda: links.current() and self._target(task) == target), True
         receipt, new = await asyncio.to_thread(reserve)
+        images=getattr(getattr(getattr(self.plugin,'_presence',None),'living_host',None),'runtime',None)
+        coordinator=getattr(images,'chat_images',None)
+        generated=coordinator.delivery_metadata(task)if coordinator is not None else None
+        message_id=None
         if not new:
             if receipt['data']['state'] == 'stored': return True
             # A late SDK insert can only be reconciled; never repeat the insert.
             history = await database.get_platform_message_history(platform_id='webchat', user_id=target['session_id'], page_size=1000)
-            found = any(isinstance(item.content, dict) and isinstance(item.content.get('refs'), dict)
-                and item.content['refs'].get('tls_delivery_key') == key for item in history)
+            matches=[item for item in history if isinstance(item.content,dict)and isinstance(item.content.get('refs'),dict)
+                and item.content['refs'].get('tls_delivery_key')==key]
+            found=bool(matches)
             if not found: return None
+            if generated and len(matches)==1:message_id=getattr(matches[0],'id',None)
         else:
             from astrbot.core.platform.sources.webchat.message_parts_helper import message_chain_to_storage_message_parts
             from astrbot.core.utils.astrbot_path import get_astrbot_data_path
@@ -115,10 +121,14 @@ class ChatDeliveryAdapter:
                 attachments_dir=Path(get_astrbot_data_path())/'attachments')
             if not parts: return False
             if self._target(task) != target: raise BeforeDispatchError('chat_destination_changed')
-            await database.insert_platform_message_history(platform_id='webchat', user_id=target['session_id'],
-                content=dict(type='bot', message=parts, refs=dict(tls_delivery_key=key,
-                    tls_proactive_task=task['id'], source='tls_chat_direct', tls_notice=notice_for_task(task))),
+            refs=dict(tls_delivery_key=key,tls_proactive_task=task['id'],source='tls_chat_direct',tls_notice=notice_for_task(task))
+            if generated:
+                refs['tls_generated_image']=generated
+                if generated['source']=='user_request':refs['tls_notice']=dict(schema=1,kind='reply')
+            saved=await database.insert_platform_message_history(platform_id='webchat', user_id=target['session_id'],
+                content=dict(type='bot', message=parts, refs=refs),
                 sender_id='bot', sender_name='bot')
+            if generated:message_id=getattr(saved,'id',None)or(saved.get('id')if isinstance(saved,dict)else saved if type(saved)is int else None)
         await asyncio.to_thread(links.journal.put, NAMESPACE, key, scope,
-            dict(receipt['data'], state='stored'), expected_revision=receipt['revision'], authorize=links.current)
+            dict(receipt['data'], state='stored',**({'message_id':str(message_id)if message_id is not None else None}if generated else{})), expected_revision=receipt['revision'], authorize=links.current)
         return True  # Durable Chat history, not a phone notification/read ACK.

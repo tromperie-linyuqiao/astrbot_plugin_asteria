@@ -255,7 +255,7 @@ class NativeCompanionTakeoverProvider:
         token=self.current_token(scope)
         return token[-1] if token is not None else None
 
-    def _read_snapshot(self, binding, query):
+    def _read_snapshot(self, binding, query, limit=MAX_ROWS):
         self._read_allowed(binding)
         path, scope = raw._database(self.path), dict(binding.mc_scope)
         identity = path.stat()
@@ -265,35 +265,76 @@ class NativeCompanionTakeoverProvider:
             steps += 1000
             try:
                 self._read_allowed(binding)
-                return int(time.monotonic()-started >= self.deadline or steps > 200000)
+                return int(time.monotonic()-started >= self.deadline or steps > raw._MAX_VM_STEPS)
             except Exception:
                 return 1
         terms=_tokens(query)
         if any(not term.startswith('c:') for term in terms):
             terms={term:weight for term,weight in terms.items() if not term.startswith('c:')}
-        terms=set(tuple(terms)[:256])
-        def lexical_match(content):
+        terms=dict(tuple(terms.items())[:256])
+        def lexical_score(content,metadata):
             self._read_allowed(binding)
             if time.monotonic()-started >= self.deadline:
                 raise CompanionTakeoverError('mc_query_deadline')
-            return int(type(content)is str and bool(terms.intersection(_tokens(content))))
+            try:
+                proof=raw._json(metadata,dict)
+            except raw.MCContextMaterialError:
+                return 0.0
+            if (proof.get('owner_bot_id')!=scope['bot_id']
+                    or proof.get('persona_id')!=scope['persona_id']):
+                return 0.0
+            if type(content)is not str or len(content)>6000:
+                return 0.0
+            tokens=_tokens(content)
+            score=sum(weight for term,weight in terms.items() if term in tokens)
+            return score+(8. if score and _normal(query) in _normal(content) else 0.)
         where = ("owner_bot_id=? AND lifecycle NOT IN ('archived','deleted','superseded','quarantined') "
             "AND review_status NOT IN ('pending','rejected') AND validity_status='active' AND ("
             "(scope='private' AND visibility='private_pair' AND platform=? "
             "AND ((subject_kind='user' AND subject_id=?) OR (object_kind='user' AND object_id=?)) "
             "AND (session_id=? OR (memory_type='core_memory' AND session_id=''))) "
-            "OR (memory_type='core_memory' AND scope='global' AND visibility='bot_self' AND platform IN ('',?))) "
-            "AND (memory_type IN ("+','.join('?' for _ in raw._TYPES)+") OR (?=1 AND CASE "
-            "WHEN typeof(content)!='text' THEN 1 WHEN length(content)<=6000 THEN tls_mc_match(content) ELSE 0 END=1))")
+            "OR (memory_type='core_memory' AND scope='global' AND visibility='bot_self' AND platform IN ('',?)))")
         values = (scope['bot_id'],scope['platform'],scope['user_id'],scope['user_id'],scope['session_id'],scope['platform'],
-                  *raw._TYPES,int(bool(terms)))
+                  scope['bot_id'],scope['persona_id'],scope['user_id'],scope['bot_id'],
+                  scope['user_id'],scope['bot_id'],scope['session_id'],scope['user_id'])
+        # First restrict identity and size inside SQLite. Only the bounded pool
+        # below may pass text to the lexical callback; foreign/giant rows never
+        # reach Python. This is a recent local shortlist, not semantic retrieval
+        # over every historical record. Existing policy still owns time,
+        # profile/summary quality, provenance and final presentation.
+        lengths='+'.join('COALESCE(length(CAST('+name+' AS BLOB)),0)' for name in raw._READ)
+        actor=lambda name: ("(("+name+"_kind='user' AND "+name+"_id=?) OR ("
+            +name+"_kind='bot' AND "+name+"_id=?) OR ("+name+"_kind='user' AND "
+            +name+"_id='' AND "+name+"_name='' AND "+name+"_role IN ('','unknown')))")
+        identity_filter=("CASE WHEN json_valid(metadata) THEN json_extract(metadata,'$.owner_bot_id')=? "
+            "AND json_extract(metadata,'$.persona_id')=? AND "+actor('subject')+' AND '+actor('object')+
+            " AND (scope!='global' OR (json_extract(metadata,'$.core_scope')='global' "
+            "AND COALESCE(json_extract(metadata,'$.target_id'),'')='' "
+            "AND subject_kind='bot' AND object_kind='bot')) "
+            "AND (scope='global' OR session_id=? OR (memory_type='core_memory' AND session_id='' "
+            "AND json_extract(metadata,'$.core_scope')='private' AND json_extract(metadata,'$.target_id')=?)) "
+            "ELSE 0 END")
+        private_types=','.join("'"+name+"'" for name in raw._TYPES[:-1])
+        candidate_sql=("WITH scoped AS MATERIALIZED (SELECT id,"+lengths+" AS source_bytes FROM memories WHERE "
+            +where+" AND typeof(content)='text' AND length(content)<=6000 AND ("+lengths+")<=48000), "
+            "eligible AS MATERIALIZED (SELECT m.id,s.source_bytes,m.memory_type,m.occurred_at,"
+            "CASE WHEN m.memory_type='core_memory' THEN COALESCE(json_extract(m.metadata,'$.core_priority'),0) ELSE 0 END AS core_priority "
+            "FROM scoped s JOIN memories m ON m.id=s.id WHERE "+identity_filter+"), "
+            "cores AS MATERIALIZED (SELECT * FROM eligible WHERE memory_type='core_memory' "
+            "ORDER BY core_priority DESC,occurred_at DESC,id LIMIT 8), "
+            "private_rows AS MATERIALIZED (SELECT * FROM eligible WHERE memory_type IN ("+private_types+") "
+            "ORDER BY occurred_at DESC,id LIMIT 56), "
+            "history AS MATERIALIZED (SELECT * FROM eligible WHERE ?=1 AND memory_type NOT IN ("+private_types+",'core_memory') "
+            "ORDER BY occurred_at DESC,id LIMIT 192), "
+            "pool AS MATERIALIZED (SELECT * FROM cores UNION ALL SELECT * FROM private_rows UNION ALL SELECT * FROM history), "
+            "scored AS MATERIALIZED (SELECT p.*,tls_mc_score(m.content,m.metadata) AS score FROM pool p JOIN memories m ON m.id=p.id) "
+            "SELECT id,source_bytes FROM scored WHERE memory_type IN ("+private_types+",'core_memory') OR score>0 "
+            "ORDER BY (memory_type='core_memory') DESC,score DESC,core_priority DESC,occurred_at DESC,id LIMIT 64")
+        values=(*values,int(bool(terms)))
         with closing(sqlite3.connect(path.as_uri()+'?mode=ro', uri=True,
                      timeout=min(self.deadline,.2), isolation_level=None)) as conn:
             conn.row_factory = sqlite3.Row
-            # A connection-local pure reuse of TLS lexical matching; CASE
-            # bounds Python-visible generic text before calling the function.
-            # No index or function is persisted in the MC database.
-            conn.create_function('tls_mc_match',1,lexical_match,deterministic=True)
+            conn.create_function('tls_mc_score',2,lexical_score,deterministic=True)
             conn.set_progress_handler(progress,1000)
             conn.execute('PRAGMA query_only=ON')
             conn.execute('BEGIN')
@@ -302,14 +343,9 @@ class NativeCompanionTakeoverProvider:
                 revision = _revision(conn)
                 if binding.read_revision is not None and revision!=binding.read_revision:
                     raise CompanionTakeoverError('mc_read_revision_changed')
-                count, _ = raw._preflight(conn,where,values)
-                rows = conn.execute('SELECT '+','.join(raw._READ)+' FROM memories WHERE '+where
-                    +' ORDER BY id LIMIT 65',values).fetchall()
-                if len(rows) != count:
-                    raise CompanionTakeoverError('mc_snapshot_changed')
+                rows=raw._bounded_candidate_rows(conn,candidate_sql,values,limit=limit)
                 result = [item for row in rows if (item := _material(row,scope)) is not None]
-                if len(json.dumps(result,ensure_ascii=False,allow_nan=False).encode('utf8')) > MAX_BYTES:
-                    raise CompanionTakeoverError('mc_material_capacity')
+                result=raw._bounded_material_items(result,limit=limit)
                 after = raw._database(path).stat()
                 if (identity.st_dev,identity.st_ino) != (after.st_dev,after.st_ino):
                     raise CompanionTakeoverError('mc_database_identity_changed')
@@ -344,6 +380,14 @@ class NativeCompanionTakeoverProvider:
             self._feedback[key]=state
         if state['epoch']!=self._epoch:
             raise CompanionTakeoverError('mc_feedback_owner_changed')
+        # Different bounded reads in one request may select different rows.
+        # Retain origins promised to existing feedback tickets, and release
+        # unused candidates instead of turning a full map into context failure.
+        protected={identity for entry in state['tickets'].values()
+            if entry['state'] in {'candidate','checking_acl','pending_unknown'}
+            for identity,_section in entry['ticket']._pairs}
+        state['origins']={identity:original for identity,original in state['origins'].items()
+            if identity in protected}
         for old,new in zip(source,projected):
             original=old['id']
             # The original service cleans IDs at 120 characters. Do not let a
@@ -355,7 +399,7 @@ class NativeCompanionTakeoverProvider:
             if previous is not None and previous!=original:
                 raise CompanionTakeoverError('mc_feedback_origin_conflict')
             if len(state['origins'])>=MAX_ROWS and new['id'] not in state['origins']:
-                raise CompanionTakeoverError('mc_feedback_capacity')
+                continue  # No feedback promise is issued for an untracked row.
             state['origins'][new['id']]=original
 
     def feedback_candidates(self,scope,selections,*,binding=None):
@@ -515,7 +559,7 @@ class NativeCompanionTakeoverProvider:
             score=sum(weight for term,weight in terms.items() if term in tokens)
             if score:
                 ranked.append(dict(row,score=score+(8. if _normal(query) in _normal(row['content']) else 0.)))
-        return ranked
+        return sorted(ranked,key=lambda row:(-row['score'],row.get('id','')))
 
     async def materials(self,scope,*,limit=64,query='',binding=None):
         if type(limit) is not int or not 1 <= limit <= MAX_ROWS:
@@ -528,7 +572,7 @@ class NativeCompanionTakeoverProvider:
             token=self.generation(scope,binding=binding)
             if token is None:
                 return _failure('mc_context_not_authorized')
-            revision,rows=await asyncio.to_thread(self._read_snapshot,binding,query)
+            revision,rows=await asyncio.to_thread(self._read_snapshot,binding,query,limit)
             if revision != token[-1]:
                 return _failure('mc_material_changed')
             source=rows
@@ -536,14 +580,17 @@ class NativeCompanionTakeoverProvider:
             projected=list(rows)
             if self.base_materials is not None:
                 base=await self.base_materials(scope=scope,limit=limit)
-                if not isinstance(base,dict) or base.get('ok') is not True or not isinstance(base.get('items'),list):
+                if (not isinstance(base,dict) or base.get('ok') is not True
+                        or not isinstance(base.get('items'),list) or len(base['items'])>MAX_ROWS):
                     return _failure('native_material_unavailable')
                 rows+=base['items']
-            if len(rows)>limit or len(json.dumps(rows,ensure_ascii=False,allow_nan=False).encode('utf8'))>MAX_BYTES:
-                return _failure('combined_material_capacity')
+            rows=raw._bounded_material_items(rows,limit=limit)
             if token != self.generation(scope,binding=binding):
                 return _failure('mc_material_changed')
-            self._remember_projection(binding,source,projected)
+            included={row['id'] for row in rows}
+            self._remember_projection(binding,
+                [old for old,new in zip(source,projected) if new['id'] in included],
+                [new for new in projected if new['id'] in included])
             private=[row for row in rows if row.get('memory_type') in PRIVATE_TYPES]
             memories=self._rank([row for row in rows if row.get('memory_type') not in PRIVATE_TYPES],query)
             return dict(ok=True,state='ready',items=rows,private_items=private,memory_items=memories,
@@ -565,12 +612,11 @@ class NativeCompanionTakeoverProvider:
         generic=material['memory_items']
         if self.base_recall is not None and query.strip():
             base=await self.base_recall(query,scope=scope,top_k=3)
-            if not isinstance(base,dict) or base.get('ok') is not True:
+            if (not isinstance(base,dict) or base.get('ok') is not True
+                    or not isinstance(base.get('memories'),list) or len(base['memories'])>MAX_ROWS):
                 return {'ok':False,'state':'native_recall_unavailable','sections':[]}
             generic+=base.get('memories',[])
-        if len(generic)>MAX_ROWS:
-            return {'ok':False,'state':'combined_material_capacity','sections':[]}
-        ranked=self._rank(generic,query)
+        ranked=self._rank(generic,query)[:self.memory_policy.max_candidates]
         now=self.clock()
         selected=self.private_policy.select(private,scope=scope,query=query,kind=kind,now=now,max_chars=max_chars)
         remaining=max_chars-selected['chars']

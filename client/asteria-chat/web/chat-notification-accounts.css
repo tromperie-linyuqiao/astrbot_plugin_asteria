@@ -1,0 +1,19 @@
+.reply-accounts{margin-block:18px;padding-block:16px;border-block:1px solid var(--border,#39413d)}
+.reply-accounts>p,.reply-account-card p{font-size:.84rem;line-height:1.55;overflow-wrap:anywhere}
+.reply-account-heading{display:flex;gap:12px;align-items:center;justify-content:space-between;min-width:0}
+.reply-account-heading h3{margin:0;font-size:1rem}
+.reply-account-heading strong{min-width:0;overflow-wrap:anywhere}
+#reply-accounts-list{display:grid;gap:10px;margin-block:12px}
+.reply-account-card{padding:14px;border:1px solid var(--border,#39413d);border-radius:14px;background:var(--surface,#202622);min-width:0}
+.reply-account-card p{margin:8px 0;color:var(--text-muted,#9ba69f)}
+.reply-account-state{flex-shrink:0;font-size:.75rem;padding:4px 8px;border-radius:6px;background:var(--surface-soft,#2b332e);color:var(--text,#e3e8e4)}
+.reply-account-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.reply-account-actions button{max-width:100%;white-space:normal}
+.notification-blocked-note{border-left:3px solid var(--accent,#91a99b);padding:8px 12px;background:var(--surface,#202622);border-radius:4px}
+.connection-saved-open{margin-block:6px}
+html[data-theme="black"] .reply-account-card,html[data-theme="black"] .notification-blocked-note{background:#101010;border-color:#2b2b2b}
+html[data-theme="black"] .reply-account-state{background:#242424;color:#e6e6e6}
+html[data-theme="light"] .reply-account-card,html[data-theme="light"] .notification-blocked-note{background:#f4f5f3;border-color:#d9dfda}
+html[data-theme="light"] .reply-account-card p{color:#59665e}
+html[data-theme="light"] .reply-account-state{background:#e5e9e5;color:#35443a}
+@media(max-width:360px){.reply-account-card{padding:11px}.reply-account-heading{gap:8px}.reply-account-actions button{flex:1 1 110px}}

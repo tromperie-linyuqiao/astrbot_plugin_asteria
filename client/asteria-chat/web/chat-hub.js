@@ -15,14 +15,15 @@ window.ChatSettingsHub = (() => {
   const keep = new Set(['角色与剧情', '搜索服务器历史', '聊天外观']);
   const map = {
     'menu-theme':'appearance', 'appearance-button':'appearance',
-    'rename-button':'role', 'menu-session-preferences':'role',
-    'menu-interactions':'interaction', 'menu-model-route':'models',
+    'rename-button':'role', 'menu-session-preferences':'role', 'menu-life':'role', 'menu-personal-space':'role',
+    'menu-voice':'interaction', 'menu-interactions':'interaction', 'menu-model-route':'models',
     'menu-notification-center':'notifications', 'menu-delivery-center':'notifications',
     'menu-connection-center':'connection', 'menu-perception':'connection',
     'mobile-settings':'connection', 'refresh-chat':'connection',
     'menu-export':'advanced', 'menu-delete':'advanced'
   };
-  let dialog, menu, home, detail, active = '', queued = false, initialized = false;
+  let dialog, menu, home, detail, search, results, searchStatus, active = '', queued = false, initialized = false;
+  const normalize=value=>String(value||'').normalize('NFKC').toLocaleLowerCase().trim();
   const groups = {};
   const node = (tag, text, cls='') => { const n=document.createElement(tag); if(text!==undefined)n.textContent=text; n.className=cls; return n; };
   const button = (text, handler, cls='menu-item') => { const n=node('button',text,cls);n.type='button';n.onclick=handler;return n; };
@@ -55,6 +56,7 @@ window.ChatSettingsHub = (() => {
     }
   }
   function showHome() {
+    if(search)search.value='';if(results)results.replaceChildren();if(searchStatus)searchStatus.textContent='';
     active='';home.hidden=false;detail.hidden=true;
     document.getElementById('settings-hub-title').textContent='设置';
     document.getElementById('settings-hub-back').hidden=true;
@@ -62,7 +64,7 @@ window.ChatSettingsHub = (() => {
   function openSection(id) {
     if(!initialized)return;
     if(!Object.hasOwn(groups,id)){open();return;}
-    hideMoreMenu();organize();active=id;home.hidden=true;detail.hidden=false;
+    hideMoreMenu();organize();search.value='';results.replaceChildren();searchStatus.textContent='';active=id;home.hidden=true;detail.hidden=false;
     for(const [key,group]of Object.entries(groups))group.hidden=key!==id;
     document.getElementById('settings-hub-title').textContent=sections.find(row=>row[0]===id)[1];
     document.getElementById('settings-hub-back').hidden=false;
@@ -70,6 +72,33 @@ window.ChatSettingsHub = (() => {
   }
   function open() {
     if(!initialized)return;hideMoreMenu();organize();showHome();if(!dialog.open)dialog.showModal();
+  }
+
+  function aliases(title){
+    const terms=[];
+    for(const [pattern,words] of [[/外观|主题/,'黑色 黑底 浅色 深色 壁纸'],[/头像|背景/,'图片 裁剪 壁纸'],[/日程|重要日期|日历/,'生日 纪念日 课程 提醒'],[/动作|互动/,'摸头 戳 拥抱 牵手 自己 身体'],[/表情/,'贴纸 喜欢 隐藏 标签 收藏'],[/通知|送达/,'推送 消息 提醒 弹窗 未读'],[/连接|账户/,'服务器 Bot 登录 密码'],[/缓存/,'离线 删除缓存'],[/手机|感知/,'PPB 音乐'],[/导出/,'文件 备份']])if(pattern.test(title))terms.push(words);
+    return terms.join(' ');
+  }
+  function findSettings() {
+    const query=normalize(search.value).slice(0,160),words=query.split(/\s+/).filter(Boolean);
+    results.replaceChildren();if(!words.length){showHome();return;}
+    active='search';home.hidden=true;detail.hidden=true;
+    document.getElementById('settings-hub-title').textContent='查找设置';
+    document.getElementById('settings-hub-back').hidden=false;
+    let count=0;
+    for(const [id,label,description]of sections){
+      const candidates=[...groups[id].querySelectorAll('button')];
+      for(const original of menu.children)if(original.tagName==='BUTTON'&&keep.has(original.textContent.trim())&&destination(original)===id)candidates.push(original);
+      const seen=new Set();
+      for(const original of candidates){
+        const title=original.textContent.trim();if(original.hidden||!title||seen.has(title))continue;seen.add(title);
+        const terms=normalize(title+' '+label+' '+aliases(title));
+        if(!words.every(word=>terms.includes(word)))continue;
+        const result=button('',()=>{close();original.click();},'hub-search-result');
+        result.disabled=original.disabled;result.append(node('strong',title),node('small',label));results.append(result);count++;
+      }
+    }
+    searchStatus.textContent=count?'找到 '+count+' 个入口':'没有找到，试试“生日”“图片”“模型”或“通知”。';
   }
   function init() {
     menu=document.getElementById('more-menu');if(!menu)return;
@@ -79,6 +108,10 @@ window.ChatSettingsHub = (() => {
     const title=node('h2','设置');title.id='settings-hub-title';
     const dismiss=button('×',close,'icon-button');dismiss.id='settings-hub-close';dismiss.setAttribute('aria-label','关闭设置');
     heading.append(back,title,dismiss);form.append(heading);
+    const searchBar=node('div',undefined,'hub-search-bar');search=node('input');search.type='search';search.id='settings-hub-search';search.maxLength=160;search.placeholder='查找功能，如生日、模型、头像';search.setAttribute('aria-label','查找设置与功能');search.autocomplete='off';search.addEventListener('input',findSettings);
+    const clear=button('清除',()=>{showHome();search.focus();},'text-button');clear.id='settings-hub-clear';searchBar.append(search,clear);
+    searchStatus=node('p','', 'hub-search-status');searchStatus.id='settings-hub-search-status';searchStatus.setAttribute('role','status');
+    results=node('div',undefined,'hub-search-results');results.id='settings-hub-results';form.append(searchBar,searchStatus,results);
     home=node('nav',undefined,'hub-section-grid');home.id='settings-hub-home';home.setAttribute('aria-label','设置分类');
     detail=node('div',undefined,'hub-section-detail');detail.id='settings-hub-detail';detail.hidden=true;
     for(const [id,label,description]of sections) {
@@ -99,6 +132,12 @@ window.ChatSettingsHub = (() => {
     dialog.addEventListener('close',showHome);
     const opener=button('全部设置',open);opener.id='settings-hub-open';menu.append(opener);
     new MutationObserver(()=>{if(!queued){queued=true;queueMicrotask(organize);}}).observe(menu,{childList:true});
+    document.addEventListener('keydown',event=>{
+      if((event.ctrlKey||event.metaKey)&&!event.altKey&&event.key.toLowerCase()==='k'){
+        const opened=document.querySelector('dialog[open]');if(opened&&opened!==dialog)return;
+        event.preventDefault();open();search.focus();
+      }
+    });
     initialized=true;organize();
   }
   document.addEventListener('DOMContentLoaded',init,{once:true});

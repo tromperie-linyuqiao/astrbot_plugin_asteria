@@ -117,10 +117,39 @@ class NativeMemoryAdapter:
         self.metrics['writes'] += 1
         return {'ok': True, 'state': 'stored', 'memory_id': row['id'], 'revision': row['revision']}
 
+    @staticmethod
+    def accepts_candidate(row,scope,now,*,include_roleplay=False,shadowed_dimensions=()):
+        """Pure existing-policy admission, never a scope or write permission."""
+        if not isinstance(row,dict):return False
+        if (row.get('memory_type') in {'user_profile','user_preference','user_habit'}
+                and row.get('source_id')!='tls.chat.profile_candidates'
+                and isinstance(row.get('metadata'),dict)
+                and row['metadata'].get('profile_dimension') in shadowed_dimensions):
+            return False
+        selected,reason=NativeMemoryContextPolicy._candidate(row,scope,now)
+        # The APP's explicit fiction switch remains a labelled read lane. It
+        # never promotes fiction into the adapter's real-only recall outlet.
+        return selected is not None or (include_roleplay is True and row.get('evidence_kind')=='roleplay_event'
+            and reason=='non_real_or_conflicting_provenance')
+
     async def recall(self, query, *, scope, event=None, top_k=5):
+        scope=private_scope(scope)
         limit = min(max(int(top_k), 1), 10)
-        rows = await self._operation(scope, self.store.search, query, limit=32,
-                                     evidence_kinds=('user_reported', 'real_observation'))
+        now=self.clock();profiles=self.profile_candidates
+        accept=lambda row:self.accepts_candidate(row,scope,now)
+        def search(current_scope):
+            with self.store._lock:
+                dimensions=frozenset()
+                if profiles is not None:
+                    if profiles.store is not self.store or not profiles.active:
+                        raise PermissionError('native profile source changed')
+                    dimensions=profiles.active_single_dimensions(current_scope)
+                return self.store.search(current_scope,query,limit=32,
+                    evidence_kinds=('user_reported','real_observation'),
+                    accept=lambda row:self.accepts_candidate(row,current_scope,now,shadowed_dimensions=dimensions))
+        rows = await self._operation(scope,search)
+        if self.profile_candidates is not profiles:
+            raise PermissionError('native profile source changed')
         provider = self.mc_context_provider
         token = provider.current_token(scope) if provider is not None else None
         if token is not None:
@@ -134,17 +163,21 @@ class NativeMemoryAdapter:
                         value = row.get('score', 0)
                         return float(value) if type(value) in (int, float) and math.isfinite(value) else 0.0
                     rows.sort(key=score, reverse=True)
-        rows=await self._with_profiles(scope,rows,query=query,limit=32)
+        rows=await self._with_profiles(scope,rows,query=query,limit=32,accept=accept)
         normalize = lambda value: ' '.join(unicodedata.normalize('NFKC', value).casefold().split())
         now = self.clock()
         rows = [row for row in rows if normalize(row['content']) != normalize(query)
-                and self._selection._candidate(row, private_scope(scope), now)[0] is not None][:limit]
+                and self._selection._candidate(row, scope, now)[0] is not None]
+        limited=len(rows)>limit
+        if not self.allowed(scope):raise PermissionError('native memory scope changed')
         self.metrics['recalls'] += 1
-        return {'ok': True, 'state': 'ready', 'memories': rows, 'backend': self.backend}
+        return {'ok': True, 'state': 'ready', 'memories': rows[:limit], 'backend': self.backend,
+                'limited':limited,'limit':limit,'candidate_limit':32}
 
-    async def _with_profiles(self,scope,rows,*,query='',limit=64):
+    async def _with_profiles(self,scope,rows,*,query='',limit=64,accept=None):
         profiles=self.profile_candidates
-        if profiles is None:return rows
+        if profiles is None:
+            return rows if accept is None else [row for row in rows if accept(row) is True][:min(limit,64)]
         if profiles.store is not self.store:raise PermissionError('profile authority differs')
         def read(current_scope):
             with self.store.transaction():
@@ -162,6 +195,7 @@ class NativeMemoryAdapter:
             and isinstance(row.get('metadata'),dict)
             and row['metadata'].get('profile_dimension') in dimensions)]
         result=extra+rows
+        if accept is not None:result=[row for row in result if accept(row) is True]
         if query:
             result.sort(key=lambda row:float(row.get('score',0)) if type(row.get('score',0)) in (int,float)
                 and math.isfinite(row.get('score',0)) else 0,reverse=True)

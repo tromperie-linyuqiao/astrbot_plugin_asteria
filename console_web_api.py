@@ -410,6 +410,11 @@ class NativeConsoleWebApi:
                 and not getattr(host,'_closed',True) and not getattr(self.plugin,'_stopping',False),
              'automatic_progression_active':False,'proactive_share_active':False,
              'detail':'未来明确范围的虚构目标计划；手动完成后通过原目标实例推进，自动时钟与主动分享默认关闭，旧全局日计划保留'},
+            {'id':'autonomous_life','label':'自主生活与分享',
+             'active': bool(getattr(runtime,'active',False))
+                 and bool(getattr(getattr(runtime,'autonomous_life',None),'active',False))
+                 and not getattr(host,'_closed',True),
+             'detail':'有版本的虚构经历、人物与未完事项；推进及分享按当前会话策略和真实模型配置执行'},
             {'id':'profile_candidates','label':'画像候选与审核',
              'active':bool(getattr(runtime,'active',False))
                 and isinstance(getattr(runtime,'profile_candidates',None),NativeProfileCandidates)

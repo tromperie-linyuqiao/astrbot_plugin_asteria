@@ -307,6 +307,9 @@ class NativeHostServices:
     async def _task_delivery_allowed(self,scope,task):
         """Every native task must have one exact, still-current producer."""
         if not self._delivery_allowed(scope):return False
+        images=getattr(self.runtime,'chat_images',None)
+        if images is not None and await images.owns_task(scope,task):
+            return await images.delivery_allowed(scope,task) is True
         daily=getattr(self.runtime,'pc_daily_lifecycle',None)
         if daily is not None and daily.owns_task(scope,task):
             return await daily.delivery_allowed(scope,task) is True

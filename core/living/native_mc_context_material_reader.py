@@ -133,6 +133,50 @@ def _preflight(connection, where, parameters):
     return value[0], value[1]
 
 
+def _bounded_candidate_rows(connection, candidate_sql, parameters, *, limit=64):
+    """Fetch only a bounded, already-authorized shortlist of complete rows.
+
+    The caller's query returns IDs and scalar source sizes in relevance order,
+    never bodies. Oversized totals reduce the shortlist instead of invalidating
+    unrelated candidates. The strict isolated ``read_private`` ABI is separate.
+    """
+    if type(limit) is not int or not 1 <= limit <= _MAX_CANDIDATES:
+        raise MCContextMaterialError('invalid_limit')
+    candidates = connection.execute(candidate_sql, parameters).fetchmany(_MAX_CANDIDATES + 1)
+    if len(candidates) > _MAX_CANDIDATES:
+        raise MCContextMaterialError('candidate_capacity_exceeded')
+    selected, used = [], 0
+    for identity, source_bytes in candidates:
+        if (type(identity) is not str or not identity or type(source_bytes) is not int
+                or source_bytes < 0):
+            raise MCContextMaterialError('invalid_candidate_shape')
+        if len(selected) >= limit or used + source_bytes > _MAX_BYTES:
+            continue
+        selected.append(identity)
+        used += source_bytes
+    if not selected:
+        return []
+    rows = connection.execute('SELECT ' + ','.join(_READ) + ' FROM memories WHERE id IN ('
+        + ','.join('?' for _ in selected) + ')', selected).fetchall()
+    by_id = {row['id']: row for row in rows}
+    if len(by_id) != len(selected):
+        raise MCContextMaterialError('snapshot_changed')
+    return [by_id[identity] for identity in selected]
+
+
+def _bounded_material_items(items, *, limit=64):
+    """Keep whole records within the existing serialized JSON-list budget."""
+    selected, used = [], 2  # [] plus separators, with the existing JSON encoding.
+    for item in items:
+        size = len(json.dumps(item, ensure_ascii=False, allow_nan=False).encode('utf8'))
+        size += 2 if selected else 0
+        if len(selected) >= limit or used + size > _MAX_BYTES:
+            continue
+        selected.append(item)
+        used += size
+    return selected
+
+
 def _material(row, scope):
     if any(type(row[name]) is not str for name in _READ if name not in ('confidence', 'importance')):
         raise MCContextMaterialError('invalid_field_type')

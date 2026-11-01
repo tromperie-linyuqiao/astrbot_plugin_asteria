@@ -20,6 +20,7 @@ from ..native_important_dates import date_zone
 NAMESPACE = 'tls.native.pc.memo_execution.v1'
 ACTIONS = 'tls.native.pc.memo_actions.v1'
 TIMERS = 'tls.native.pc.timers.v1'
+MEMO_CURSOR = 'tls.native.pc.memo_cursor.v1'
 _UNKNOWN = {'sending', 'unknown', 'quarantined'}
 _TERMINAL = {'confirmed', 'failed', 'cancelled', 'expired'}
 
@@ -71,6 +72,11 @@ class NativePCMemoScheduler:
             elif ns == ACTIONS:
                 if set(data) != {'schema','scope','signature','record_id','revision','expected_revision','action','external_record_modified','delivery_confirmed'} or data['action'] != 'complete' or data['external_record_modified'] is not False or data['delivery_confirmed'] is not False:
                     raise RuntimeError('invalid recurring completion receipt')
+            elif ns == MEMO_CURSOR:
+                if (key != 'tick_memos' or set(data) != {'schema','scope','last_memo_id'}
+                        or type(data['last_memo_id']) is not str
+                        or re.fullmatch(r'memo\.[a-f0-9]{64}', data['last_memo_id']) is None):
+                    raise RuntimeError('invalid memo scheduler cursor')
         return row
 
     def _put(self, ns, key, scope, data, revision):
@@ -127,48 +133,75 @@ class NativePCMemoScheduler:
         scope = self._scope(scope); request_id = _text(request_id, 128); _integer(expected_revision, 1)
         signature = digest([identity, expected_revision, request_id]); key = digest(['complete', scope, request_id])
         async with self._serial:
+            # The existing reminder worker owns cancellation through completion.
+            # Keep the memo CAS lock inside that worker, with no await between
+            # checking the definition, cancelling its occurrence and saving it.
+            return await self.reminders._run(self._complete_memo, scope, identity,
+                expected_revision, signature, key)
+
+    def _complete_memo(self, scope, identity, expected_revision, signature, key):
+        scope = self._scope(scope)
+        with self.journal._transaction() as db:
             previous = self._read(ACTIONS, key, scope)
             if previous:
                 if previous['data']['signature'] != signature: raise JournalConflict('completion request reused')
-                return self.notes.get(scope, identity)
+                result = self.notes._get(db, scope, identity)
+                self._scope(scope)
+                return result
+            row = self.notes._existing(db, scope, identity, expected_revision)
+            if row['archived']: raise JournalConflict('restore archived memo before completion')
             binding = self._read(NAMESPACE, identity, scope)
             if binding is None: raise PermissionError('bind existing memo execution before recurring completion')
-            await self._cancel_current(scope, binding['data'])
-            with self.journal._transaction() as db:
-                row = self.notes._existing(db, scope, identity, expected_revision)
-                if row['archived']: raise JournalConflict('restore archived memo before completion')
-                now = _time(self.clock(), zero=False); fields = row['fields']
-                if fields['repeat'] == 'none':
-                    if row['status'] != 'completed':
-                        row.update(status='completed', completed_at=now, last_completed_at=now, completion_count=row['completion_count'] + 1)
-                else:
-                    local = datetime.fromtimestamp(fields['due_at'], date_zone(self.timezone))
-                    legacy = row['legacy_state']
-                    next_due = advance_due(fields['due_at'], fields['repeat'], now=now, timezone=self.timezone,
-                        anchor_day=legacy.get('repeat_anchor_day') or local.day,
-                        anchor_month=legacy.get('repeat_anchor_month') or local.month)
-                    row['fields'] = dict(fields, due_at=next_due)
-                    row.update(status='active', completed_at=0., last_completed_at=now, completion_count=row['completion_count'] + 1)
-                    row['legacy_state'] = dict(legacy, repeat_anchor_day=legacy.get('repeat_anchor_day') or local.day,
-                        repeat_anchor_month=legacy.get('repeat_anchor_month') or local.month,
-                        last_reminder_offer_at=0., last_reminder_attempt_at=0.)
-                saved = self.notes._write(db, scope, row, expected_revision)
-                self.notes._capacity(db)
-                data = dict(schema=1, scope=scope, signature=signature, record_id=identity, revision=saved['revision'],expected_revision=expected_revision,
-                    action='complete', external_record_modified=False, delivery_confirmed=False)
-                db.execute('INSERT INTO checkpoints VALUES(?,?,?,?,?,?)', (ACTIONS, key, scope_key(scope), 1, now, canonical(data)))
-                self._scope(scope)
-                return saved
+            now = _time(self.clock(), zero=False); fields = row['fields']
+            if fields['repeat'] == 'none':
+                if row['status'] != 'completed':
+                    row.update(status='completed', completed_at=now, last_completed_at=now, completion_count=row['completion_count'] + 1)
+            else:
+                local = datetime.fromtimestamp(fields['due_at'], date_zone(self.timezone))
+                legacy = row['legacy_state']
+                next_due = advance_due(fields['due_at'], fields['repeat'], now=now, timezone=self.timezone,
+                    anchor_day=legacy.get('repeat_anchor_day') or local.day,
+                    anchor_month=legacy.get('repeat_anchor_month') or local.month)
+                row['fields'] = dict(fields, due_at=next_due)
+                row.update(status='active', completed_at=0., last_completed_at=now, completion_count=row['completion_count'] + 1)
+                row['legacy_state'] = dict(legacy, repeat_anchor_day=legacy.get('repeat_anchor_day') or local.day,
+                    repeat_anchor_month=legacy.get('repeat_anchor_month') or local.month,
+                    last_reminder_offer_at=0., last_reminder_attempt_at=0.)
+            self.notes._capacity(db)
+            data = binding['data']
+            occurrence = self._occurrence(scope, data); task = self._task(occurrence)
+            if data.get('phase') == 'unknown' or task and task['state'] in _UNKNOWN:
+                raise JournalConflict('previous delivery requires outcome reconciliation; no automatic resend or advance')
+            if occurrence and occurrence['status'] == 'active' and (not task or task['state'] not in _TERMINAL):
+                self.reminders._change(scope, occurrence['source_id'], expected_revision=occurrence['revision'], changes=None)
+            saved = self.notes._write(db, scope, row, expected_revision)
+            data = dict(schema=1, scope=scope, signature=signature, record_id=identity, revision=saved['revision'],expected_revision=expected_revision,
+                action='complete', external_record_modified=False, delivery_confirmed=False)
+            db.execute('INSERT INTO checkpoints VALUES(?,?,?,?,?,?)', (ACTIONS, key, scope_key(scope), 1, now, canonical(data)))
+            self._scope(scope)
+            return saved
 
     async def tick_memos(self, scope, *, limit=20):
         scope = self._scope(scope); _integer(limit, 1, 200)
         async with self._serial:
             records = self.notes.export(scope)['records']; output = []
+            cursor = self._read(MEMO_CURSOR, 'tick_memos', scope)
+            if cursor:
+                last = cursor['data']['last_memo_id']
+                # Export is bounded by MAX_NOTES (200) and sorted by memo ID.
+                # Resume after the last visited binding, including across reloads;
+                # waiting and inactive definitions must not starve later notes.
+                records = [note for note in records if note['id'] > last] + [note for note in records if note['id'] <= last]
             for note in records:
+                if len(output) >= limit: break
                 binding = self._read(NAMESPACE, note['id'], scope)
                 if binding is None: continue  # A definition is not a handoff or a consent.
-                if len(output) >= limit: break
                 output.append(await self._tick_note(scope, note, binding))
+            if output and (cursor is None or cursor['data']['last_memo_id'] != output[-1]['memo_id']):
+                # Save one scoped checkpoint per batch. A crash before this save
+                # replays the same immutable reminder identities through create_once.
+                self._put(MEMO_CURSOR, 'tick_memos', scope, dict(last_memo_id=output[-1]['memo_id']),
+                    cursor['revision'] if cursor else 0)
             return dict(records=output, total_bound=len(output), sends_performed_by_this_method=0)
 
     async def _tick_note(self, scope, note, binding):

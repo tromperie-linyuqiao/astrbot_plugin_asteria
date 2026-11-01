@@ -5,6 +5,7 @@
 window.ChatNight = (() => {
   const $n=id=>document.getElementById(id);
   let alive=true,noticeTimer=0,avatarOwner='',avatarLoaded=false,avatarLoadTask=null,avatarLoadOwner='',avatar=null,avatarSaving=false;
+  let noticeOwner='',noticeMessage='',noticeAction=null,noticeError=false,noticeSerial=0;
   let avatarPanelOwner='',avatarPanelScope='',avatarPanelEpoch=0,avatarLoading=false,avatarChoosing=false;
   let avatarSource=null,avatarSourceChanged=false,avatarImage=null,avatarImageSerial=0,bodyOwner='',bodyEpoch=0;
   const dialogs=[],openers=new WeakMap(),cleaning=new WeakSet(),canonicalClose=new WeakSet();
@@ -16,10 +17,24 @@ window.ChatNight = (() => {
 
   function installNotices(){
     const show=showNotice,hide=hideNotice;
-    hideNotice=function(){clearTimeout(noticeTimer);noticeTimer=0;return hide.apply(this,arguments);};
+    hideNotice=function(){
+      clearTimeout(noticeTimer);noticeTimer=0;noticeSerial++;noticeOwner='';noticeMessage='';noticeAction=null;noticeError=false;
+      const result=hide.apply(this,arguments);
+      if($n('notice-text'))$n('notice-text').textContent='';
+      if($n('notice-action'))$n('notice-action').textContent='';
+      return result;
+    };
     showNotice=function(message,action=null,error=false){
-      clearTimeout(noticeTimer);noticeTimer=0;const result=show.apply(this,arguments);
-      if(alive&&!error&&!action&&!/未知|待确认|待核对|失败|错误|无法/.test(String(message)))noticeTimer=setTimeout(()=>{if(alive)hideNotice();},Math.min(8000,3800+String(message).length*30));
+      const value=String(message),owner=scope();
+      const repeated=!$n('notice')?.hidden&&noticeOwner===owner&&noticeMessage===value&&noticeAction===action&&noticeError===error;
+      const result=show.apply(this,arguments);
+      // Repeated sync feedback must not keep extending one ordinary notice.
+      if(repeated&&noticeTimer)return result;
+      clearTimeout(noticeTimer);noticeTimer=0;const serial=++noticeSerial;
+      noticeOwner=owner;noticeMessage=value;noticeAction=action;noticeError=error;
+      if(alive&&!error&&!action&&!/未知|待确认|待核对|失败|错误|无法/.test(value))noticeTimer=setTimeout(()=>{
+        if(alive&&noticeSerial===serial&&noticeOwner===scope())hideNotice();
+      },Math.min(8000,3800+value.length*30));
       return result;
     };
   }
@@ -92,9 +107,11 @@ window.ChatNight = (() => {
     },true);
     window.addEventListener('storage',event=>{if(event.key===key())applyTheme();});applyTheme();
   }
-  function applyUserAvatar(){
+  function applyUserAvatar(rows){
     const image=avatar&&avatar.data_url;
-    for(const node of document.querySelectorAll('.message-row.user .message-avatar,#account-avatar')){
+    const nodes=rows?rows.filter(row=>row.classList.contains('user')).map(row=>row.querySelector('.message-avatar')).filter(Boolean):document.querySelectorAll('.message-row.user .message-avatar,#account-avatar');
+    for(const node of nodes){
+      if(node.userAvatarImage===image&&node.childNodes.length)continue;node.userAvatarImage=image;
       node.replaceChildren();if(image){const picture=document.createElement('img');picture.src=image;picture.alt='我的头像';node.append(picture);}else node.textContent='你';
     }
   }
@@ -122,6 +139,7 @@ window.ChatNight = (() => {
     if($n('body-state-status'))$n('body-state-status').textContent='';
   }
   function scopeChanged(){
+    if(noticeOwner&&noticeOwner!==scope())hideNotice();
     if(avatarPanelOwner&&(avatarPanelOwner!==account()||avatarPanelScope!==scope()))closeAvatar();
     if(bodyOwner&&(!account()||bodyOwner!==scope()))closeBody();
   }
@@ -226,12 +244,13 @@ window.ChatNight = (() => {
     }catch(error){if(current())$n('body-state-status').textContent=errorText(error);}
   }
   function openBody(){if(!account()){openSettings();return;}if(!state.activeId){showNotice('先连接当前对话再查看身体状态。');return;}hideMoreMenu();$n('body-state-dialog').showModal();readBody();}
-  function decorateRoleAvatars(){
-    for(const node of document.querySelectorAll('.message-row.assistant .message-avatar,.header-avatar')){
+  function decorateRoleAvatars(rows){
+    const nodes=rows?rows.filter(row=>row.classList.contains('assistant')).map(row=>row.querySelector('.message-avatar')).filter(Boolean):document.querySelectorAll('.message-row.assistant .message-avatar,.header-avatar');
+    for(const node of nodes){
       node.removeAttribute('aria-hidden');node.setAttribute('role','button');node.tabIndex=0;node.setAttribute('aria-label','查看伙伴身体状态');node.onclick=openBody;
       node.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openBody();}};
     }
-    applyUserAvatar();
+    applyUserAvatar(rows);
   }
   function installPanels(){
     const heading=document.querySelector('.chat-heading'),portrait=document.querySelector('.header-avatar');
@@ -247,7 +266,7 @@ window.ChatNight = (() => {
     for(const key of ['x','y','zoom'])$n('user-avatar-'+key).oninput=paintAvatar;
     $n('more-menu').prepend(button('我的头像',openUserAvatar,'menu-item'),button('伙伴身体状态',openBody,'menu-item'));
     const accountAvatar=button('你',openUserAvatar,'account-avatar');accountAvatar.id='account-avatar';accountAvatar.setAttribute('aria-label','我的头像设置');document.querySelector('.sidebar-footer').prepend(accountAvatar);
-    const originalRender=renderMessages;renderMessages=function(){const value=originalRender.apply(this,arguments);decorateRoleAvatars();return value;};
+    const originalRender=renderMessages;renderMessages=function(){const value=originalRender.apply(this,arguments);decorateRoleAvatars(value?.rows);return value;};
     const originalChrome=renderChrome;renderChrome=function(){const value=originalChrome.apply(this,arguments);readUserAvatar();return value;};
     const send=apiClient.send;apiClient.send=async function(){const owner=scope();const result=await send.apply(this,arguments);if(!owner||owner!==scope())return result;if($n('body-state-dialog').open)readBody();
       for(const frame of typeof result==='string'?result.split('\n\n'):[]){const line=frame.split('\n').find(v=>v.startsWith('data: '));if(!line)continue;let event;try{event=JSON.parse(line.slice(6));}catch(_){continue;}if(event.type==='tls_action_result'&&event.data)showNotice(event.data.applied?'互动已由TLS身体系统处理。':'动作已交给角色回应；没有匹配的身体事件。');}

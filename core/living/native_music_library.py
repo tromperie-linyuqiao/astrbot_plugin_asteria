@@ -211,6 +211,41 @@ class NativeMusicLibrary:
         self._scope(scope)
         return row
 
+    def scopes(self, limit=100):
+        """Administrator catalog of stored identities, never runtime authority.
+
+        Only the authenticated management route uses this directory. It reads
+        actual checkpoint scopes without calling or replacing the runtime
+        authorization callback, and exposes no song text or provenance.
+        ``active`` means unarchived metadata, including disabled entries.
+        """
+        _integer(limit, 1, 100)
+        if not self.active:
+            raise RuntimeError('native music metadata stopped')
+        found = {}
+        with self.journal._lock:
+            self.journal._ensure_open()
+            rows = self.journal._db.execute('''SELECT scope,key,revision,updated,data
+                FROM checkpoints WHERE namespace=? AND scope IN (
+                    SELECT scope FROM checkpoints WHERE namespace=?
+                    GROUP BY scope ORDER BY scope LIMIT ?)
+                ORDER BY scope,key LIMIT ?''',
+                (NAMESPACE, NAMESPACE, limit, (MAX_SONGS + 1) * limit))
+            for raw in rows:
+                data = json.loads(raw['data'])
+                scope = private_scope(data.get('scope'))
+                if scope_key(scope) != raw['scope']:
+                    raise RuntimeError('invalid stored music scope')
+                record = self._decode(raw, scope)
+                counts = found.setdefault(raw['scope'], dict(scope=scope, total=0, active=0, archived=0))
+                counts['total'] += 1
+                counts['archived' if record['archived'] else 'active'] += 1
+                if counts['total'] > MAX_SONGS:
+                    raise RuntimeError('music scope capacity exceeded')
+            if not self.active:
+                raise RuntimeError('native music metadata stopped')
+        return list(found.values())
+
     def search(self, scope, *, query='', artist='', genre='', language='', include_archived=False, limit=20, offset=0):
         scope = self._scope(scope)
         if type(include_archived) is not bool:

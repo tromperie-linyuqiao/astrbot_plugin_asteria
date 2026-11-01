@@ -56,7 +56,7 @@ def linked_source_scope(plugin, scope, *, permission='delivery'):
     from .chat_identity import identity_service
     try:
         scope=private_scope(scope)
-        if permission not in {'delivery','perception'} or scope['platform']!=scope['bot_id'] or scope['platform']!='webchat':return None
+        if permission not in {'delivery','perception','materials'} or scope['platform']!=scope['bot_id'] or scope['platform']!='webchat':return None
         host=plugin._presence.living_host
         if host.authorized_scope(scope) is not True:return None
         origin=scope['session_id'].split(':',2)[-1];prefix='webchat!'+scope['user_id']+'!'
@@ -67,6 +67,12 @@ def linked_source_scope(plugin, scope, *, permission='delivery'):
         settings=ChatWorkspace(links).settings(scope['user_id'],session)['values']
         if permission=='delivery' and settings['proactive_destination'] not in {'chat_text','chat_all'}:return None
         if permission=='perception' and settings['linked_perception'] is not True:return None
+        if permission=='materials':
+            sessions=plugin._cfg('living_memory_sessions',[])
+            if (settings['shared_memory'] is not True or not row.get('qq_persona')
+                    or plugin._cfg('living_memory_backend','legacy')!='native'
+                    or not isinstance(sessions,list) or any(not isinstance(value,str) for value in sessions)
+                    or sessions and row['qq_scope']['session_id'] not in sessions):return None
         source=private_scope(row['qq_scope'])
         if links.get(scope['user_id'],session)!=row or not links.current() or host.authorized_scope(scope) is not True:return None
         return source

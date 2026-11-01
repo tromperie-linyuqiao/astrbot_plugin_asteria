@@ -13,7 +13,7 @@ from .memory_web_api import SCOPE_FIELDS, _InvalidRequest, _integer, _scope, _te
 
 PREFIX = '/astrbot_plugin_virtual_body/page/music-library'
 MAX_BODY_BYTES = 80 * 1024
-READS = frozenset(('list', 'detail', 'export', 'match'))
+READS = frozenset(('scopes', 'list', 'detail', 'export', 'match'))
 
 
 class _Unavailable(RuntimeError):
@@ -25,7 +25,7 @@ class NativeMusicLibraryWebApi:
         self.plugin = plugin
 
     def register_routes(self):
-        for name in ('list', 'detail', 'export', 'match', 'create', 'update', 'archive', 'restore', 'preview_import', 'confirm_import'):
+        for name in ('scopes', 'list', 'detail', 'export', 'match', 'create', 'update', 'archive', 'restore', 'preview_import', 'confirm_import'):
             path = {'preview_import': 'import/preview', 'confirm_import': 'import/confirm'}.get(name, name)
             self.plugin.context.register_web_api(PREFIX + '/' + path, getattr(self, name),
                 ['GET' if name in READS else 'POST'], 'TLS authenticated administrator music metadata ' + name)
@@ -63,6 +63,10 @@ class NativeMusicLibraryWebApi:
             raise _InvalidRequest('请求必须为 JSON 对象或合法查询')
         if len(json.dumps(data, ensure_ascii=False, allow_nan=False).encode('utf-8')) > MAX_BODY_BYTES:
             raise _InvalidRequest('音乐资料请求过大，请拆分迁移批次')
+        if name == 'scopes':
+            if set(data) - {'limit'}:
+                raise _InvalidRequest('音乐资料来源目录只接受 limit')
+            return None, (), {'limit': _integer(data.get('limit', 100), 'limit', 1, 100)}
         if name in READS:
             extra = {'q', 'artist', 'genre', 'language', 'include_archived', 'limit', 'offset'} if name == 'list' else {'id'} if name == 'detail' else {'title', 'artist'} if name == 'match' else set()
             if set(data) - set(SCOPE_FIELDS) - extra:
@@ -128,6 +132,18 @@ class NativeMusicLibraryWebApi:
                 data = await request.json(default=None)
             scope, args, kwargs = self._operation(name, data)
             self._same_resources(resources)
+            if name == 'scopes':
+                def directory():
+                    self._same_resources(resources)
+                    result = resources[3].scopes(**kwargs)
+                    self._same_resources(resources)
+                    return result
+                sources = await asyncio.to_thread(directory)
+                self._same_resources(resources)
+                return json_response(dict(ok=True, backend='tls_native_music_library',
+                    access='authenticated_administrator', sources=sources,
+                    metadata_only=True, creates_playback_evidence=False, creates_send_permission=False),
+                    headers={'Cache-Control': 'no-store'})
             service = self._admin_service(resources, scope)
             def operate():
                 self._same_resources(resources)
@@ -181,6 +197,7 @@ class NativeMusicLibraryWebApi:
             if service is not None:
                 service.stop()
 
+    async def scopes(self): return await self._respond('scopes')
     async def list(self): return await self._respond('list')
     async def detail(self): return await self._respond('detail')
     async def export(self): return await self._respond('export')

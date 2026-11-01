@@ -14,6 +14,11 @@
 .expression-filters button { flex: none; }
 .expression-filters button { padding: 5px 10px; border-radius: 20px; font-size: 11px; color: var(--text-soft); }
 .expression-filters .selected { color: var(--accent); background: var(--accent-soft); }
+.expression-tag-rail{display:flex;gap:6px;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;margin:7px 0 0;padding:2px 0 5px}
+.expression-tag{flex:none;max-width:150px;min-height:32px;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--text-soft);border:1px solid var(--line);border-radius:8px}
+.expression-tag[aria-pressed=true]{color:var(--accent);background:var(--accent-soft);border-color:var(--accent)}
+.expression-discovery-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;font-size:10px;color:var(--muted)}
+.expression-discovery-meta .text-button{font-size:10px;min-height:28px;text-align:end}
 .compose-status { color: var(--muted); line-height: 1.65; font-size: 10px; margin: 8px 2px; }
 .shared-expression-grid { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 8px; }
 .shared-expression { min-width: 0; }

@@ -317,14 +317,21 @@ class NativePCService(_Business):
         self._tls_journal.put(VIRTUAL_EVENTS, identity, scope, data, expected_revision=0,
             authorize=lambda: self._tls_allowed('plan', scope))
 
+    def _autonomous_life_owned(self):
+        from .native_pc_business.native_runtime_bindings import integrations_for
+        integrations = integrations_for(self)
+        host = integrations._host() if integrations is not None else None
+        life = getattr(getattr(host, 'runtime', None), 'life_coordinator', None)
+        return bool(life and self._tls_primary_scope and life.owns_generation(self._tls_primary_scope))
+
     async def _ensure_daily_diary(self, force=False):
-        if self._native_daily_plan_view() is None: return None
+        if self._autonomous_life_owned() or self._native_daily_plan_view() is None: return None
         result = await super()._ensure_daily_diary(force=force)
         if isinstance(result, dict): self._record_virtual_artifact('diary', result)
         return result
 
     async def _ensure_daily_outfit_photo(self, diary=None, *, force=False):
-        if self._native_daily_plan_view() is None: return None
+        if self._autonomous_life_owned() or self._native_daily_plan_view() is None: return None
         old = canonical(self.data.get('daily_outfit_photo') or {})
         result = await super()._ensure_daily_outfit_photo(diary, force=force)
         if isinstance(result, dict) and canonical(result) != old:
@@ -506,6 +513,8 @@ class NativePCService(_Business):
                     '_ensure_daily_outfit_photo', '_maybe_advance_creative_projects',
                     '_maybe_refresh_balance_awareness', '_refresh_passive_injection_cache'):
                     if not self._tls_allowed('tick'): break
+                    if self._autonomous_life_owned() and name in {'_ensure_detail_enhancement', '_ensure_daily_diary', '_ensure_daily_outfit_photo'}:
+                        results[name] = 'owned_by_continuous_life'; continue
                     method = getattr(self, name, None)
                     if not callable(method): continue
                     if name in {'_ensure_detail_enhancement', '_ensure_daily_diary', '_ensure_daily_outfit_photo'} and self._native_daily_plan_view() is None:

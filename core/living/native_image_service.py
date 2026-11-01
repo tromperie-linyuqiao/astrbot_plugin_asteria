@@ -249,12 +249,13 @@ class NativeImageService:
         return dict(ok=state == 'ready', state=state, reason=reason, path=path,
                     image_sha256=image_sha256, fresh=fresh, prepared_replay=prepared_replay, task_ref=ref)
 
-    def _payload(self, topic, explicit_sexual):
+    def _payload(self, topic, explicit_sexual, scene_description=''):
         appearance = self._appearance
         clothing = self._clothing or 'A complete opaque everyday shirt and trousers.'
         if not explicit_sexual:
             appearance = _BARE.sub('', appearance); clothing = _BARE.sub('', clothing)
-        prompt = ' '.join((_COMPOSITION, appearance, _SCENES[topic], clothing,
+        scene = _SCENES[topic] + (' Scene requested for this image: ' + scene_description if scene_description else '')
+        prompt = ' '.join((_COMPOSITION, appearance, scene, clothing,
                            '' if explicit_sexual else _CLOTHED))
         return dict(model=self.config.model, prompt=prompt, size=self.config.size, n=1,
                     negative_prompt=_NEGATIVE + ('' if explicit_sexual else ', ' + _BARE_NEGATIVE))
@@ -311,18 +312,29 @@ class NativeImageService:
         except Exception: raise ValueError('invalid_image') from None
         return content, {'PNG': '.png', 'JPEG': '.jpg', 'WEBP': '.webp'}[fmt]
 
-    async def generate(self, scope, task_id, topic, *, explicit_sexual=False):
+    async def generate(self, scope, task_id, topic, *, explicit_sexual=False, scene_description='', request_authorize=None):
         ref = ''
         try:
             scope = private_scope(scope)
             if (not isinstance(task_id, str) or not _TASK.fullmatch(task_id)
-                    or not isinstance(topic, str) or topic not in _SCENES or type(explicit_sexual) is not bool):
+                    or not isinstance(topic, str) or topic not in _SCENES or type(explicit_sexual) is not bool
+                    or not isinstance(scene_description, str) or len(scene_description)>1200
+                    or any(ord(c)<32 and c not in '\n\t' for c in scene_description)):
                 raise ValueError
             ref = _digest([scope_key(scope), task_id])
         except (ValueError, TypeError, KeyError):
             return self._result(ref, 'definite_failure', 'invalid_input')
-        if not self._allowed(scope): return self._result(ref, 'denied', 'scope_not_authorized')
-        payload = self._payload(topic, explicit_sexual)
+        def allowed():
+            if request_authorize is None:
+                return self._allowed(scope)
+            # Only trusted server callers can supply this per-request callback.
+            # It replaces no stored/global policy and must stay true for this
+            # exact scope/task throughout the single paid operation.
+            if self._closed or not callable(request_authorize):return False
+            try:return request_authorize(scope, task_id) is True
+            except Exception:return False
+        if not allowed(): return self._result(ref, 'denied', 'scope_not_authorized')
+        payload = self._payload(topic, explicit_sexual, scene_description.strip())
         fingerprint = _digest([self.config.endpoint, payload, explicit_sexual])
         with self._lock:
             row = self._db.execute('SELECT * FROM image_tasks WHERE task_ref=?', (ref,)).fetchone()
@@ -359,7 +371,7 @@ class NativeImageService:
             if response.status != 200: raise ValueError('provider_outcome_unknown')
             generation_accepted = True
             content, suffix = await self._image_bytes(response)
-            if not self._allowed(scope):
+            if not allowed():
                 self._finish(ref, 'unknown', 'authorization_changed')
                 return self._result(ref, 'unknown', 'authorization_changed')
             digest = _digest(content)

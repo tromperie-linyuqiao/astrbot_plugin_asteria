@@ -6,7 +6,7 @@ window.ChatNotificationPreferences=(()=>{
   function call(method,value){const bridge=window.AsteriaChat;if(typeof bridge?.[method]!=='function')return null;const result=value===undefined?bridge[method]():bridge[method](JSON.stringify(value));return typeof result==='string'?JSON.parse(result):result;}
   function render(){
     const root=get();if(!root)return;root.replaceChildren();
-    root.append(node('h3','通知偏好'));
+    root.append(node('h3','此手机的通知偏好'));
     let saved;
     try{saved=call('getNotificationPreferences');if(saved?.ok!==true)throw Error('当前版本无法读取通知偏好。');}
     catch(error){root.append(node('p',error.message||'当前版本无法读取通知偏好。'));return;}
@@ -22,7 +22,7 @@ window.ChatNotificationPreferences=(()=>{
     for(const [value,label]of [['message','打开并定位这条消息'],['conversation','打开对应会话']]){const option=node('option',label);option.value=value;target.append(option);}
     target.value=saved.click_target;targetRow.append(node('span','点击通知后'),target);root.append(targetRow);fields.click_target=target;
     root.append(node('p','免打扰按手机本地时间生效，跨午夜可用；开始与结束相同表示全天。被关闭或免打扰拦下的通知不会在之后补弹。'));
-    root.append(node('p','保存偏好不会申请系统权限或启动后台检查。关闭消息通知会停止现有回复检查；再次开启后，需要手动开启检查。'));
+    root.append(node('p','这些偏好共同用于本机所有 Bot。保存不会申请系统权限或启动后台检查。关闭消息通知会停止所有后台收件；只想停一个 Bot，请使用“各 Bot 后台收件”中的停止按钮。再次开启后，需要分别手动开启收件。'));
     const status=node('p');status.setAttribute('role','status');const save=node('button','保存通知偏好');save.type='button';root.append(save,status);
     const sync=()=>{for(const [key,field]of Object.entries(fields)){if(key==='enabled')continue;field.disabled=!fields.enabled.checked||(['quiet_start','quiet_end'].includes(key)&&!fields.quiet_enabled.checked);}};
     fields.enabled.addEventListener('change',sync);fields.quiet_enabled.addEventListener('change',sync);sync();

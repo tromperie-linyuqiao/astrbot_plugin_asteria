@@ -316,16 +316,17 @@ def search_related_memory(memory, scope, query, *, include_roleplay=False, curre
         store._check_open()
         _require_current(current)
         kinds = ('user_reported', 'real_observation') + (('roleplay_event',) if include_roleplay else ())
-        rows = store.search(scope, query, limit=32, evidence_kinds=kinds)
         profiles = memory.profile_candidates
+        dimensions=frozenset()
         if profiles is not None:
             if profiles.store is not store or profiles.active is not True:
                 raise PermissionError('native profile source changed')
             dimensions = profiles.active_single_dimensions(scope)
-            rows = [row for row in rows if not (row.get('memory_type') in
-                {'user_profile', 'user_preference', 'user_habit'}
-                and row.get('source_id') != 'tls.chat.profile_candidates'
-                and (row.get('metadata') or {}).get('profile_dimension') in dimensions)]
+        now=memory.clock()
+        rows = store.search(scope, query, limit=32, evidence_kinds=kinds,
+            accept=lambda row:memory.accepts_candidate(row,scope,now,include_roleplay=include_roleplay,
+                shadowed_dimensions=dimensions))
+        if profiles is not None:
             rows = profiles.search(scope, query, limit=16) + rows
         result, seen = [], set()
         for row in sorted(rows, key=lambda item: item.get('score', 0), reverse=True):

@@ -48,6 +48,8 @@ window.ChatExperience = (() => {
   }
   function scopeChanged(){
     const valid=state.authenticated&&state.activeId;
+    window.ChatLife?.scopeChanged?.();
+    for(const [id,entry]of live)if(!valid||entry.owner!==key()){cancelStreamPaint(entry);live.delete(id);}
     if(panelScope&&(!valid||panelScope!==key()))close();
     if(bookmarkScope&&(!valid||bookmarkScope!==key())){bookmarkScope='';bookmarkRows=[];closeBookmarkReading();}
   }
@@ -308,9 +310,11 @@ window.ChatExperience = (() => {
   function markVisibleRead() {
     if(!state.authenticated||!state.activeId||readRestorePending===key()||document.hidden||nativeConfig().foreground===false)return;
     const area=$('messages').getBoundingClientRect();let last=null;
-    for(const row of $('messages').querySelectorAll('.message-row')){
-      const box=row.getBoundingClientRect();if(box.bottom<=area.top||box.top>=area.bottom||box.bottom>area.bottom+4)continue;
-      const message=state.messages.find(value=>String(value.id)===row.dataset.messageKey);
+    const rows=[...$('messages').querySelectorAll('.message-row')];let low=0,high=rows.length;
+    while(low<high){const middle=(low+high)>>>1;if(rows[middle].getBoundingClientRect().bottom<=area.top)low=middle+1;else high=middle;}
+    for(let index=low;index<rows.length;index++){
+      const row=rows[index],box=row.getBoundingClientRect();if(box.top>=area.bottom)break;if(box.bottom>area.bottom+4)continue;
+      const message=row.messageRecord||state.messages.find(value=>String(value.id)===row.dataset.messageKey);
       if(message&&message.delivery==='confirmed'&&message.serverId!=null)last=message;
     }
     const cursor=readCursor();
@@ -345,10 +349,10 @@ window.ChatExperience = (() => {
     }
     finally{state.attaching=false;renderAttachments();if(window.ChatComposer)window.ChatComposer.renderPreview();renderChrome();}
   }
-  function decorateMessages() {
-    for(const row of $('messages').querySelectorAll('.message-row')){
+  function decorateMessages(rows = $('messages').querySelectorAll('.message-row')) {
+    for(const row of rows){
       const existingTools=row.querySelector('.message-tools');if(existingTools)existingTools.remove();
-      const message=state.messages.find(value=>String(value.id)===row.dataset.messageKey);
+      const message=row.messageRecord||state.messages.find(value=>String(value.id)===row.dataset.messageKey);
       if(!message||message.delivery!=='confirmed'||message.serverId==null)continue;
       const bar=document.createElement('div');bar.className='message-tools';
       const actions=document.createElement('div');actions.className='message-action-menu';actions.hidden=true;actions.setAttribute('role','group');actions.setAttribute('aria-label','这条消息的操作');
@@ -365,6 +369,7 @@ window.ChatExperience = (() => {
       if(!historyOnly&&message.role==='assistant')actions.append(action('让伙伴再答一次',()=>regenerate(message)));
       const saved=bookmarkScope===key()&&bookmarkRows.some(value=>String(value.message_id)===String(message.serverId));
       const star=action(saved?'★ 取消收藏':'☆ 收藏到重要消息',()=>toggleBookmark(message.serverId,!saved));star.setAttribute('aria-label',saved?'取消收藏这条消息':'收藏这条消息');actions.append(star);
+      if(message.role==='assistant'&&window.ChatVoice)actions.append(action('朗读这条消息',()=>window.ChatVoice.speak(message)));
       if(window.ChatMessageMemory)actions.append(action('查看或保存相关记忆',()=>window.ChatMessageMemory.open(message)));
       if(saved){toggle.textContent='★ ···';toggle.setAttribute('aria-label','已收藏，打开这条消息的操作');}
       bar.append(toggle,actions);
@@ -377,28 +382,53 @@ window.ChatExperience = (() => {
     for(const menu of document.querySelectorAll('.message-action-menu'))menu.hidden=true;
     for(const toggle of document.querySelectorAll('.message-tools-toggle'))toggle.setAttribute('aria-expanded','false');
   }
+  function cancelStreamPaint(entry) {
+    if(entry.timer!=null)clearTimeout(entry.timer);
+    if(entry.frame!=null)cancelAnimationFrame(entry.frame);
+    entry.timer=entry.frame=null;entry.queued=false;
+  }
+  function paintStream(entry,id) {
+    if(entry.owner!==key()||!currentStream(id))return;
+    let parsed;try{parsed=parseStream(entry.raw);}catch(_){return;}
+    if(parsed.sessionId && parsed.sessionId!==state.activeId)return;
+    const phase=parsed.phase||(parsed.parts.length?'streaming':state.replyPhase),phaseChanged=state.replyPhase!==phase;
+    state.replyPhase=phase;
+    if(!parsed.parts.length){if(phaseChanged)renderChrome();return;}
+    if(!entry.message && parsed.runId)entry.message=state.messages.find(row=>row.role==='assistant'
+      && (row.runId===parsed.runId || parsed.checkpoint && row.checkpoint===parsed.checkpoint)
+      && row.delivery==='unconfirmed');
+    if(!entry.message){entry.message={id:parsed.runId?'run-'+parsed.runId:'stream-'+id,role:'assistant',delivery:'unconfirmed',created_at:new Date().toISOString()};state.messages.push(entry.message);}
+    if(parsed.checkpoint)entry.message.checkpoint=parsed.checkpoint;
+    if(parsed.runId){entry.message.runId=parsed.runId;entry.resumed=true;}
+    entry.message.parts=parsed.parts;entry.message.text=parsed.text;
+    if(phaseChanged)renderChrome();
+    renderMessages({streamMessage:entry.message});
+  }
+  function currentStream(id) {
+    const pending=state.requests.get(id);
+    return pending && !pending.expired && (pending.authEpoch===undefined || pending.authEpoch===chatAuthEpoch)
+      && (typeof pending.accept!=='function' || pending.accept());
+  }
   function receiveStream(value) {
-    if(!value||typeof value.id!=='string'||typeof value.chunk!=='string'||!state.requests.has(value.id))return;
+    if(!value||typeof value.id!=='string'||typeof value.chunk!=='string'||!currentStream(value.id))return;
     let entry=live.get(value.id);
-    if(!entry){entry={owner:key(),raw:'',queued:false,message:null};live.set(value.id,entry);}
+    if(!entry){entry={owner:key(),raw:'',queued:false,message:null,timer:null,frame:null,lastPaint:0};live.set(value.id,entry);}
     if(entry.owner!==key())return;
     entry.raw+=value.chunk;
     if(entry.queued)return;entry.queued=true;
-    requestAnimationFrame(()=>{
-      entry.queued=false;if(entry.owner!==key()||!state.requests.has(value.id))return;
-      let parsed;try{parsed=parseStream(entry.raw);}catch(_){return;}
-      if(parsed.phase)state.replyPhase=parsed.phase;
-      else if(parsed.parts.length)state.replyPhase='streaming';
-      renderChrome();
-      if(!parsed.parts.length)return;
-      if(!entry.message){entry.message={id:'stream-'+value.id,role:'assistant',delivery:'unconfirmed',created_at:new Date().toISOString()};state.messages.push(entry.message);}
-      entry.message.parts=parsed.parts;entry.message.text=parsed.text;renderMessages();
-    });
+    // First content paints promptly; subsequent chunks share one bounded batch.
+    // This changes rendering only: the existing bridge still owns every byte.
+    const schedule=()=>{entry.timer=null;entry.frame=requestAnimationFrame(()=>{
+      entry.frame=null;entry.queued=false;entry.lastPaint=Date.now();paintStream(entry,value.id);
+    });};
+    const delay=entry.message?Math.max(0,50-(Date.now()-entry.lastPaint)):0;
+    if(delay)entry.timer=setTimeout(schedule,delay);else schedule();
   }
   function endStream(id,failed=false) {
-    const entry=live.get(id);if(!entry)return;live.delete(id);
+    const entry=live.get(id);if(!entry)return;cancelStreamPaint(entry);live.delete(id);
+    if(failed)paintStream(entry,id); // Keep the last complete frame before an error.
     if(entry.owner!==key()||!entry.message)return;
-    if(!failed)state.messages=state.messages.filter(value=>value!==entry.message);
+    if(!failed && !entry.resumed)state.messages=state.messages.filter(value=>value!==entry.message);
     else entry.message.delivery='unconfirmed';
   }
   const originalReceive=receive;
@@ -406,7 +436,8 @@ window.ChatExperience = (() => {
   // The native bridge calls this exported function rather than the old frozen
   // function reference. It keeps the original request and authentication logic.
   const originalRender=renderMessages;
-  renderMessages=function(options){const result=originalRender(options);decorateMessages();decorateUnread();queueRead();return result;};
+  renderMessages=function(options){const result=originalRender(options);decorateMessages(result?.rows);
+    if(!result?.streamOnly){decorateUnread();queueRead();}return result;};
   const originalChrome=renderChrome;
   renderChrome=function(){
     originalChrome();
@@ -469,7 +500,7 @@ window.ChatExperience = (() => {
     const menu=$('more-menu');menu.prepend(button('重要消息',()=>open('bookmarks')),button('角色与剧情',()=>open('context')),button('表达偏好',()=>open('expression')),button('搜索服务器历史',()=>open('search')));
     menu.prepend(button('查找当前文字',()=>{hideMoreMenu();openMessageSearch();},'menu-item'));
     $('touch-button').onclick=()=>window.ChatComposer.showActions();
-    $('voice-button').onclick=recordVoice;
+    $('voice-button').onclick=()=>window.ChatVoice?window.ChatVoice.recognize():recordVoice();
     const tabs=document.createElement('div');tabs.className='session-views';
     for(const [value,label]of [['active','正在聊'],['archived','已归档']]){const tab=button(label,()=>{state.sessionView=value;for(const child of tabs.children)child.classList.toggle('selected',child===tab);renderSessions();});if(value==='active')tab.classList.add('selected');tabs.append(tab);}
     $('conversation-list').before(tabs);

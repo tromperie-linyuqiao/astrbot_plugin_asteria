@@ -467,7 +467,7 @@
     "description": "工作台个性布局（由页面管理）",
     "type": "string",
     "default": "{}",
-    "hint": "仅保存各管理员分区、排序和主题，不改变任何业务执行权。请在德克萨斯工作台整理布局。"
+    "hint": "仅保存各管理员分区、排序和主题，不改变任何业务执行权。请在星栖 Asteria 工作台整理布局。"
   },
   "living_app_rules": {
     "description": "App互动规则（由应用与话语管理）",
@@ -13803,5 +13803,44 @@
     "description": "摘要窗口去重",
     "type": "bool",
     "default": true
+  },
+  "voice_cloud": {
+    "description": "声音与语音 · 云端合成",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用云端朗读（仅用户主动点击）",
+        "type": "bool",
+        "default": false
+      },
+      "label": {
+        "description": "服务显示名称",
+        "type": "string",
+        "default": "云端语音服务"
+      },
+      "base_url": {
+        "description": "Fish 兼容 HTTPS 地址",
+        "type": "string",
+        "default": "",
+        "hint": "填写自己的 Fish 兼容 HTTPS /v1 地址；仅在明确启用后使用。"
+      },
+      "api_key": {
+        "description": "语音组专用 API Key（仅保存在服务端）",
+        "type": "string",
+        "default": "",
+        "hint": "与聊天、重排序分开配置，不写入客户端。"
+      },
+      "model": {
+        "description": "默认 TTS 模型",
+        "type": "string",
+        "default": ""
+      },
+      "models": {
+        "description": "允许选择的 TTS 模型",
+        "type": "list",
+        "default": [],
+        "hint": "填写当前语音 Key 实际可用的模型 ID；不自动切换分组或重试。"
+      }
+    }
   }
 }

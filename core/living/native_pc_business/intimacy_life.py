@@ -21,7 +21,7 @@ from astrbot.api import logger
 
 from .helpers import _now_ts, _safe_float, _safe_int, _single_line
 
-# ---------- 种子语料（德克萨斯声线：短句、动作先于语言、不解释） ----------
+# ---------- 种子语料（角色声线：短句、动作先于语言、不解释） ----------
 # tier: familiar=轻熟 / ambiguous=暧昧 / deep=深爱 / passionate=缠绵
 
 SEED_CORPUS = [

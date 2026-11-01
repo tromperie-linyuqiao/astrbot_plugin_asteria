@@ -33,6 +33,9 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -42,7 +45,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-/** Explicit foreground-service polling while the app is hidden. This is not push. */
+/** Explicit bounded foreground-service polling per account. This is not push. */
 public final class ReplyWatchService extends Service {
     private static final String START = "com.asteria.chat.REPLY_WATCH_START";
     private static final String STOP = "com.asteria.chat.REPLY_WATCH_STOP";
@@ -53,32 +56,37 @@ public final class ReplyWatchService extends Service {
     private static final String SHORTCUT_PREFIX = "asteria-chat.reply.";
     private static final String NOTICE_PREFIX = "asteria-chat.message.";
     private static final long POLL_MS = 30000;
-    private static final Object NETWORK_GATE = new Object();
     private static final Object ADMISSION = new Object();
     private static long admissionEpoch;
-    private static long lastNetworkStarted = -POLL_MS;
+    private static boolean startPending;
+    private static final int MAX_WATCHES = 6;
+    private static volatile String visibleAccount = "";
     private static volatile ReplyWatchService current;
     private static volatile boolean appForeground;
-    private static final String EMPTY_STATUS = "{\"state\":\"stopped\",\"running\":false,\"verified_session\":false,\"server_push\":false,\"transport\":\"foreground_service_polling\"}";
+    private static final String EMPTY_STATUS = "{\"state\":\"stopped\",\"running\":false,\"active\":false,\"accounts\":[],\"verified_session\":false,\"server_push\":false,\"transport\":\"foreground_service_polling\"}";
     private static volatile String latest = EMPTY_STATUS;
     private static volatile Observer observer;
 
     interface Observer { void changed(String state); }
 
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+    private final ScheduledExecutorService executor = Executors.newScheduledThreadPool(2, runnable -> {
         Thread thread = new Thread(runnable, "asteria-chat-reply-watch");
         thread.setDaemon(true);
         return thread;
     });
-    private volatile Watch watch;
+    private final Map<String, Watch> watches = new ConcurrentHashMap<>();
     private volatile boolean running;
-    private volatile HttpsURLConnection connection;
-    private ScheduledFuture<?> pending;
     private SharedPreferences metadata;
 
     private static final class Watch {
         final String server, token, session, title, scope, baseline;
+        ReplyWatchAccounts.Record registration;
+        final AtomicBoolean polling = new AtomicBoolean();
+        volatile HttpsURLConnection connection;
+        volatile ScheduledFuture<?> pending;
+        volatile long lastNetworkStarted = -POLL_MS, nextPollAt;
+        volatile String state = "starting", reason = "";
         volatile boolean initialized, verified, receiptsSupported, syncSupported, syncBlocked;
         volatile String receiptState = "not_reported";
         volatile String cursor = "";
@@ -91,6 +99,10 @@ public final class ReplyWatchService extends Service {
             this.server = server; this.token = token; this.session = session;
             this.title = text(title, BuildConfig.APP_NAME, 40); this.baseline = baseline == null ? "" : baseline;
             scope = scope(server, token, session);
+        }
+        Watch(ReplyWatchAccounts.Record record) {
+            this(record.server, record.token, record.session, record.title, record.baseline);
+            registration = record;
         }
     }
 
@@ -105,24 +117,62 @@ public final class ReplyWatchService extends Service {
 
     static String snapshot() { return latest; }
     static String snapshot(Context context) {
-        // A fresh process must not present a stale persisted running state.
-        // The last reason is diagnostic only, bound to the current vault login.
-        try {
-            SharedPreferences saved = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
-            TokenVault vault = new TokenVault(context);
-            String server = vault.server(), token = vault.load(server), session = saved.getString("registered_session", "");
-            if (!ApiPolicy.jwt(token)) return EMPTY_STATUS;
-            ReplyWatchService active = current;
-            Watch selected = active == null ? null : active.watch;
-            if (selected != null && selected.server.equals(server) && selected.token.equals(token)) return latest;
-            if (!authScope(server, token, session).equals(saved.getString("last_stop_auth_scope", ""))) return EMPTY_STATUS;
-            return new JSONObject().put("state", "stopped").put("running", false).put("verified_session", false)
-                    .put("reason", saved.getString("last_stop_reason", "service_not_running"))
-                    .put("last_stopped_at", saved.getLong("last_stop_at", 0))
-                    .put("transport", "foreground_service_polling").put("server_push", false)
-                    .put("process_exit_delivery_guaranteed", false).put("force_stop_delivery_guaranteed", false).toString();
-        } catch (RuntimeException | JSONException unavailable) { return EMPTY_STATUS; }
+        synchronized (ADMISSION) {
+            try { return statusSnapshot(context, null, null).toString(); }
+            catch (RuntimeException | JSONException unavailable) { return EMPTY_STATUS; }
+        }
     }
+
+    private static JSONObject statusSnapshot(Context context, String state, String reason) throws JSONException {
+        ReplyWatchService service = current;
+        SharedPreferences saved = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
+        JSONArray accounts = new JSONArray();
+        java.util.Set<String> known = new java.util.HashSet<>();
+        Watch selected = null;
+        int activeCount = 0;
+        for (ReplyWatchAccounts.Record record : ReplyWatchAccounts.list(context)) {
+            known.add(record.id);
+            Watch live = service == null ? null : service.watches.get(record.id);
+            if (live != null && !service.current(live)) live = null;
+            boolean active = live != null;
+            if (active) { activeCount++; if (selected == null || isVisible(live)) selected = live; }
+            JSONObject row = new JSONObject().put("id", record.id).put("server", record.server)
+                    .put("username", record.username).put("session_id", record.session).put("title", record.title)
+                    .put("account_id", record.id).put("can_activate", true).put("registered", true).put("enabled", saved.getBoolean("enabled", false) && !saved.getBoolean("paused_" + record.id, false))
+                    .put("active", active).put("running", active).put("verified_session", active && live.verified)
+                    .put("state", active ? live.state : "stopped")
+                    .put("reason", active ? live.reason : saved.getString("stop_reason_" + record.id, "service_not_running"))
+                    .put("foreground_visible", active && isVisible(live))
+                    .put("receipt_sync", active ? live.receiptState : "not_reported")
+                    .put("message_sync", active ? live.syncState : "not_checked")
+                    .put("last_sync_at", active && live.lastSyncAt > 0 ? live.lastSyncAt : JSONObject.NULL)
+                    .put("next_poll_seconds", active ? Math.max(0, live.nextPollAt - SystemClock.elapsedRealtime()) / 1000 : 0)
+                    .put("notification_outcome_unknown", active ? live.uncertainNotices : 0);
+            accounts.put(row);
+        }
+        JSONArray stopped = stoppedAccounts(saved);
+        for (int index = 0; index < stopped.length(); index++) {
+            JSONObject row = stopped.optJSONObject(index);
+            if (row != null && !known.contains(row.optString("id"))) accounts.put(row);
+        }
+        return new JSONObject().put("state", state != null ? state : activeCount > 0 ? "running" : "stopped")
+                .put("reason", reason == null ? JSONObject.NULL : reason).put("running", activeCount > 0)
+                .put("active", activeCount > 0).put("active_count", activeCount).put("registered_count", known.size())
+                .put("accounts", accounts).put("maximum_accounts", MAX_WATCHES)
+                .put("verified_session", selected != null && selected.verified)
+                .put("session_id", selected == null ? JSONObject.NULL : selected.session)
+                .put("title", selected == null ? JSONObject.NULL : selected.title)
+                .put("poll_interval_seconds", 30).put("next_poll_seconds", selected == null ? 0 : Math.max(0, selected.nextPollAt - SystemClock.elapsedRealtime()) / 1000)
+                .put("server_push", false).put("requires_explicit_enable", true)
+                .put("transport", "foreground_service_polling").put("process_exit_delivery_guaranteed", false)
+                .put("force_stop_delivery_guaranteed", false).put("system_restart_recovery", true)
+                .put("system_time_limit_applies", true).put("system_restart_recovery_guaranteed", false)
+                .put("receipt_sync", selected == null ? "not_reported" : selected.receiptState)
+                .put("message_sync", selected == null ? "not_checked" : selected.syncState)
+                .put("last_sync_at", selected == null || selected.lastSyncAt == 0 ? JSONObject.NULL : selected.lastSyncAt)
+                .put("notification_outcome_unknown", selected == null ? 0 : selected.uncertainNotices);
+    }
+
     static String notificationStatus(Context context) {
         try {
             NotificationManager manager = context.getSystemService(NotificationManager.class);
@@ -178,12 +228,25 @@ public final class ReplyWatchService extends Service {
     static void setObserver(Observer value) { observer = value; }
     static void clearObserver(Observer value) { if (observer == value) observer = null; }
     static void setAppForeground(boolean value) { synchronized (ADMISSION) { appForeground = value; } }
+    static void setVisibleAccount(String server, String token) {
+        synchronized (ADMISSION) {
+            try { visibleAccount = ApiPolicy.jwt(token) ? accountKey(ApiPolicy.server(server), token) : ""; }
+            catch (RuntimeException invalid) { visibleAccount = ""; }
+        }
+    }
+    private static String accountKey(String server, String token) {
+        return AttachmentCache.key(server, token, "reply-watch-account");
+    }
+    private static boolean isVisible(Watch selected) {
+        return appForeground && selected != null && !visibleAccount.isEmpty()
+                && visibleAccount.equals(accountKey(selected.server, selected.token));
+    }
 
     static void preferencesChanged(Context context, NotificationPreferences preferences) {
         // Remove old previews immediately, including notices from a stopped watch.
         cancelNotices(context, null);
         ReplyWatchService active = current;
-        synchronized (ADMISSION) { if (active != null && active.watch != null) active.watch.notices.clear(); }
+        synchronized (ADMISSION) { if (active != null) for (Watch selected : active.watches.values()) selected.notices.clear(); }
         if (!preferences.enabled) stop(context, "notifications_disabled");
     }
 
@@ -191,6 +254,26 @@ public final class ReplyWatchService extends Service {
         cancelNotices(context, scope(server, token, session));
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager != null) cancelLegacyNotice(manager, authScope(server, token, session));
+    }
+
+    static int cancelMessageNotice(Context context, String server, String token, String session, String messageId) {
+        String selectedScope = scope(server, token, session), tag = messageTag(selectedScope, messageId);
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager == null) return -1;
+        int cancelled = 0;
+        synchronized (ADMISSION) {
+            // Only an explicitly opened saved message is cleared. Receiving a
+            // history page is not proof that every message in it was opened.
+            for (StatusBarNotification note : manager.getActiveNotifications())
+                if (tag.equals(note.getTag()) && note.getId() == 4400
+                        && REPLY_CHANNEL.equals(note.getNotification().getChannelId())) { manager.cancel(tag, 4400); cancelled++; }
+            ReplyWatchService active = current;
+            Watch selected = active == null ? null : active.watches.get(selectedScope);
+            if (selected != null && selected.scope.equals(selectedScope) && selected.token.equals(token))
+                selected.notices.removeIf(value -> messageId.equals(value.id));
+        }
+        // This is local cancellation, not a receipt or a human-read claim.
+        return cancelled;
     }
 
     private static void cancelNotices(Context context, String scope) {
@@ -219,41 +302,31 @@ public final class ReplyWatchService extends Service {
     static String messageTag(String scope, String messageId) { return NOTICE_PREFIX + scope + "." + AttachmentCache.digest(messageId); }
 
     private static void publish(String state, String reason, Watch value, boolean running, long nextPoll) {
-        JSONObject record = new JSONObject();
-        try {
-            record.put("state", state); record.put("running", running);
-            record.put("verified_session", value != null && value.verified);
-            record.put("session_id", value == null ? JSONObject.NULL : value.session);
-            record.put("title", value == null ? JSONObject.NULL : value.title);
-            record.put("reason", reason == null ? JSONObject.NULL : reason);
-            record.put("poll_interval_seconds", 30);
-            record.put("next_poll_seconds", Math.max(0, nextPoll / 1000));
-            record.put("server_push", false); record.put("requires_explicit_enable", true);
-            record.put("transport", "foreground_service_polling");
-            record.put("process_exit_delivery_guaranteed", false); record.put("force_stop_delivery_guaranteed", false);
-            record.put("system_restart_recovery", true); record.put("system_time_limit_applies", true);
-            record.put("system_restart_recovery_guaranteed", false);
-            record.put("receipt_sync", value == null ? "not_reported" : value.receiptState);
-            record.put("message_sync", value == null ? "not_checked" : value.syncState);
-            record.put("last_sync_at", value == null || value.lastSyncAt == 0 ? JSONObject.NULL : value.lastSyncAt);
-            record.put("notification_outcome_unknown", value == null ? 0 : value.uncertainNotices);
-        } catch (JSONException invalid) { return; }
-        latest = record.toString();
-        Observer valueObserver = observer;
-        if (valueObserver != null) valueObserver.changed(latest);
+        synchronized (ADMISSION) {
+            if (value != null) {
+                value.state = state; value.reason = reason == null ? "" : reason;
+                value.nextPollAt = SystemClock.elapsedRealtime() + Math.max(0, nextPoll);
+            }
+            ReplyWatchService service = current;
+            try { latest = service == null ? EMPTY_STATUS : statusSnapshot(service, null, reason).toString(); }
+            catch (RuntimeException | JSONException unavailable) { latest = EMPTY_STATUS; }
+            Observer listener = observer;
+            if (listener != null) listener.changed(latest);
+        }
     }
 
     static boolean acknowledge(String server, String token, String session, String messageId) {
-        if (!appForeground || messageId == null || messageId.isEmpty() || messageId.length() > 160) return false;
+        if (!appForeground || !positiveId(messageId)) return false;
         String normalized = ApiPolicy.server(server);
         AttachmentPolicy.session(session);
         if (!ApiPolicy.jwt(token)) return false;
         synchronized (ADMISSION) {
             ReplyWatchService active = current;
-            Watch selected = active == null ? null : active.watch;
-            if (!appForeground || active == null || selected == null || !active.current(selected)
+            Watch selected = active == null ? null : active.watches.get(scope(normalized, token, session));
+            if (!isVisible(selected) || active == null || selected == null || !active.current(selected)
                     || !selected.token.equals(token) || !selected.scope.equals(scope(normalized, token, session))) return false;
-            if (!messageId.equals(selected.cursor)) active.remember(selected, messageId);
+            if (!messageId.equals(selected.cursor) && acceptsForegroundSyncCursor(selected.cursor, messageId, false))
+                active.remember(selected, messageId);
             // Only the visible, authenticated page supplies a saved row ID.
             // Keep the later server sequence when a stale page acknowledges an older row.
             if (acceptsForegroundSyncCursor(selected.syncCursor, messageId, selected.syncBlocked)) {
@@ -261,7 +334,6 @@ public final class ReplyWatchService extends Service {
                 selected.syncBlocked = false;
                 selected.syncState = "foreground_reconciled";
             }
-            selected.notices.clear();
             selected.initialized = true;
             return true;
         }
@@ -272,33 +344,137 @@ public final class ReplyWatchService extends Service {
         String normalized = ApiPolicy.server(server);
         AttachmentPolicy.session(session);
         if (!ApiPolicy.jwt(token)) throw new IllegalStateException("saved_login_required");
-        ReplyWatchService active = current;
-        if (active != null && active.running && active.watch != null
-                && active.watch.token.equals(token) && active.watch.scope.equals(scope(normalized, token, session))) return latest;
-        Watch selected = new Watch(normalized, token, session, title, baseline);
         synchronized (ADMISSION) {
-            long ticket = ++admissionEpoch;
-            if (active != null) { active.running = false; active.cancelRead(); }
+            ReplyWatchAccounts.Record record = ReplyWatchAccounts.save(context, normalized, token, session, title, baseline);
+            SharedPreferences saved = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
+            forgetStoppedAccount(saved, record.id);
+            if (!saved.edit().putBoolean("enabled", true).putBoolean("accounts_migrated", true)
+                    .putBoolean("paused_" + record.id, false).remove("stop_reason_" + record.id).commit())
+                throw new IllegalStateException("watch_registration_not_saved");
+            ReplyWatchService active = current;
+            Watch existing = active == null ? null : active.watches.get(record.id);
+            if (existing != null && active.current(existing) && existing.token.equals(token)) return snapshot(context);
+            if (existing != null) { active.watches.remove(existing.scope, existing); active.cancelRead(existing); }
             Intent command = new Intent(context, ReplyWatchService.class).setAction(START)
-                    .putExtra("server", normalized).putExtra("session_id", session)
-                    .putExtra("title", selected.title).putExtra("baseline", selected.baseline)
-                    .putExtra("auth_scope", authScope(normalized, token, session)).putExtra("admission_epoch", ticket);
-            publish("starting", null, selected, false, 0);
+                    .putExtra("watch_id", record.id).putExtra("admission_epoch", ++admissionEpoch);
+            startPending = true;
             try { context.startForegroundService(command); }
-            catch (RuntimeException unavailable) { publish("stopped", "foreground_start_not_allowed", selected, false, 0); }
+            catch (RuntimeException unavailable) {
+                startPending = false;
+                saved.edit().putString("stop_reason_" + record.id, "foreground_start_not_allowed").apply();
+            }
+            return snapshot(context);
         }
-        return latest;
+    }
+
+    static void resumeEnabled(Context context) {
+        synchronized (ADMISSION) {
+            // Resume only a prior explicit registration while Activity is visible.
+            // Keep a queued start's ticket so onResume cannot invalidate enrollment.
+            if (!appForeground || startPending || !NotificationPreferences.load(context).enabled) return;
+            ReplyWatchService active = current;
+            if (active != null && active.running && !active.watches.isEmpty()) return;
+            SharedPreferences saved = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
+            if (!saved.getBoolean("enabled", false)) return;
+            List<ReplyWatchAccounts.Record> records = ReplyWatchAccounts.list(context);
+            boolean enabledTarget = false;
+            for (ReplyWatchAccounts.Record record : records)
+                if (!saved.getBoolean("paused_" + record.id, false)) { enabledTarget = true; break; }
+            boolean legacy = records.isEmpty() && !saved.getBoolean("accounts_migrated", false)
+                    && !saved.getString("registered_server", "").isEmpty()
+                    && !saved.getString("registered_session", "").isEmpty();
+            if (!enabledTarget && !legacy) return;
+            Intent command = new Intent(context, ReplyWatchService.class).setAction(START)
+                    .putExtra("admission_epoch", ++admissionEpoch);
+            startPending = true;
+            try { context.startForegroundService(command); }
+            catch (RuntimeException unavailable) { startPending = false; }
+        }
+    }
+
+    static void stopAccount(Context context, String server, String token, String reason) {
+        if (!ApiPolicy.jwt(token)) return;
+        String normalized = ApiPolicy.server(server), account = accountKey(normalized, token);
+        synchronized (ADMISSION) {
+            List<ReplyWatchAccounts.Record> records = ReplyWatchAccounts.list(context);
+            ReplyWatchService active = current;
+            for (ReplyWatchAccounts.Record record : records) {
+                if (!account.equals(accountKey(record.server, record.token))) continue;
+                context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE).edit()
+                        .putBoolean("paused_" + record.id, true).putString("stop_reason_" + record.id, reason).commit();
+                Watch selected = active == null ? null : active.watches.get(record.id);
+                if (selected != null) active.removeWatch(selected, reason);
+                rememberStoppedAccount(context, record, reason);
+                clearScopeNotices(context, record.id, authScope(record.server, record.token, record.session), true);
+            }
+            boolean removed = ReplyWatchAccounts.removeAccount(context, normalized, token);
+            if (active != null) active.stopIfEmpty();
+            latest = snapshot(context);
+            if (!removed) throw new IllegalStateException("watch_registration_not_removed");
+        }
+    }
+
+    static void stopTarget(Context context, String id, String reason) {
+        synchronized (ADMISSION) {
+            ReplyWatchAccounts.Record record = ReplyWatchAccounts.find(context, id);
+            if (record == null) return;
+            if (!context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE).edit()
+                    .putBoolean("paused_" + id, true).putString("stop_reason_" + id, reason).commit())
+                throw new IllegalStateException("watch_stop_not_saved");
+            ReplyWatchService active = current;
+            Watch selected = active == null ? null : active.watches.get(id);
+            if (selected != null) active.removeWatch(selected, reason);
+            clearScopeNotices(context, id, authScope(record.server, record.token, record.session), false);
+            if (active != null) active.stopIfEmpty();
+            latest = snapshot(context);
+        }
+    }
+
+    private static JSONArray stoppedAccounts(SharedPreferences saved) {
+        try { return new JSONArray(saved.getString("stopped_accounts", "[]")); }
+        catch (JSONException invalid) { return new JSONArray(); }
+    }
+
+    private static void forgetStoppedAccount(SharedPreferences saved, String id) {
+        JSONArray previous = stoppedAccounts(saved), kept = new JSONArray();
+        for (int index = 0; index < previous.length(); index++) {
+            JSONObject row = previous.optJSONObject(index);
+            if (row != null && !id.equals(row.optString("id"))) kept.put(row);
+        }
+        saved.edit().putString("stopped_accounts", kept.toString()).apply();
+    }
+
+    private static void rememberStoppedAccount(Context context, ReplyWatchAccounts.Record record, String reason) {
+        SharedPreferences saved = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
+        forgetStoppedAccount(saved, record.id);
+        JSONArray previous = stoppedAccounts(saved), kept = new JSONArray();
+        try {
+            for (int index = Math.max(0, previous.length() - MAX_WATCHES + 1); index < previous.length(); index++)
+                kept.put(previous.optJSONObject(index));
+            kept.put(new JSONObject().put("id", record.id).put("account_id", record.id)
+                    .put("server", record.server).put("username", record.username).put("session_id", record.session)
+                    .put("title", record.title).put("active", false).put("running", false).put("enabled", false)
+                    .put("registered", false).put("can_activate", false).put("verified_session", false)
+                    .put("state", "stopped").put("reason", reason).put("last_stopped_at", System.currentTimeMillis()));
+            saved.edit().putString("stopped_accounts", kept.toString()).apply();
+        } catch (JSONException unavailable) { /* Credential removal must still proceed. */ }
     }
 
     static void stop(Context context, String reason) {
-        synchronized (ADMISSION) { admissionEpoch++; }
-        context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE).edit().putBoolean("enabled", false).apply();
-        clearPrivateNotices(context, reason);
-        ReplyWatchService active = current;
-        if (active != null) active.finish(reason);
-        else {
-            context.stopService(new Intent(context, ReplyWatchService.class));
-            publish("stopped", reason, null, false, 0);
+        synchronized (ADMISSION) {
+            admissionEpoch++; startPending = false;
+            SharedPreferences.Editor edit = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE).edit()
+                    .putBoolean("enabled", false).putBoolean("accounts_migrated", true);
+            for (ReplyWatchAccounts.Record record : ReplyWatchAccounts.list(context))
+                edit.putBoolean("paused_" + record.id, true).putString("stop_reason_" + record.id, reason);
+            edit.apply();
+            ReplyWatchService active = current;
+            if (active != null) active.finish(reason);
+            else {
+                clearPrivateNotices(context, reason);
+                context.stopService(new Intent(context, ReplyWatchService.class));
+                latest = snapshot(context);
+            }
         }
     }
 
@@ -307,6 +483,8 @@ public final class ReplyWatchService extends Service {
         String session = intent.getStringExtra("session_id");
         try {
             AttachmentPolicy.session(session);
+            String targetServer = intent.getStringExtra("reply_watch_server");
+            if (targetServer != null && !ApiPolicy.server(server).equals(ApiPolicy.server(targetServer))) return null;
             String supplied = intent.getStringExtra("reply_watch_scope");
             return scope(server, token, session).equals(supplied) || authScope(server, token, session).equals(supplied) ? session : null;
         } catch (RuntimeException invalid) { return null; }
@@ -321,6 +499,7 @@ public final class ReplyWatchService extends Service {
                 .setData(Uri.parse("asteria-chat://reply/" + selected.scope + "/" + AttachmentCache.digest(messageId)))
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 .putExtra("session_id", selected.session).putExtra("reply_watch_scope", selected.scope)
+                .putExtra("reply_watch_server", selected.server)
                 .putExtra("reply_message_id", messageId).putExtra("reply_click_target", clickTarget);
     }
 
@@ -355,86 +534,146 @@ public final class ReplyWatchService extends Service {
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent == null) {
-            try { intent = restoreCommand(); }
-            catch (RuntimeException unavailable) { finish("restart_registration_unavailable"); return START_NOT_STICKY; }
-            if (intent == null) { finish("not_enabled"); return START_NOT_STICKY; }
-        }
-        if (STOP.equals(intent.getAction())) { finish("user_stopped"); return START_NOT_STICKY; }
-        if (!START.equals(intent.getAction())) { finish("invalid_start"); return START_NOT_STICKY; }
-        long ticket = intent.getLongExtra("admission_epoch", -1);
+        if (intent != null && STOP.equals(intent.getAction())) { finish("user_stopped"); return START_NOT_STICKY; }
+        if (intent != null && !START.equals(intent.getAction())) return running ? START_STICKY : START_NOT_STICKY;
         synchronized (ADMISSION) {
-            if (ticket != admissionEpoch) { stopSelf(startId); return START_NOT_STICKY; }
+            if (intent != null && intent.getLongExtra("admission_epoch", -1) != admissionEpoch)
+                return running ? START_STICKY : START_NOT_STICKY;
+            startPending = false;
+            try {
+                Notification initial = ongoing(null);
+                if (Build.VERSION.SDK_INT >= 29) startForeground(WATCH_NOTIFICATION, initial, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+                else startForeground(WATCH_NOTIFICATION, initial);
+                if (!notificationsAllowed()) { finish("notification_permission"); return START_NOT_STICKY; }
+                if (!metadata.getBoolean("enabled", false)) { finish("not_enabled"); return START_NOT_STICKY; }
+                migrateLegacyRegistration();
+                for (ReplyWatchAccounts.Record record : ReplyWatchAccounts.list(this)) {
+                    if (metadata.getBoolean("paused_" + record.id, false)) continue;
+                    try { attach(record); }
+                    catch (RuntimeException unavailable) {
+                        metadata.edit().putBoolean("paused_" + record.id, true)
+                                .putString("stop_reason_" + record.id, "watch_start_unavailable").apply();
+                    }
+                }
+                stopIfEmpty();
+            } catch (RuntimeException unavailable) { finish("restart_registration_unavailable"); }
         }
-        try {
-            // A visible foreground notification is posted before vault or HTTP work.
-            Notification initial = ongoing(null);
-            if (Build.VERSION.SDK_INT >= 29) startForeground(WATCH_NOTIFICATION, initial, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
-            else startForeground(WATCH_NOTIFICATION, initial);
-            if (!notificationsAllowed()) { finish("notification_permission"); return START_NOT_STICKY; }
-            TokenVault vault = new TokenVault(this);
-            String server = ApiPolicy.server(intent.getStringExtra("server"));
-            if (!server.equals(vault.server())) { finish("authentication_changed"); return START_NOT_STICKY; }
-            String token = vault.load(server);
-            String session = AttachmentPolicy.session(intent.getStringExtra("session_id"));
-            if (!ApiPolicy.jwt(token) || !authScope(server, token, session).equals(intent.getStringExtra("auth_scope"))) {
-                finish("authentication_changed"); return START_NOT_STICKY;
-            }
-            cancelRead();
-            Watch selected = new Watch(server, token, session, intent.getStringExtra("title"), intent.getStringExtra("baseline"));
-            synchronized (ADMISSION) {
-                if (ticket != admissionEpoch) { stopSelf(startId); return START_NOT_STICKY; }
-                watch = selected; running = true;
-                String stored = metadata.getString("sync_after_" + selected.scope, "");
-                String legacy = selected.scope.equals(metadata.getString("scope", "")) ? metadata.getString("last_seen_id", "") : "";
-                selected.syncCursor = latestCursor(stored, legacy, selected.baseline);
-                selected.syncBlocked = metadata.getBoolean("sync_blocked_" + selected.scope, false);
-                if (selected.syncBlocked) selected.syncState = "cursor_unavailable";
-                selected.uncertainNotices = uncertainNotices(selected);
-                metadata.edit().putBoolean("enabled", true)
-                        .putString("registered_server", selected.server).putString("registered_session", selected.session)
-                        .putString("registered_title", selected.title).putString("registered_baseline", selected.baseline)
-                        .putString("registered_auth_scope", authScope(server, token, session)).apply();
-                publish("starting", null, selected, true, 0);
-            }
-            schedule(selected, nextAllowedDelay());
-        } catch (RuntimeException invalid) { finish("watch_start_unavailable"); }
         return running ? START_STICKY : START_NOT_STICKY;
     }
 
-    private Intent restoreCommand() {
-        // Only restore a monitor explicitly enabled by the user. The token
-        // remains in TokenVault; metadata contains no password or JWT.
-        if (!metadata.getBoolean("enabled", false) || !NotificationPreferences.load(this).enabled) return null;
-        TokenVault vault = new TokenVault(this);
-        String server = ApiPolicy.server(metadata.getString("registered_server", ""));
-        String session = AttachmentPolicy.session(metadata.getString("registered_session", ""));
-        String token = vault.load(server);
-        if (!server.equals(vault.server()) || !ApiPolicy.jwt(token)
-                || !authScope(server, token, session).equals(metadata.getString("registered_auth_scope", ""))) return null;
+    private void migrateLegacyRegistration() {
+        if (metadata.getBoolean("accounts_migrated", false)) return;
+        // Only an old explicitly enabled registration can be migrated from
+        // TokenVault. Merely logging in never enrolls another account.
+        if (ReplyWatchAccounts.list(this).isEmpty() && metadata.getBoolean("enabled", false)) {
+            TokenVault vault = new TokenVault(this);
+            try {
+                String server = ApiPolicy.server(metadata.getString("registered_server", ""));
+                String session = AttachmentPolicy.session(metadata.getString("registered_session", ""));
+                String token = vault.load(server);
+                if (server.equals(vault.server()) && ApiPolicy.jwt(token)
+                        && authScope(server, token, session).equals(metadata.getString("registered_auth_scope", "")))
+                    ReplyWatchAccounts.save(this, server, token, session,
+                            metadata.getString("registered_title", BuildConfig.APP_NAME), metadata.getString("registered_baseline", ""));
+            } catch (RuntimeException invalid) { /* Missing legacy credentials do not stop another account. */ }
+        }
+        if (!metadata.edit().putBoolean("accounts_migrated", true).commit())
+            throw new IllegalStateException("watch_migration_not_saved");
+    }
+
+    static void credentialsChanged(Context context, String server, String token) {
+        if (!ApiPolicy.jwt(token)) return;
+        String normalized = ApiPolicy.server(server), account = accountKey(normalized, token);
         synchronized (ADMISSION) {
-            return new Intent(this, ReplyWatchService.class).setAction(START)
-                    .putExtra("server", server).putExtra("session_id", session)
-                    .putExtra("title", metadata.getString("registered_title", BuildConfig.APP_NAME))
-                    .putExtra("baseline", "").putExtra("auth_scope", authScope(server, token, session))
-                    .putExtra("admission_epoch", ++admissionEpoch);
+            for (ReplyWatchAccounts.Record record : ReplyWatchAccounts.list(context)) {
+                if (!account.equals(accountKey(record.server, record.token))) continue;
+                ReplyWatchAccounts.Record renewed = ReplyWatchAccounts.save(context, normalized, token,
+                        record.session, record.title, record.baseline);
+                ReplyWatchService active = current;
+                if (active != null && active.watches.containsKey(record.id)) active.attach(renewed);
+            }
         }
     }
 
-    private long nextAllowedDelay() {
-        synchronized (NETWORK_GATE) { return Math.max(0, POLL_MS - (SystemClock.elapsedRealtime() - lastNetworkStarted)); }
+    private void attach(ReplyWatchAccounts.Record record) {
+        if (!record.id.equals(scope(record.server, record.token, record.session)) || !ReplyWatchAccounts.matches(this, record))
+            throw new IllegalStateException("watch_registration_changed");
+        Watch previous = watches.get(record.id);
+        if (previous != null && current(previous) && previous.token.equals(record.token)) return;
+        if (previous == null && watches.size() >= MAX_WATCHES) throw new IllegalStateException("watch_account_limit");
+        if (previous != null) { watches.remove(previous.scope, previous); cancelRead(previous); }
+        Watch selected = new Watch(record);
+        watches.put(selected.scope, selected); running = true;
+        String legacy = selected.scope.equals(metadata.getString("scope", "")) ? metadata.getString("last_seen_id", "") : "";
+        if (previous != null) selected.lastNetworkStarted = previous.lastNetworkStarted;
+        selected.cursor = latestCursor(metadata.getString("last_seen_" + selected.scope, ""), legacy, selected.baseline);
+        selected.syncCursor = latestCursor(metadata.getString("sync_after_" + selected.scope, ""), selected.cursor);
+        selected.syncBlocked = metadata.getBoolean("sync_blocked_" + selected.scope, false);
+        if (selected.syncBlocked) selected.syncState = "cursor_unavailable";
+        selected.uncertainNotices = uncertainNotices(selected);
+        publish("starting", null, selected, true, 0);
+        schedule(selected, nextAllowedDelay(selected));
+    }
+
+    private long nextAllowedDelay(Watch selected) {
+        synchronized (selected) { return Math.max(0, POLL_MS - (SystemClock.elapsedRealtime() - selected.lastNetworkStarted)); }
     }
 
     private void schedule(Watch selected, long delay) {
         if (!current(selected)) return;
-        try { pending = executor.schedule(() -> poll(selected), Math.max(0, delay), TimeUnit.MILLISECONDS); }
+        selected.nextPollAt = SystemClock.elapsedRealtime() + Math.max(0, delay);
+        try { selected.pending = executor.schedule(() -> {
+            if (!current(selected) || !selected.polling.compareAndSet(false, true)) return;
+            try { poll(selected); } finally { selected.polling.set(false); }
+        }, Math.max(0, delay), TimeUnit.MILLISECONDS); }
         catch (RuntimeException stopped) { finishWatch(selected, "watch_stopped"); }
     }
 
-    private boolean current(Watch selected) { return running && watch == selected && current == this; }
+    private boolean current(Watch selected) {
+        return selected != null && running && watches.get(selected.scope) == selected && current == this;
+    }
+
+    private void removeWatch(Watch selected, String reason) {
+        if (!watches.remove(selected.scope, selected)) return;
+        cancelRead(selected); rememberStop(selected, reason);
+        metadata.edit().putBoolean("paused_" + selected.scope, true).apply();
+        if (privateStop(reason)) clearScopeNotices(this, selected.scope, authScope(selected.server, selected.token, selected.session), true);
+        selected.state = "stopped"; selected.reason = reason;
+        publish("stopped", reason, selected, false, 0);
+    }
+
+    private void stopIfEmpty() {
+        if (!watches.isEmpty()) {
+            running = true;
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) manager.notify(WATCH_NOTIFICATION, ongoing(null));
+            return;
+        }
+        running = false;
+        final long stoppingTicket = admissionEpoch;
+        main.post(() -> {
+            synchronized (ADMISSION) {
+                if (stoppingTicket != admissionEpoch || !watches.isEmpty()) return;
+                stopForeground(STOP_FOREGROUND_REMOVE); stopSelf();
+            }
+        });
+    }
 
     private void finishWatch(Watch selected, String reason) {
-        synchronized (ADMISSION) { if (current(selected)) finish(reason); }
+        synchronized (ADMISSION) {
+            if (!current(selected)) return;
+            removeWatch(selected, reason);
+            stopIfEmpty();
+        }
+    }
+
+    private void rejectWatch(Watch selected, int status) {
+        synchronized (ADMISSION) {
+            // A response from an old token must not revoke a newly renewed login.
+            if (!current(selected)) return;
+            if (status == 401) stopAccount(this, selected.server, selected.token, "login_expired");
+            else finishWatch(selected, "session_unavailable");
+        }
     }
 
     private void updateWatch(Watch selected, String state, String reason, long delay) {
@@ -443,10 +682,11 @@ public final class ReplyWatchService extends Service {
 
     private void poll(Watch selected) {
         if (!current(selected)) return;
-        if (!notificationsAllowed()) { finishWatch(selected, "notification_permission"); return; }
+        if (!notificationsAllowed()) { finish("notification_permission"); return; }
+        if (selected.registration != null && !ReplyWatchAccounts.matches(this, selected.registration)) { finishWatch(selected, "authentication_changed"); return; }
         // The visible page owns its one history coordinator. Do not create a
         // second foreground read or advance a cursor for content it has not read.
-        if (appForeground) {
+        if (isVisible(selected)) {
             updateWatch(selected, "running", "foreground_ui_owns_reads", POLL_MS);
             schedule(selected, POLL_MS);
             return;
@@ -456,11 +696,11 @@ public final class ReplyWatchService extends Service {
             schedule(selected, POLL_MS);
             return;
         }
-        synchronized (NETWORK_GATE) {
-            long delay = POLL_MS - (SystemClock.elapsedRealtime() - lastNetworkStarted);
+        synchronized (selected) {
+            long delay = POLL_MS - (SystemClock.elapsedRealtime() - selected.lastNetworkStarted);
             if (delay > 0) { schedule(selected, delay); return; }
             if (!current(selected)) return;
-            lastNetworkStarted = SystemClock.elapsedRealtime();
+            selected.lastNetworkStarted = SystemClock.elapsedRealtime();
         }
         HttpsURLConnection request = null;
         long delay = POLL_MS;
@@ -472,7 +712,7 @@ public final class ReplyWatchService extends Service {
                     + (incremental ? "&after_id=" + requestAfter + "&limit=32" : "");
             String path = ApiPolicy.requestPath(query);
             request = (HttpsURLConnection) new URL(selected.server + path).openConnection();
-            connection = request;
+            selected.connection = request;
             PinnedTls.configure(request, selected.server);
             request.setInstanceFollowRedirects(false);
             request.setConnectTimeout(10000); request.setReadTimeout(15000);
@@ -484,7 +724,7 @@ public final class ReplyWatchService extends Service {
             int status = request.getResponseCode();
             if (!current(selected)) return;
             if (status == 401 || status == 403 || status == 404) {
-                finishWatch(selected, status == 401 ? "login_expired" : "session_unavailable"); return;
+                rejectWatch(selected, status); return;
             }
             if (status < 200 || status >= 300) throw new java.io.IOException("history_unavailable");
             JSONObject envelope = new JSONObject(read(request.getInputStream()));
@@ -496,7 +736,7 @@ public final class ReplyWatchService extends Service {
             if (history == null) throw new java.io.IOException("history_shape_unavailable");
             if (incremental && (data.optBoolean("reset_required") || !data.optBoolean("anchor_found"))) {
                 synchronized (ADMISSION) {
-                    if (!current(selected) || appForeground || !requestAfter.equals(selected.syncCursor)) return;
+                    if (!current(selected) || isVisible(selected) || !requestAfter.equals(selected.syncCursor)) return;
                     if (!metadata.edit().putBoolean("sync_blocked_" + selected.scope, true).commit())
                         throw new IllegalStateException("watch_gap_not_saved");
                     selected.syncBlocked = true; selected.syncState = "cursor_unavailable";
@@ -522,7 +762,7 @@ public final class ReplyWatchService extends Service {
             if (sync == null) sync = data.optJSONObject("message_sync");
             selected.syncSupported = sync != null && sync.optInt("schema") == 1 && sync.optBoolean("supported")
                     && "saved_rows_after_id".equals(sync.optString("mode"));
-            if (appForeground || !requestAfter.equals(selected.syncCursor)) { updateWatch(selected, "running", "foreground_ui_owns_reads", delay); return; }
+            if (isVisible(selected) || !requestAfter.equals(selected.syncCursor)) { updateWatch(selected, "running", "foreground_ui_owns_reads", delay); return; }
             if (selected.receiptsSupported) {
                 List<String> received = new ArrayList<>();
                 List<String> alreadyPosted = new ArrayList<>();
@@ -557,10 +797,10 @@ public final class ReplyWatchService extends Service {
             }
             selected.lastSyncAt = System.currentTimeMillis();
             if (!current(selected)) return;
-            // Close history IO before metadata POSTs. The existing single
-            // worker remains the only background network lane.
+            // Close this account's history IO before its receipt POSTs.
+            // At most two independent account workers perform network IO.
             request.disconnect();
-            if (connection == request) connection = null;
+            if (selected.connection == request) selected.connection = null;
             if (selected.receiptsSupported) flushReceipts(selected, assistants);
             selected.failures = 0;
             synchronized (ADMISSION) {
@@ -577,7 +817,7 @@ public final class ReplyWatchService extends Service {
                     ? "local_delivery_state_unavailable" : "network_or_history_unavailable", delay);
         } finally {
             if (request != null) request.disconnect();
-            if (connection == request) connection = null;
+            if (selected.connection == request) selected.connection = null;
             if (current(selected)) schedule(selected, delay);
         }
     }
@@ -590,7 +830,7 @@ public final class ReplyWatchService extends Service {
         String newest = rows.isEmpty() ? "" : String.valueOf(rows.get(rows.size() - 1).opt("id"));
         if (!incremental && !selected.initialized) {
             selected.initialized = true;
-            String saved = selected.scope.equals(metadata.getString("scope", "")) ? metadata.getString("last_seen_id", "") : "";
+            String saved = metadata.getString("last_seen_" + selected.scope, "");
             selected.cursor = latestCursor(saved, selected.baseline);
             if (selected.cursor.isEmpty()) { remember(selected, newest); return true; }
         }
@@ -602,8 +842,8 @@ public final class ReplyWatchService extends Service {
             // not turn unknown older records into a batch of fresh alerts.
             if (anchor < 0) { selected.syncState = "legacy_cursor_outside_window"; remember(selected, newest); return true; }
         }
-        if (!current(selected) || appForeground) return false;
-        if (!notificationsAllowed()) { finishWatch(selected, "notification_permission"); return false; }
+        if (!current(selected) || isVisible(selected)) return false;
+        if (!notificationsAllowed()) { finish("notification_permission"); return false; }
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager == null) throw new IllegalStateException("notification_manager_unavailable");
         NotificationPreferences preferences = NotificationPreferences.load(this);
@@ -614,7 +854,7 @@ public final class ReplyWatchService extends Service {
             value.kind = noticeKind(row); value.imageFilename = imageFilename(row); break;
         }
         synchronized (ADMISSION) {
-            if (!current(selected) || appForeground) return false;
+            if (!current(selected) || isVisible(selected)) return false;
             List<NoticeMessage> allowed = new ArrayList<>();
             for (NoticeMessage value : incoming)
                 if (preferences.allows(value.kind, java.util.Calendar.getInstance())) allowed.add(value);
@@ -688,7 +928,7 @@ public final class ReplyWatchService extends Service {
             try (InputStream input = new java.io.FileInputStream(image.file)) { count = input.read(header); }
             if (count < 3 || !image.mime.equals(AttachmentPolicy.imageSignature(java.util.Arrays.copyOf(header, count)))) return;
             Uri uri = AttachmentFileProvider.publish(this, image.file, message.imageFilename, image.mime);
-            if (current(selected) && !appForeground && hasNotice(manager, tag))
+            if (current(selected) && !isVisible(selected) && hasNotice(manager, tag))
                 manager.notify(tag, 4400, conversationNotification(selected, message, preferences, identity, new CachedNoticeImage(uri, image.mime)));
         } catch (Exception unavailable) { /* Keep the already posted text. */ }
     }
@@ -739,7 +979,7 @@ public final class ReplyWatchService extends Service {
         try {
             JSONObject pending = receiptMap(selected, "receipt_pending_"), done = receiptMap(selected, "receipt_done_");
             for (String phase : new String[] { "client_received", "system_notification_posted" }) {
-                if (!current(selected) || appForeground) return;
+                if (!current(selected) || isVisible(selected)) return;
                 JSONArray ids = new JSONArray();
                 for (java.util.Iterator<String> keys = pending.keys(); keys.hasNext() && ids.length() < 32;) {
                     String id = keys.next();
@@ -756,7 +996,7 @@ public final class ReplyWatchService extends Service {
                 HttpsURLConnection report = null;
                 try {
                     report = (HttpsURLConnection) new URL(selected.server + ApiPolicy.requestPath("/chat/receipts")).openConnection();
-                    connection = report;
+                    selected.connection = report;
                     PinnedTls.configure(report, selected.server);
                     report.setInstanceFollowRedirects(false);
                     report.setConnectTimeout(5000); report.setReadTimeout(5000);
@@ -765,9 +1005,12 @@ public final class ReplyWatchService extends Service {
                     report.setRequestProperty("Authorization", "Bearer " + selected.token);
                     byte[] raw = body.toString().getBytes(StandardCharsets.UTF_8);
                     report.setFixedLengthStreamingMode(raw.length);
-                    if (!current(selected) || appForeground) return;
+                    if (!current(selected) || isVisible(selected)) return;
                     try (OutputStream stream = report.getOutputStream()) { stream.write(raw); }
                     int status = report.getResponseCode();
+                    if (status == 401 || status == 403 || status == 404) {
+                        finishWatch(selected, status == 401 ? "login_expired" : "session_unavailable"); return;
+                    }
                     if (status != 200) throw new java.io.IOException("receipt_not_confirmed");
                     JSONObject answer = new JSONObject(read(report.getInputStream()));
                     if (!"ok".equals(answer.optString("status")) || answer.optJSONObject("data") == null)
@@ -787,7 +1030,7 @@ public final class ReplyWatchService extends Service {
                     selected.receiptState = pending.length() == 0 ? "synced" : "pending";
                 } finally {
                     if (report != null) report.disconnect();
-                    if (connection == report) connection = null;
+                    if (selected.connection == report) selected.connection = null;
                 }
             }
         } catch (Exception unavailable) {
@@ -886,7 +1129,7 @@ public final class ReplyWatchService extends Service {
     private void remember(Watch selected, String id) {
         synchronized (ADMISSION) {
             if (!current(selected)) return;
-            if (!metadata.edit().putString("scope", selected.scope).putString("last_seen_id", id).commit())
+            if (!metadata.edit().putString("last_seen_" + selected.scope, id).commit())
                 throw new IllegalStateException("watch_cursor_not_saved");
             selected.cursor = id;
         }
@@ -942,7 +1185,7 @@ public final class ReplyWatchService extends Service {
 
     private boolean rememberBackgroundSync(Watch selected, String id, String expected) {
         synchronized (ADMISSION) {
-            if (!current(selected) || appForeground || !expected.equals(selected.syncCursor)) return false;
+            if (!current(selected) || isVisible(selected) || !expected.equals(selected.syncCursor)) return false;
             rememberSync(selected, id);
             return true;
         }
@@ -1026,7 +1269,7 @@ public final class ReplyWatchService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder note = new Notification.Builder(this, WATCH_CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification).setContentTitle(BuildConfig.APP_NAME + " 回复监控")
-                .setContentText(selected == null ? "正在连接当前会话…" : "正在留意“" + selected.title + "”的新回复，每30秒读取一次")
+                .setContentText(watches.isEmpty() ? "正在连接已启用的聊天…" : "正在留意 " + watches.size() + " 个聊天，各自每30秒读取一次")
                 .setOngoing(true).setOnlyAlertOnce(true).setCategory(Notification.CATEGORY_SERVICE)
                 .addAction(new Notification.Action.Builder(android.R.drawable.ic_media_pause, "停止监控", stopAction).build());
         if (selected != null) note.setContentIntent(PendingIntent.getActivity(this, WATCH_NOTIFICATION,
@@ -1120,79 +1363,80 @@ public final class ReplyWatchService extends Service {
         }
     }
 
-    private void cancelRead() {
-        ScheduledFuture<?> task = pending;
+    private void cancelRead(Watch selected) {
+        ScheduledFuture<?> task = selected.pending;
         if (task != null) task.cancel(false);
-        HttpsURLConnection active = connection;
+        HttpsURLConnection active = selected.connection;
         if (active != null) active.disconnect();
     }
 
     private void finish(String reason) {
-        final Watch previous;
         final long stoppingTicket;
         synchronized (ADMISSION) {
-            stoppingTicket = ++admissionEpoch;
-            previous = watch;
-            running = false; watch = null;
-            metadata.edit().putBoolean("enabled", false).apply();
-            rememberStop(previous, reason);
-            cancelRead();
+            stoppingTicket = ++admissionEpoch; startPending = false;
+            SharedPreferences.Editor edit = metadata.edit().putBoolean("enabled", false).putBoolean("accounts_migrated", true);
+            for (ReplyWatchAccounts.Record record : ReplyWatchAccounts.list(this))
+                edit.putBoolean("paused_" + record.id, true).putString("stop_reason_" + record.id, reason);
+            edit.apply();
+            for (Watch selected : new ArrayList<>(watches.values())) removeWatch(selected, reason);
+            running = false;
             clearPrivateNotices(this, reason);
-            publish("stopped", reason, previous, false, 0);
+            publish("stopped", reason, null, false, 0);
         }
         main.post(() -> {
             synchronized (ADMISSION) {
-                if (stoppingTicket != admissionEpoch) return;
+                if (stoppingTicket != admissionEpoch || !watches.isEmpty()) return;
                 stopForeground(STOP_FOREGROUND_REMOVE); stopSelf();
             }
         });
     }
 
-    private static void clearPrivateNotices(Context context, String reason) {
-        if (!("logged_out".equals(reason) || "server_changed".equals(reason)
-                || "authentication_changed".equals(reason) || "login_expired".equals(reason)
-                || "login_required".equals(reason))) return;
-        NotificationIdentity.clear(context);
+    private static boolean privateStop(String reason) {
+        return "logged_out".equals(reason) || "server_changed".equals(reason)
+                || "authentication_changed".equals(reason) || "login_expired".equals(reason) || "login_required".equals(reason);
+    }
+
+    private static void clearScopeNotices(Context context, String scope, String oldAuthScope, boolean identity) {
+        cancelNotices(context, scope);
         NotificationManager manager = context.getSystemService(NotificationManager.class);
-        if (manager != null) manager.cancelAll();
+        if (manager != null) cancelLegacyNotice(manager, oldAuthScope);
+        if (identity) context.getSharedPreferences("asteria_chat_notification_identity", MODE_PRIVATE).edit().remove(scope).apply();
         if (Build.VERSION.SDK_INT >= 29) try {
             ShortcutManager shortcuts = context.getSystemService(ShortcutManager.class);
             if (shortcuts != null) {
-                List<String> owned = new ArrayList<>();
-                List<ShortcutInfo> candidates = Build.VERSION.SDK_INT >= 30
-                        ? shortcuts.getShortcuts(ShortcutManager.FLAG_MATCH_DYNAMIC | ShortcutManager.FLAG_MATCH_PINNED | ShortcutManager.FLAG_MATCH_CACHED)
-                        : new ArrayList<>(shortcuts.getDynamicShortcuts());
-                if (Build.VERSION.SDK_INT < 30) candidates.addAll(shortcuts.getPinnedShortcuts());
-                for (ShortcutInfo shortcut : candidates)
-                    if (shortcut.getId().startsWith(SHORTCUT_PREFIX) && !owned.contains(shortcut.getId())) owned.add(shortcut.getId());
-                // These shortcuts can be cached by the system. Disable them
-                // before removal so a logged-out chat cannot remain actionable.
-                if (!owned.isEmpty()) {
-                    shortcuts.disableShortcuts(owned);
-                    shortcuts.removeDynamicShortcuts(owned);
-                    if (Build.VERSION.SDK_INT >= 30) shortcuts.removeLongLivedShortcuts(owned);
-                }
+                List<String> exact = Collections.singletonList(SHORTCUT_PREFIX + scope);
+                shortcuts.disableShortcuts(exact);
+                shortcuts.removeDynamicShortcuts(exact);
+                if (Build.VERSION.SDK_INT >= 30) shortcuts.removeLongLivedShortcuts(exact);
             }
-        } catch (RuntimeException unavailable) { /* The activity still validates the current auth scope. */ }
+        } catch (RuntimeException unavailable) { /* The activity still validates the server, account and session. */ }
+    }
+
+    private static void clearPrivateNotices(Context context, String reason) {
+        if (!privateStop(reason)) return;
+        for (ReplyWatchAccounts.Record record : ReplyWatchAccounts.list(context))
+            clearScopeNotices(context, record.id, authScope(record.server, record.token, record.session), true);
     }
 
     @Override public void onTimeout(int startId, int fgsType) { finish("system_time_limit"); }
     @Override public IBinder onBind(Intent intent) { return null; }
     @Override public void onDestroy() {
-        Watch previous = watch;
-        boolean interrupted = running;
-        running = false; watch = null;
-        cancelRead(); executor.shutdownNow();
-        if (current == this) {
-            current = null;
-            if (interrupted) { rememberStop(previous, "service_destroyed"); publish("stopped", "service_destroyed", previous, false, 0); }
+        synchronized (ADMISSION) {
+            boolean interrupted = running;
+            running = false;
+            for (Watch selected : watches.values()) {
+                cancelRead(selected);
+                if (interrupted) rememberStop(selected, "service_destroyed");
+            }
+            watches.clear(); executor.shutdownNow();
+            if (current == this) { current = null; latest = snapshot(this); }
         }
         super.onDestroy();
     }
 
     private void rememberStop(Watch selected, String reason) {
         if (selected == null || metadata == null) return;
-        metadata.edit().putString("last_stop_reason", reason).putLong("last_stop_at", System.currentTimeMillis())
-                .putString("last_stop_auth_scope", authScope(selected.server, selected.token, selected.session)).apply();
+        metadata.edit().putString("stop_reason_" + selected.scope, reason)
+                .putLong("stop_at_" + selected.scope, System.currentTimeMillis()).apply();
     }
 }

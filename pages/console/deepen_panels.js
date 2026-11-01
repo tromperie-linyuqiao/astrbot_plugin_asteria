@@ -5,7 +5,8 @@ const modelRoot=document.getElementById('model-routing-mount'),phoneRoot=documen
 const models=window.TLSModelRouting&&modelRoot?window.TLSModelRouting.mount(modelRoot,{api}):null;
 const phone=window.TLSPhoneStatus&&phoneRoot?window.TLSPhoneStatus.mount(phoneRoot,{api,getScope:()=>state.scope}):null;
 function activate(view){
- if(view==='config'){models?.activate();window.TLSMemoryStrategyPanel?.activate();}
+ if(view==='model_routes')models?.activate();
+ if(view==='memory_strategy')window.TLSMemoryStrategyPanel?.activate();
  if(view==='phone_service'){phone?.setScope(state.scope);phone?.activate();}
 }
 const original=setView;setView=function(view){const result=original(view);activate(view);return result;};

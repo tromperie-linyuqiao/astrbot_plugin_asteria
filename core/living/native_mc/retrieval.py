@@ -1245,37 +1245,38 @@ class RetrievalEngine:
         time_window_spec: tuple[str, str, int] | None = None
         if time_intent is not None and time_intent.active:
             time_window_spec = (time_intent.start_at, time_intent.end_at, 1600)
-        bundle: dict[str, Any] | None = None
-        try:
-            bundle, vector_result = await asyncio.gather(
-                self.store.list_retrieval_candidate_bundle(
-                    materialize_limit=self.DEFAULT_MATERIALIZE_LIMIT,
-                    current_window={
-                        "scope": ctx.scope,
-                        "session_id": ctx.session_id,
-                        "user_id": ctx.user_id,
-                        "group_id": ctx.group_id,
-                        "limit": self.current_window_candidate_limit,
-                    },
-                    fts_terms=keyword_terms,
-                    fts_limit=1200,
-                    keyword_terms=keyword_terms,
-                    keyword_limit=1200,
-                    keyword_fallback_min_fts=self.keyword_fallback_min_fts_candidates,
-                    time_window=time_window_spec,
-                    include_pending=include_pending,
-                ),
-                self._embedding_candidate_memories(
-                    query,
-                    include_pending=include_pending,
-                ),
-            )
-        except Exception:
-            bundle = None
-            vector_result = await self._embedding_candidate_memories(
+        # A bundle read failure must not replay the concurrent provider call.
+        # Await both outcomes so cancellation still owns every in-flight task.
+        bundle, vector_result = await asyncio.gather(
+            self.store.list_retrieval_candidate_bundle(
+                materialize_limit=self.DEFAULT_MATERIALIZE_LIMIT,
+                current_window={
+                    "scope": ctx.scope,
+                    "session_id": ctx.session_id,
+                    "user_id": ctx.user_id,
+                    "group_id": ctx.group_id,
+                    "limit": self.current_window_candidate_limit,
+                },
+                fts_terms=keyword_terms,
+                fts_limit=1200,
+                keyword_terms=keyword_terms,
+                keyword_limit=1200,
+                keyword_fallback_min_fts=self.keyword_fallback_min_fts_candidates,
+                time_window=time_window_spec,
+                include_pending=include_pending,
+            ),
+            self._embedding_candidate_memories(
                 query,
                 include_pending=include_pending,
-            )
+            ),
+            return_exceptions=True,
+        )
+        if isinstance(bundle, Exception):
+            bundle = None
+        elif isinstance(bundle, BaseException):
+            raise bundle
+        if isinstance(vector_result, BaseException):
+            raise vector_result
         if bundle is not None:
             bundle_timing = bundle.pop("_timing", None) or {}
             ranked_candidates = bundle["ranked_candidates"]
@@ -1415,11 +1416,6 @@ class RetrievalEngine:
                 memory, ctx, acl_state
             )
             if visibility_reason:
-                lifecycle = evaluate_memory_lifecycle(memory, ctx)
-                if not lifecycle.eligible:
-                    key = clean_text(lifecycle.reason or "lifecycle_ineligible", 180)
-                    prefiltered[key] = prefiltered.get(key, 0) + 1
-                    continue
                 if memory_type in PROFILE_MEMORY_TYPES and block_profile_retrieval:
                     reason = "profile_intent_not_requested"
                     prefiltered[reason] = prefiltered.get(reason, 0) + 1
@@ -2120,6 +2116,9 @@ class RetrievalEngine:
         if (is_roleplay_record(memory)
                 and getattr(ctx, 'memory_reality_mode', 'chat') != 'roleplay'):
             return "", "roleplay_not_current_reality_mode"
+        lifecycle = evaluate_memory_lifecycle(memory, ctx)
+        if not lifecycle.eligible:
+            return "", lifecycle.reason
         quality_allowed, quality_reason = self._profile_retrieval_decision(memory)
         if not quality_allowed:
             return "", quality_reason

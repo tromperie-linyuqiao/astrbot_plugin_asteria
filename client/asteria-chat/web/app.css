@@ -136,7 +136,8 @@ svg { display: block; }
 .menu-context p { margin: 0 0 7px; font-size: 10px; line-height: 1.65; color: var(--muted); overflow-wrap: anywhere; }
 .notice { display: flex; align-items: center; flex: none; gap: 9px; width: min(calc(100% - 40px),var(--chat-width)); margin: 12px auto 0; padding: 11px 12px; color: #805e32; background: #fff4df; border: 1px solid #ebdfc6; border-radius: 11px; font-size: 12px; line-height: 1.7; }
 :root[data-theme="dark"] .notice { color: #e4c694; background: #352d20; border-color: #50412b; }
-#notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#notice-text { flex: 1; min-width: 0; max-height: min(120px,24dvh); overflow-y: auto; overflow-wrap: anywhere; }
+.notice { max-height: calc(min(120px,24dvh) + 24px); align-items: flex-start; }
 .notice-close { flex: none; width: 26px; height: 26px; color: inherit; font-size: 18px; border-radius: 7px; }
 .text-button { color: var(--accent); padding: 5px 0; font-size: 11px; }
 .notice .text-button { color: inherit; font-weight: 600; }
@@ -430,3 +431,9 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .notification-preferences>button{justify-self:start;border:1px solid var(--line);background:var(--surface-panel);padding:10px 14px;border-radius:11px;font-size:11px;min-height:40px}
 .message-row.notification-target .message-body{outline:2px solid var(--accent);outline-offset:5px;border-radius:12px}
 @media(max-width:360px){.notification-preferences{grid-template-columns:minmax(0,1fr)}.cache-heading{align-items:flex-start}.cache-heading .text-button{max-width:100px}}
+.action-target-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:5px 0 10px}
+.action-target-tabs>button{flex:1;min-height:36px;white-space:nowrap}
+.action-target-tabs>button[aria-pressed=true]{background:var(--accent-soft,var(--surface-panel));border-color:var(--accent);color:var(--text-strong)}
+.action-editor-target{display:grid;gap:10px;margin:8px 0 14px}
+.action-editor-target label{display:grid;gap:7px;font-size:12px;color:var(--text-soft)}
+.action-editor-target input,.action-editor-target select{max-width:100%;min-width:0}

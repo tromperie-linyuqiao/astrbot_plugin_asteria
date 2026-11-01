@@ -1,0 +1,24 @@
+.image-jobs-dialog{width:min(560px,calc(100vw - 24px));max-height:calc(var(--app-height,100dvh) - 24px)}
+.image-jobs-dialog>.settings-form{max-height:calc(var(--app-height,100dvh) - 26px);overflow-y:auto;overscroll-behavior:contain}
+.image-jobs-dialog .dialog-heading{position:sticky;top:0;z-index:2;background:var(--surface-panel);padding-block:4px 10px}
+.image-jobs-intro,.image-job-config,.image-jobs-status,.image-job-reason,.image-job-parent,.image-job-warning,.image-job-empty{font-size:12px;line-height:1.65;color:var(--muted);overflow-wrap:anywhere;margin:6px 0}
+.image-request-form{display:grid;gap:10px;border-bottom:1px solid var(--line);padding-bottom:18px}
+.image-request-form textarea,.image-request-form select{width:100%;max-width:100%;min-width:0;background:var(--surface-raised);border:1px solid var(--line);border-radius:10px;color:var(--text);font:inherit;padding:10px}
+.image-request-form textarea{resize:vertical;min-height:78px;max-height:180px}
+.image-request-form label{display:grid;gap:5px;font-size:12px;color:var(--muted)}
+.image-request-form>.primary-button{justify-self:start}
+.image-job-toolbar,.image-job-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.image-job-toolbar h3{font-size:14px;margin:14px 0 7px}.image-job-list{display:grid;gap:10px}
+.image-job-card{padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-raised);min-width:0}
+.image-job-heading strong{font-size:13px}.image-job-state{font-size:11px;color:var(--accent);text-align:right}.image-job-card small{font-size:10px;color:var(--muted)}
+.image-job-card[data-state=unknown] .image-job-state,.image-job-warning{color:var(--danger,#bc7964)}
+.image-job-state{padding:4px 8px;border-radius:7px;background:var(--surface-panel);line-height:1.4;flex:none}
+.image-job-card[data-state=stored]{border-inline-start:3px solid var(--accent)}
+.image-job-card[data-state=blocked] .image-job-state,.image-job-card[data-state=definite_failure] .image-job-state,.image-job-card[data-state=failed] .image-job-state{color:var(--danger,#bc7964)}
+.image-jobs-status{padding:9px 11px;border-radius:9px;background:var(--surface-raised);min-height:38px}
+.image-jobs-status[data-mode=paused]{border-inline-start:2px solid var(--danger,#bc7964)}
+.image-jobs-status[data-mode=tracking]{border-inline-start:2px solid var(--accent)}
+.image-job-card>.text-button{min-height:36px;text-align:start}.image-retry-confirm{border-top:1px solid var(--line);margin-top:9px;padding-top:9px;font-size:12px;line-height:1.6}
+.image-retry-confirm button{margin-right:14px}.image-job-entry{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}.image-job-entry .attachment-picker{font-size:14px;min-height:64px}.image-job-entry small{display:block;font-weight:400;margin-top:5px}
+.image-message-association{display:block;align-self:flex-start;margin:0 0 5px;padding:3px 0;color:var(--muted);font-size:10px;text-align:start}
+@media(max-height:500px){.image-jobs-dialog{max-height:calc(var(--app-height,100dvh) - 12px);margin:6px auto}.image-jobs-dialog>.settings-form{max-height:calc(var(--app-height,100dvh) - 14px);padding:14px}.image-request-form textarea{min-height:52px;max-height:100px}.image-jobs-intro{margin-top:0}}

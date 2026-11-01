@@ -3,14 +3,15 @@
 /* Every association and edit comes from the owned saved-message APIs. */
 window.ChatMessageMemory = (() => {
   let dialog, list, status, consent, consentLabel, propose, reject, save, refresh, heading, searchBox, searchText, searchFiction, searchStatus, searchList, searchButton,
-    owner='', session='', messageId='', epoch=0, busy=false, searching=false, snapshot=null, searchEpoch=0;
+    owner='', session='', messageId='', ownerAuth=null, epoch=0, busy=false, searching=false, snapshot=null, searchEpoch=0;
   const pending=new Map();
   const correctionDrafts=new Map();
   const scope=()=>JSON.stringify([state.server,state.username,state.activeId]);
+  const auth=()=>typeof chatAuthEpoch==='number'?chatAuthEpoch:null;
   const node=(tag,text)=>{const value=document.createElement(tag);if(text!==undefined)value.textContent=text;return value;};
   const button=(text,fn)=>{const value=node('button',text);value.type='button';value.className='text-button';value.addEventListener('click',fn);return value;};
-  const ticket=()=>({epoch,owner,session,messageId});
-  const current=t=>dialog?.open&&state.authenticated&&t.epoch===epoch&&t.owner===owner&&owner===scope();
+  const ticket=()=>({epoch,owner,session,messageId,auth:auth()});
+  const current=t=>dialog?.open&&state.authenticated&&t.epoch===epoch&&t.owner===owner&&owner===scope()&&t.auth===auth()&&ownerAuth===auth();
   const pendingKey=t=>JSON.stringify([t.owner,t.messageId]);
   const route=t=>'/chat/message-memory?session_id='+encodeURIComponent(t.session)+'&message_id='+encodeURIComponent(t.messageId);
   function say(value){status.textContent=value;}
@@ -22,7 +23,7 @@ window.ChatMessageMemory = (() => {
     propose.textContent=candidate?.status==='rejected'?'重新加入记忆候选':'加入记忆候选';refresh.disabled=busy;
     if(searchButton){searchButton.disabled=searching||busy;searchText.disabled=searchFiction.disabled=searching||busy;}
   }
-  function close(){epoch++;searchEpoch++;owner='';snapshot=null;busy=searching=false;if(dialog?.open)dialog.close();list?.replaceChildren();searchList?.replaceChildren();if(searchBox)searchBox.hidden=false;if(searchText)searchText.value='';if(searchFiction)searchFiction.checked=false;if(searchStatus)searchStatus.textContent='';if(consent)consent.checked=false;}
+  function close(){epoch++;searchEpoch++;owner='';ownerAuth=null;snapshot=null;busy=searching=false;if(dialog?.open)dialog.close();list?.replaceChildren();searchList?.replaceChildren();if(searchBox)searchBox.hidden=false;if(searchText)searchText.value='';if(searchFiction)searchFiction.checked=false;if(searchStatus)searchStatus.textContent='';if(consent)consent.checked=false;}
   function setup(){
     if(dialog)return;
     dialog=node('dialog');dialog.id='message-memory-dialog';dialog.className='settings-dialog message-memory-dialog';dialog.setAttribute('aria-labelledby','message-memory-title');
@@ -76,6 +77,11 @@ window.ChatMessageMemory = (() => {
     }catch(error){if(current(t)&&request===searchEpoch)searchStatus.textContent=errorText(error);}
     finally{if(current(t)&&request===searchEpoch){searching=false;controls();}}
   }
+  function invalidateSearch(reason){
+    // A correction may have changed even a read that was already in flight.
+    searchEpoch++;searching=false;searchList.replaceChildren();
+    searchStatus.textContent=searchText.value.trim()?reason:'';
+  }
   function returnToRecords(){
     searchBox.hidden=false;if(messageId)return read();list.replaceChildren();say('');return searchRelated();
   }
@@ -125,16 +131,17 @@ window.ChatMessageMemory = (() => {
       for(const row of data.history||[])history.append(node('p','修订 '+row.revision+' · '+row.operation+'\n'+row.record.content));list.append(history);
       const draftKey=JSON.stringify([t.owner,saved.id]);
       const draft=node('textarea');draft.value=correctionDrafts.get(draftKey)??saved.content;draft.maxLength=6000;draft.rows=7;draft.setAttribute('aria-label','修正后的记忆内容');
+      let stale=false;
       const check=node('input');check.type='checkbox';const label=node('label');label.append(check,node('span','我确认修正这项已保存的原生记忆'));
       const submit=button('保存纠错',async()=>{
-        if(!current(t)||busy||!check.checked)return;const content=draft.value.trim();if(!content||content.length>6000){say('请填写1至6000字的内容。');return;}
-        if(content===saved.content){say('内容未变化。');return;}correctionDrafts.set(draftKey,draft.value);busy=true;submit.disabled=true;controls();say('正在保存纠错…');
+        if(!current(t)||busy||stale||!check.checked)return;const content=draft.value.trim();if(!content||content.length>6000){say('请填写1至6000字的内容。');return;}
+        if(content===saved.content){say('内容未变化。');return;}correctionDrafts.set(draftKey,draft.value);busy=true;submit.disabled=draft.disabled=check.disabled=true;invalidateSearch('正在保存纠错，相关记忆请稍后重新搜索。');controls();say('正在保存纠错…');
         try{const result=await apiClient.json('POST','/chat/memory-correct',{session_id:t.session,id:saved.id,content,expected_revision:saved.revision});
           if(!result?.record||result.record.content!==content||!(result.record.revision>saved.revision))throw Error('纠错结果待回读核对。');
-          correctionDrafts.delete(draftKey);if(current(t)){busy=false;await returnToRecords();}
-        }catch(error){if(current(t)){say(errorText(error)+' 编辑内容保留，请重新读取原文后比较。');submit.disabled=true;}}
-        finally{if(current(t)){busy=false;controls();}}
-      });submit.disabled=true;check.addEventListener('change',()=>{submit.disabled=!check.checked||busy;});
+          correctionDrafts.delete(draftKey);if(current(t)){invalidateSearch('记忆已更新，请重新搜索相关记忆。');busy=false;await returnToRecords();}
+        }catch(error){if(current(t)){stale=true;check.checked=false;invalidateSearch('上次纠错结果待核对，请先重新读取原文，再搜索相关记忆。');say(errorText(error)+' 编辑内容保留，请重新读取原文后比较。');submit.disabled=true;}}
+        finally{if(current(t)){busy=false;draft.disabled=check.disabled=false;controls();}}
+      });submit.disabled=true;check.addEventListener('change',()=>{submit.disabled=!check.checked||busy||stale;});
       draft.addEventListener('input',()=>{correctionDrafts.set(draftKey,draft.value);check.checked=false;submit.disabled=true;});
       list.append(draft,label,submit,button(messageId?'返回关联记忆':'返回检索结果',returnToRecords));say('原文和修订来自现有记忆库，纠错沿用版本检查。');
     }catch(error){if(current(t))say(errorText(error));}
@@ -144,11 +151,11 @@ window.ChatMessageMemory = (() => {
     if(!state.authenticated||!state.activeId)return;
     const identity=savedMessage?.serverId??savedMessage?.message_id;
     if(!/^[1-9]\d*$/.test(String(identity||''))){showNotice('请先同步，消息保存后才能查看它的真实记忆。');return;}
-    setup();close();owner=scope();session=state.activeId;messageId=String(identity);epoch++;heading.textContent='这条消息的记忆';searchBox.open=false;dialog.showModal();snapshot=null;controls();void read();
+    setup();close();owner=scope();ownerAuth=auth();session=state.activeId;messageId=String(identity);epoch++;heading.textContent='这条消息的记忆';searchBox.open=false;dialog.showModal();snapshot=null;controls();void read();
   }
   function openSearch(){
-    if(!state.authenticated||!state.activeId)return;setup();close();owner=scope();session=state.activeId;messageId='';epoch++;heading.textContent='检索记忆与共同经历';searchBox.open=true;dialog.showModal();controls();say('输入关键词，查看当前可检索的记忆与已确认共享资料。');
+    if(!state.authenticated||!state.activeId)return;setup();close();owner=scope();ownerAuth=auth();session=state.activeId;messageId='';epoch++;heading.textContent='检索记忆与共同经历';searchBox.open=true;dialog.showModal();controls();say('输入关键词，查看当前可检索的记忆与已确认共享资料。');
   }
-  return{open,openSearch,openMessageMemory:open,closeActive:()=>{if(!dialog?.open)return false;close();return true;},scopeChanged:()=>{if(owner&&(!state.authenticated||owner!==scope()))close();}};
+  return{open,openSearch,openMessageMemory:open,closeActive:()=>{if(!dialog?.open)return false;close();return true;},scopeChanged:()=>{if(owner&&(!state.authenticated||owner!==scope()||ownerAuth!==auth()))close();}};
 })();
 window.openMessageMemory=savedMessage=>window.ChatMessageMemory.open(savedMessage);

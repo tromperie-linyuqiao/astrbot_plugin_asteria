@@ -18,7 +18,7 @@ SCOPE = private_scope(dict(platform='tls', bot_id='model-routing', user_id='admi
                            character_id='system', session_id='task-model-routing', private=True))
 TASKS = {'chat': '普通聊天', 'rp': '复杂角色互动', 'summary': '记忆摘要',
          'memory_filter': '记忆筛选', 'archive_review': '档案审阅',
-         'classification': '分类与历史提取', 'insight': '数据洞察'}
+         'classification': '分类与历史提取', 'insight': '数据洞察', 'autonomous_life': '自主生活（渊站）'}
 ALIASES = {'memory_summary': 'summary', 'memory_decay_summary': 'summary',
            'memory_audit_preview': 'archive_review', 'historical_chat_summary': 'summary',
            'historical_chat_phase_summary': 'summary', 'historical_chat_reconcile': 'archive_review',
@@ -145,6 +145,10 @@ class TaskModelRouter:
             if any(identity not in available for identity in selected):
                 raise ValueError('所选模型不在当前AstrBot文本提供商列表中，请刷新')
             if len(selected) != len(set(selected)): raise ValueError('首选和备选模型不能相同')
+            if task == 'autonomous_life':
+                from .autonomous_life_runtime import syuan_provider
+                if any(not syuan_provider(available[identity]) for identity in selected):
+                    raise ValueError('自主生活后台任务请使用已配置的渊站模型；不会继承官方模型')
             normalized[task] = route
         with self.journal._lock:
             snapshot = self.settings()

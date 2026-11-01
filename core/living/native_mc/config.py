@@ -80,6 +80,29 @@ class ConfigView:
     def __init__(self, raw: Any):
         self.raw = raw or {}
 
+    @classmethod
+    def set_value(cls, raw: dict[str, Any], dotted: str, value: Any) -> None:
+        """Write the requested key and its already stored equivalents.
+
+        Reads retain canonical precedence. Only this explicit edit synchronizes
+        older slots; unrelated settings and absent legacy slots stay untouched.
+        """
+        canonical = next((key for key, aliases in cls.ALIASES.items() if dotted in aliases), dotted)
+        view, marker = cls(raw), object()
+        paths = dict.fromkeys((dotted, canonical, *cls.ALIASES.get(canonical, ())))
+        for path in paths:
+            if path != dotted and view._get_exact(path, marker) is marker:
+                continue
+            parts = path.split('.')
+            target = raw
+            for part in parts[:-1]:
+                child = target.get(part)
+                if not isinstance(child, dict):
+                    child = {}
+                    target[part] = child
+                target = child
+            target[parts[-1]] = value
+
     def get(self, dotted: str, default: Any = None) -> Any:
         marker = object()
         value = self._get_exact(dotted, marker)

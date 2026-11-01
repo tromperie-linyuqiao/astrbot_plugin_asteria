@@ -177,7 +177,7 @@ def apply_preset(raw: dict[str, Any], name: str) -> dict[str, Any]:
     if values is None:
         raise ValueError("preset must be light, standard or companion")
     for dotted, value in values.items():
-        _set_dotted(raw, dotted, value)
+        ConfigView.set_value(raw, dotted, value)
     return {
         "preset": preset,
         "label": PRESET_LABELS[preset],

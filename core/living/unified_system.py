@@ -93,6 +93,10 @@ class UnifiedSystem:
             {'type': 'object', 'properties': {'requested': {'type': 'string', 'maxLength': 64}},
              'additionalProperties': False}, _OBJECT, permissions=('context.read',),
             test_entry='tests.test_living_narrative.test_strategy_is_explicit_pure_and_has_no_emotion_or_delivery_effect'), self._strategy)
+        self.capabilities.register(CapabilitySpec(
+            'tls.life.context', '读取当前话题相关的有效虚构生活版本，不调用模型或发送。',
+            _QUERY, _OBJECT, permissions=('context.read', 'memory.read'),
+            test_entry='tests.test_autonomous_life_runtime_r97'), self._read_life_context)
         timeline = getattr(self.runtime, 'shared_timeline', None)
         if isinstance(timeline, NativeSharedTimeline) and timeline.store is getattr(getattr(self.runtime, 'memory', None), 'store', None):
             self.capabilities.register(CapabilitySpec(
@@ -119,6 +123,13 @@ class UnifiedSystem:
                  'required':['query','kind','max_chars'],'additionalProperties':False},
                 _OBJECT,permissions=('context.read','memory.read','context.feature.read','context.private.read'),
                 test_entry='tests.test_stage8_private_integration'),self._read_private_context)
+
+    async def _read_life_context(self, payload, *, scope, config):
+        generation = self._life_generation(scope)
+        if generation is None: return {'sections': [], 'state': 'unavailable'}
+        material = await asyncio.to_thread(self.runtime.autonomous_life.context_material,
+            scope, query=payload.get('query', '')[:1000], max_chars=800, limit=3)
+        return material if self._life_generation(scope) == generation else {'sections': [], 'state': 'changed'}
 
     async def _read_timeline_context(self, payload, *, scope, config):
         generation = self._timeline_generation(scope)
@@ -218,6 +229,7 @@ class UnifiedSystem:
         return material
 
     def _source_generation(self,scope,source):
+        if source=='tls.life':return self._life_generation(scope)
         if source=='tls.timeline':return self._timeline_generation(scope)
         if source=='tls.expression':return self._expression_generation(scope)
         if source=='tls.memory':return self._memory_generation(scope)
@@ -237,7 +249,7 @@ class UnifiedSystem:
 
     def _context_generations(self,scope):
         return {source:self._source_generation(scope,source) for source in
-            ('tls.memory','tls.feature','tls.private_memory','tls.narrative','tls.interaction','tls.expression','tls.timeline')}
+            ('tls.memory','tls.feature','tls.private_memory','tls.narrative','tls.interaction','tls.expression','tls.timeline','tls.life')}
 
     def context_generation(self,scope):
         """Opaque native context revision for delayed, host-owned candidates.
@@ -300,10 +312,36 @@ class UnifiedSystem:
         fragments.extend(await self._feature_contributions(scope, query=query))
         fragments.extend(await self._expression_contributions(scope))
         fragments.extend(await self._timeline_contributions(scope, query=query))
+        fragments.extend(await self._life_contributions(scope, query=query))
         # An earlier source may have been revoked/disabled while a different
         # optional provider awaited. Do not return those stale private records
         # even to callers which only preview contributions without inject().
         return [f for f in fragments if self._fragment_authorized(scope,f,generations)]
+
+    def _life_generation(self, scope):
+        service = getattr(self.runtime, 'autonomous_life', None)
+        if service is None or not self._permission(scope, 'context.read'): return None
+        try:
+            for row in self.capabilities.describe():
+                if row['capability_id'] == 'tls.life.context' and row['enabled'] and row['health'] not in {'closed','disabled','dependency_unavailable'}:
+                    return (row['generation'], service.context_generation(scope))
+        except (PermissionError, RuntimeError, ValueError, sqlite3.Error): return None
+        return None
+
+    async def _life_contributions(self, scope, *, query):
+        generation = self._life_generation(scope)
+        if generation is None: return []
+        try:
+            result = await self.runtime._bounded(self.capabilities.call('tls.life.context',
+                {'query': query[:1000]}, scope=scope))
+            if self._life_generation(scope) != generation or not result.get('ok'): return []
+            material = result['data']
+            return [ContextFragment(row['id'], row['text'], 'roleplay_event',
+                'tls.life', priority=76-index, expires_at=row.get('expires_at'))
+                for index, row in enumerate(material.get('sections', [])[:3])]
+        except (PermissionError, RuntimeError, ValueError, KeyError, TypeError, sqlite3.Error, TimeoutError):
+            self.metrics['provider_errors'] += 1
+            return []
 
     def _timeline_generation(self, scope):
         service = getattr(self.runtime, 'shared_timeline', None)
@@ -417,6 +455,7 @@ class UnifiedSystem:
         fragments = await self._feature_contributions(scope, query=query, kind=kind, max_chars=max_chars)
         fragments.extend(await self._private_contributions(scope,query=query,kind=kind,max_chars=min(max_chars,900)))
         fragments.extend(await self._timeline_contributions(scope, query=query))
+        fragments.extend(await self._life_contributions(scope, query=query))
         if self._composition_generation(scope) != generation:
             return ''
         assembler = ContextAssembler(authorize=lambda s: self._composition_generation(s) == generation,
@@ -443,7 +482,8 @@ class UnifiedSystem:
 
     def _composition_generation(self,scope):
         feature,private,timeline=self._feature_generation(scope),self._private_generation(scope),self._timeline_generation(scope)
-        return (feature,private,timeline) if any(value is not None for value in (feature,private,timeline)) else None
+        life=self._life_generation(scope)
+        return (feature,private,timeline,life) if any(value is not None for value in (feature,private,timeline,life)) else None
 
     async def _private_contributions(self,scope,*,query,kind,max_chars,mode='all'):
         generation=self._private_generation(scope)

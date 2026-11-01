@@ -26,7 +26,7 @@ function mount(container,{api,getScope=()=>null}){
  }
  function setScope(s){const next=full(s)?Object.fromEntries(FIELDS.map(k=>[k,s[k]])):null;if(JSON.stringify(next)===JSON.stringify(scope))return;scope=next;version++;busy=false;last=null;body.replaceChildren();download.disabled=true;refresh.disabled=false;status.textContent=scope?'会话已切换，点击刷新读取当前资料。':'请选择上方完整会话。';}
  refresh.addEventListener('click',load);zone.addEventListener('change',()=>{version++;busy=false;last=null;download.disabled=true;refresh.disabled=false;body.replaceChildren();load();});
- download.addEventListener('click',()=>{if(!last||disposed||!same(last.scope,scope||getScope())||last.timezone!==zone.value)return;const blob=new Blob([JSON.stringify(last,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=make('a');a.href=url;a.download='texas-daily-brief-'+last.day+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),0);});
+ download.addEventListener('click',()=>{if(!last||disposed||!same(last.scope,scope||getScope())||last.timezone!==zone.value)return;const blob=new Blob([JSON.stringify(last,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=make('a');a.href=url;a.download='asteria-daily-brief-'+last.day+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),0);});
  return {setScope,activate:load,dispose(){disposed=true;version++;last=null;download.disabled=refresh.disabled=true;body.replaceChildren();}};
 }
 global.TLSDailyBrief=Object.freeze({mount});

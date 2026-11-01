@@ -59,6 +59,8 @@ class NativePCDailyLifecycle:
         self.authorize_material, self.persona_allowed = authorize_material, persona_allowed
         self.journal = plans.journal; self.clock = clock or plans.clock
         self.daily_source = daily_source
+        self.life_source = None
+        self.life_coordinator = None
         self.defaults = self._settings(defaults or _DEFAULTS)
         self.active = True; self._scopes = {}; self._serial = asyncio.Lock()
         self._last = {}; self._active_tasks = set(); self._source_epoch = 0
@@ -230,6 +232,8 @@ class NativePCDailyLifecycle:
             link = self.journal.fetch(NAMESPACE, 'plan.' + plan['id'], scope)
             if (not link or link['data'].get('phase') != 'ready' or link['data'].get('persona_id') != source['persona_id']
                     or plan['status'] != 'active' or plan['archived']): continue
+            if (link['data'].get('kind') == 'routine' and self.life_coordinator
+                    and self.life_coordinator.owns_generation(scope)): continue
             for item in list(plan['items']):
                 if item['status'] != 'pending' or item['scheduled_at'] > now: continue
                 await self._source(scope, 'advance')
@@ -249,8 +253,12 @@ class NativePCDailyLifecycle:
 
     def _candidates(self, scope, *, include_ineligible=False):
         rows = self.goals.proactive_candidates(scope, limit=8, include_ineligible=include_ineligible)
+        life = self.life_source
+        life_owned = bool(self.life_coordinator and self.life_coordinator.owns_generation(scope))
+        if life is not None and life.active:
+            rows += life.proactive_candidates(scope, include_ineligible=include_ineligible)
         source = self.daily_source
-        if source is not None and getattr(source, 'active', False) is True:
+        if not life_owned and source is not None and getattr(source, 'active', False) is True:
             rows += source.proactive_candidates(scope)
         return sorted(rows, key=lambda row: (-row['score'], row['candidate_id']))[:16]
 
@@ -258,6 +266,15 @@ class NativePCDailyLifecycle:
         try:
             await self._source(scope, 'share')
             if not self.settings(scope)['flags']['share_enabled']: return False
+            if work['candidate']['source'] == 'autonomous_life':
+                life = self.life_source
+                if life is None or not life.active: return False
+                policy = life.settings(scope)['settings']
+                event = life.get_event(scope, work['candidate']['event_id'])
+                return bool(policy['enabled'] and policy['share_enabled'] and event and event['valid']
+                    and not event['archived'] and event['version'] == work['candidate']['event_version']
+                    and not any(topic.casefold() in (event['fields']['title']+' '+event['fields']['content']).casefold()
+                        for topic in policy.get('muted_topics', [])))
             candidate = self._candidate(scope, work['candidate']['candidate_id'])
             return (candidate is not None and candidate['eligible'] is True
                     and candidate['dedupe_key'] == work['candidate']['dedupe_key'])
@@ -265,6 +282,17 @@ class NativePCDailyLifecycle:
 
     def _share_put(self, scope, work, revision):
         return self._put(SHARES, work['key'], scope, work, revision, operation='share')
+
+    async def _life_image_followup(self, scope, work):
+        if work['candidate']['source'] != 'autonomous_life' or work.get('phase') != 'claimed':
+            return None
+        try:
+            from .chat_generated_images import service_for
+            service = service_for(self.proactive.host.plugin)
+            return await service.followup_for_share(scope, work['task_id'],
+                work['candidate']['event_id'], work['candidate']['event_version'])
+        except (RuntimeError, ValueError, PermissionError, KeyError, AttributeError, OSError):
+            return None  # Saved text and its original delivery remain intact.
 
     async def _claim_confirmed(self, scope, row):
         work = dict(row['data'])
@@ -280,7 +308,11 @@ class NativePCDailyLifecycle:
         work.update(phase='claim_unknown', delivery_confirmed=True, claim_attempted=True, claim_at=self.clock())
         row = self._share_put(scope, work, row['revision'])
         try:
-            if candidate['source'] == 'pc_virtual_life':
+            if candidate['source'] == 'autonomous_life':
+                if self.life_source is None: raise PermissionError('life owner unavailable')
+                saved = self.life_source.record_share(scope, candidate['event_id'], task_id=work['task_id'],
+                    state='confirmed', event_version=candidate['event_version'])
+            elif candidate['source'] == 'pc_virtual_life':
                 if self.daily_source is None: raise PermissionError('native daily event owner unavailable')
                 saved = self.daily_source.confirm_share(scope, candidate, work['task_id'])
             else:
@@ -294,12 +326,14 @@ class NativePCDailyLifecycle:
         else:
             work.update(phase='claimed', claimed_goal_revision=saved['revision'])
         self._share_put(scope, work, row['revision'])
+        await self._life_image_followup(scope, work)
         return dict(state=work['phase'], task_id=work['task_id'], delivery_confirmed=True)
 
     async def _reconcile_share(self, scope, row):
         work = dict(row['data'])
         if work['phase'] in {'acked'}: return await self._claim_confirmed(scope, row)
         if work['phase'] in _SETTLED or work['phase'] == 'unknown':
+            if work['phase'] == 'claimed': await self._life_image_followup(scope, work)
             return dict(state=work['phase'], task_id=work.get('task_id'), automatic_retry=False)
         actual = await self.proactive._fetch(scope)
         if (actual is None or actual['data']['event_id'] != work['engine_event_id']
@@ -310,6 +344,10 @@ class NativePCDailyLifecycle:
         actual = await self.proactive._fetch(scope)
         work.update(phase=actual['data']['phase'], task_id=actual['data']['task_id'])
         row = self._share_put(scope, work, row['revision'])
+        if work['candidate']['source'] == 'autonomous_life' and self.life_source is not None and work['phase'] in {'failed','dropped','unknown'}:
+            self.life_source.record_share(scope, work['candidate']['event_id'], task_id=work['task_id'],
+                state='unknown' if work['phase']=='unknown' else 'failed',
+                event_version=work['candidate']['event_version'], detail=work['phase'])
         if work['phase'] == 'acked': return await self._claim_confirmed(scope, row)
         return dict(state=work['phase'], task_id=work['task_id'])
 
@@ -322,6 +360,10 @@ class NativePCDailyLifecycle:
             if row is None: return dict(state='unknown', reason='durable_share_mapping_missing')
             if row['data']['phase'] in _WAITING | {'unknown', 'acked'}:
                 return await self._reconcile_share(scope, row)
+            if row['data']['phase'] == 'claimed':
+                # Recover the accepted follow-up by its same durable identity
+                # if the process stopped between text claim and job creation.
+                await self._life_image_followup(scope, row['data'])
         for candidate in self._candidates(scope):
             key = candidate['dedupe_key']
             previous = self.journal.fetch(SHARES, key, scope)
@@ -331,7 +373,7 @@ class NativePCDailyLifecycle:
             actual = await self.proactive._fetch(scope)
             if actual and (actual['data']['phase'] in _WAITING or actual['data']['event_id'] == event_id):
                 return dict(state='deferred', reason='existing_shared_lane_event_retained')
-            topic = ('有来源的个人目标分享：' + candidate['topic'] + '。' + candidate['motive']
+            topic = (('有来源的虚构生活分享：' if candidate['source'] == 'autonomous_life' else '有来源的个人目标分享：') + candidate['topic'] + '。' + candidate['motive']
                      + '。依据：' + candidate['evidence'])[:300]
             topic = ' '.join(topic.split())
             task_id = make_task(scope, event_id, text='identity', now=self.clock())['id']
@@ -342,8 +384,16 @@ class NativePCDailyLifecycle:
             self._put(NAMESPACE, 'active_share', scope, dict(key=key), pointer['revision'] if pointer else 0, operation='share')
             # One existing lane owns generation, model/image budget, quiet hours,
             # shared cadence, queueing, permission and platform confirmation.
-            result = await self.proactive.tick(scope, topic)
+            # Text takes the existing admission and queue first. A confirmed
+            # life share may attach one image later under that same admission;
+            # generating a picture never blocks the initial message.
+            result = await self.proactive.tick(scope, topic,
+                **({'text_only': True} if candidate['source'] == 'autonomous_life' else {}))
             actual = await self.proactive._fetch(scope)
+            if candidate['source'] == 'autonomous_life' and actual and actual['data'].get('task_id') == task_id:
+                self.life_source.record_share(scope, candidate['event_id'], task_id=task_id,
+                    state='queued' if actual['data']['phase'] in _WAITING | {'acked'} else 'unknown',
+                    event_version=candidate['event_version'], detail='existing_shared_lane')
             if (actual and actual['data']['event_id'] == event_id
                     and actual['data'].get('signature') == _digest([scope, event_id, topic])):
                 return await self._reconcile_share(scope, row)
@@ -360,7 +410,8 @@ class NativePCDailyLifecycle:
                 source = await self._source(scope, 'advance')
                 flags = self.settings(scope)['flags']; result = dict(state='current', generated=0, completed_items=0)
                 if flags['auto_generate']:
-                    for routines in ([False, True] if flags['routine_enabled'] else [False]):
+                    life_owned = bool(self.life_coordinator and self.life_coordinator.owns_generation(scope))
+                    for routines in ([False, True] if flags['routine_enabled'] and not life_owned else [False]):
                         try:
                             before = len(self.plans.list(scope, limit=MAX_PLANS)['records'])
                             await self.generate(scope, routines=routines)

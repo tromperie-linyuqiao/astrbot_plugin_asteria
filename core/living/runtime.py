@@ -388,6 +388,7 @@ class LivingRuntime:
         delivery=getattr(self,'delivery',None)
         phone=getattr(self,'phone_companion',None)
         images=getattr(self,'image_service',None)
+        chat_images=getattr(self,'chat_images',None)
         agenda=getattr(self,'agenda',None)
         important_dates=getattr(self,'important_dates',None)
         music_library=getattr(self,'music_library',None)
@@ -395,6 +396,8 @@ class LivingRuntime:
         personal_goals=getattr(self,'personal_goals',None)
         scoped_daily_plans=getattr(self,'scoped_daily_plans',None)
         pc_daily_lifecycle=getattr(self,'pc_daily_lifecycle',None)
+        life_coordinator=getattr(self,'life_coordinator',None)
+        autonomous_life=getattr(self,'autonomous_life',None)
         expression_review=getattr(self,'expression_review',None)
         shared_timeline=getattr(self,'shared_timeline',None)
         expression_reply=getattr(self,'expression_reply',None)
@@ -407,7 +410,7 @@ class LivingRuntime:
         errors=[]
         # Reject every ingress before the first await, including when close is
         # called directly after a cancelled construction rather than Host.stop.
-        for service in (pc_daily_lifecycle, proactive, generator, persona_binding, shared_timeline, expression_review, music_library, memo_notes, scoped_daily_plans, personal_goals, important_dates, memory_transfer, history_adoption, expression_reply, expression_assets, agenda, phone, reminders, unified):
+        for service in (chat_images, life_coordinator, autonomous_life, pc_daily_lifecycle, proactive, generator, persona_binding, shared_timeline, expression_review, music_library, memo_notes, scoped_daily_plans, personal_goals, important_dates, memory_transfer, history_adoption, expression_reply, expression_assets, agenda, phone, reminders, unified):
             if service is not None:
                 try: service.stop()
                 except BaseException as exc: errors.append(exc)
@@ -415,7 +418,7 @@ class LivingRuntime:
             delivery.active=False
             delivery.sender.active=False
         for task in tuple(self._pending):task.cancel()
-        for service in (proactive, generator, agenda, phone, images, reminders, unified, delivery):
+        for service in (chat_images, life_coordinator, proactive, generator, agenda, phone, images, reminders, unified, delivery):
             if service is not None:
                 try: await service.close()
                 except BaseException as exc: errors.append(exc)

@@ -56,6 +56,12 @@ public final class ApiPolicy {
         return "/auth/login".equals(URI.create(path).getPath());
     }
 
+    public static boolean streamRequest(String method, String path) {
+        String checked = requestPath(path);
+        return ("POST".equals(method) && ("/chat/send".equals(checked) || "/chat/regenerate".equals(checked)))
+                || ("GET".equals(method) && "/chat/run-stream".equals(URI.create(checked).getPath()));
+    }
+
     public static boolean sameOrigin(String first, String second) {
         URI a = URI.create(first), b = URI.create(second);
         int ap = a.getPort() == -1 ? 443 : a.getPort();

@@ -95,7 +95,8 @@ window.ChatCache = (() => {
     const complete = saved.length === result.history.length && saved.length <= limits.messages && result.is_running !== true;
     const snapshot = clone({ history: saved.slice(-limits.messages), persona: result.persona,
       tls_state: result.tls_state, receipt_transport: result.receipt_transport, is_running: false, active_runs: [] });
-    const revision = complete && /^[a-f0-9]{64}$/.test(result.history_revision || '') ? result.history_revision : null;
+    const revision = complete && result.is_running !== true && !(result.active_runs || []).length
+      && /^[a-f0-9]{64}$/.test(result.history_revision || '') ? result.history_revision : null;
     account.records = account.records.filter(row => row.id !== id);
     account.records.push({ id, updatedAt: Date.now(), complete, revision, snapshot });
     account.lastId = id; account.updatedAt = Date.now();

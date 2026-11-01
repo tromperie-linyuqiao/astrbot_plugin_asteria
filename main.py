@@ -562,6 +562,9 @@ class VirtualBodyPlugin(Star):
             from .scoped_daily_plan_web_api import NativeScopedDailyPlanWebApi
             self._native_scoped_daily_plan_web_api = NativeScopedDailyPlanWebApi(self)
             self._native_scoped_daily_plan_web_api.register_routes()
+            from .autonomous_life_web_api import NativeAutonomousLifeWebApi
+            self._autonomous_life_web_api = NativeAutonomousLifeWebApi(self)
+            self._autonomous_life_web_api.register_routes()
             from .profile_candidates_web_api import NativeProfileCandidatesWebApi
             self._native_profile_candidates_web_api=NativeProfileCandidatesWebApi(self)
             self._native_profile_candidates_web_api.register_routes()
@@ -1211,7 +1214,7 @@ class VirtualBodyPlugin(Star):
         scope, host = self._tls_command_scope(event)
         event.stop_event()
         if scope is None:
-            await event.send(event.plain_result('当前私聊会话尚未获得TLS角色授权，绑定未完成。请先与德克萨斯正常聊一句，再重新生成绑定码；若仍失败，请检查TLS角色的会话授权。'))
+            await event.send(event.plain_result('当前私聊会话尚未获得TLS角色授权，绑定未完成。请先与角色正常聊一句，再重新生成绑定码；若仍失败，请检查TLS角色的会话授权。'))
             return
         tokens = self._cmd_tokens(event)
         if len(tokens) != 2:
@@ -1978,6 +1981,24 @@ class VirtualBodyPlugin(Star):
         except (RuntimeError, ValueError, OSError) as exc:
             logger.warning('TLS Chat session context unavailable: %s', type(exc).__name__)
 
+    @filter.on_agent_begin()
+    async def begin_texas_chat_model_route(self, event, run_context):
+        api = getattr(self, '_native_chat_web_api', None)
+        if api is not None:
+            try:
+                await api.observe_model_run(event, run_context)
+            except (RuntimeError, ValueError, OSError, PermissionError, AttributeError):
+                logger.warning('TLS Chat request model route could not be applied')
+
+    @filter.on_agent_done()
+    async def record_texas_chat_model_response(self, event, run_context, response):
+        api = getattr(self, '_native_chat_web_api', None)
+        if api is not None:
+            try:
+                await api.observe_model_run(event, run_context, response)
+            except (RuntimeError, ValueError, OSError, PermissionError, AttributeError):
+                logger.warning('TLS Chat actual model response could not be recorded')
+
     @filter.on_llm_request(priority=6)
     async def inject_texas_chat_linked_memory(self, event: AstrMessageEvent, req: ProviderRequest):
         from .core.living.chat_identity import inject_linked_memory
@@ -2679,6 +2700,11 @@ class VirtualBodyPlugin(Star):
                     takeover.sync_proof(req, event)
                     if takeover.cleanup_before_final(req, event) is False:
                         return
+                try:
+                    from .core.living.chat_window_continuity import stage_chat_window_continuity
+                    await stage_chat_window_continuity(self, event, req)
+                except Exception as exc:
+                    logger.debug('[VirtualBody] 临时续聊原话不可用: %s', type(exc).__name__)
                 await self._presence.inject(event, req, TextPart)
         except Exception as exc:
             logger.warning('[VirtualBody] 环境 Context 暂不可用: %s', type(exc).__name__)

@@ -1,4 +1,4 @@
-"""Authenticated Texas Chat entry points over AstrBot's existing ChatService.
+"""Authenticated Asteria Chat entry points over AstrBot's existing ChatService.
 
 The service owns conversations, generation, SSE and persistence. This small
 bridge adds the missing owner check before a new main-session generation.
@@ -88,6 +88,7 @@ class NativeChatWebApi:
                 ('new', self.new, 'POST'), ('connect', self.connect, 'POST'),
                 ('bookmarks', self.bookmarks_get, 'GET'), ('bookmarks', self.bookmarks_save, 'POST'),
                 ('history', self.history, 'GET'), ('sync', self.sync, 'GET'), ('send', self.send, 'POST'),
+                ('run-stream', self.run_stream, 'GET'),
                 ('receipts', self.receipts_get, 'GET'), ('receipts', self.receipts_save, 'POST'),
                 ('rename', self.rename, 'POST'),
                 ('remove', self.remove, 'POST'),
@@ -101,7 +102,11 @@ class NativeChatWebApi:
                 ('message-memory', self.message_memory_get, 'GET'),
                 ('message-memory', self.message_memory_save, 'POST'),
                 ('memory-search', self.memory_search, 'GET'),
+                ('voice', self.voice_get, 'GET'), ('voice', self.voice_post, 'POST'),
+                ('voice/synthesize', self.voice_synthesize, 'POST'), ('voice/audio', self.voice_audio, 'GET'),
+                ('life', self.life_get, 'GET'), ('life', self.life_post, 'POST'),
                 ('delivery-center', self.delivery_center_get, 'GET'),
+                ('image-jobs', self.image_jobs_get, 'GET'), ('image-jobs', self.image_jobs_save, 'POST'),
                 ('regenerate', self.regenerate, 'POST'),
                 ('expression-settings', self.expression_settings_get, 'GET'),
                 ('expression-settings', self.expression_settings_save, 'POST'),
@@ -125,7 +130,7 @@ class NativeChatWebApi:
                 ('upload', self.upload, 'POST'), ('file', self.file, 'GET')):
             self.plugin.context.register_web_api(
                 PAGE_API_PREFIX + '/' + name, handler, [method],
-                'TLS authenticated Texas Chat ' + name)
+                'TLS authenticated Asteria Chat ' + name)
 
     def _bound(self):
         if getattr(self.plugin, '_stopping', False):
@@ -246,7 +251,7 @@ class NativeChatWebApi:
                         break
                     if session_id is None:
                         if persona_id is None:
-                            raise _RequestError('首次连接请先在连接设置中选择德克萨斯的实际角色。', 409)
+                            raise _RequestError('首次连接请先在连接设置中选择角色的实际角色。', 409)
                         self._bound()
                         created = await service.new_session(username, 'webchat')
                         session_id = _session_id(created.get('session_id'))
@@ -430,18 +435,184 @@ class NativeChatWebApi:
             revision = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
                 separators=(',', ':'), allow_nan=False).encode('utf-8')).hexdigest()
             known = request.query.get('known_revision')
-            if isinstance(known, str) and re.fullmatch(r'[0-9a-f]{64}', known) and known == revision:
+            if (isinstance(known, str) and re.fullmatch(r'[0-9a-f]{64}', known) and known == revision
+                    and payload.get('is_running') is not True and not payload.get('active_runs')):
                 return self._ok(dict(not_modified=True, history_revision=revision,
                     receipt_transport=payload['receipt_transport']))
             return self._ok(dict(payload, history_revision=revision))
         except (_RequestError, ChatServiceError) as exc:
             return self._error(exc)
 
+    async def run_stream(self):
+        """Observe one existing SDK generation; never create or replay it."""
+        try:
+            if set(request.query.keys()) - {'session_id', 'run_id'}:
+                raise _RequestError('接续回复只接受会话与运行编号')
+            session_id = _session_id(request.query.get('session_id'))
+            run_id = request.query.get('run_id')
+            if not isinstance(run_id, str) or not re.fullmatch(r'[0-9a-fA-F-]{32,36}', run_id):
+                raise _RequestError('运行编号无效')
+            username, service, _, _ = await self._owned_chat(session_id)
+            runs = service.get_active_chat_runs(username, session_id)
+            matched = [item for item in runs if item.get('run_id') == run_id
+                       and item.get('session_id') == session_id]
+            if len(matched) != 1:
+                raise _RequestError('这次回复已结束或不可接续，请同步记录', 404)
+            await self._recheck_owned_session(username, service, session_id)
+            # build_chat_run_stream rechecks the actual run owner. No await
+            # between its same-session proof and subscribing to that object.
+            active = getattr(service, 'chat_runs', {}).get(run_id)
+            if (active is None or active.username != username or active.session_id != session_id
+                    or active.platform_history_id != 'webchat'):
+                raise _RequestError('这次回复已结束或不可接续，请同步记录', 404)
+            services = request._request.app.state.services
+            return stream_response(self._observe_run_stream(username, service, services, session_id, active),
+                content_type='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+        except (_RequestError, ChatServiceError) as exc:
+            return self._error(exc)
+
+    async def _observe_run_stream(self, username, service, services, session_id, active, *, seconds=30):
+        """A bounded subscription, detached from the SDK's generation task."""
+        from .core.living.structured_reply import display
+        run_id, stream = active.run_id, None
+        end_reason = 'closed'
+        async def owned():
+            session = await service.db.get_platform_session_by_id(session_id)
+            # PluginRequest's context has ended when ASGI iterates this body.
+            # Use the captured authenticated identity and current service, not
+            # a request proxy outside its lifetime.
+            if (getattr(self.plugin, '_stopping', False) or services.chat is not service
+                    or session is None or session.creator != username
+                    or session.session_id != session_id or session.platform_id != 'webchat'
+                    or session.is_group != 0 or active.username != username
+                    or active.session_id != session_id or active.platform_history_id != 'webchat'
+                    or active.run_id != run_id
+                    or (service.chat_runs.get(run_id) is not None
+                        and service.chat_runs.get(run_id) is not active)):
+                raise _RequestError('会话归属已变化', 403)
+        try:
+            async with asyncio.timeout(seconds):
+                await owned()
+                # Subscribe only once the response body starts. A discarded
+                # response cannot leave an unstarted SDK subscriber behind.
+                if service.chat_runs.get(run_id) is active:
+                    stream = await service.build_chat_run_stream(username, run_id)
+                else:
+                    yield 'data: ' + json.dumps({'type': 'tls_run_watch_end', 'data': {
+                        'run_id': run_id, 'source': 'sdk_run_observer', 'reason': 'closed'}}) + '\n\n'
+                    return
+                async for chunk in stream:
+                    # Permission is checked again after waiting for each frame.
+                    # This also fences plugin unload without cancelling generation.
+                    await owned()
+                    text = chunk.decode('utf8', errors='replace') if isinstance(chunk, bytes) else chunk
+                    if isinstance(text, str) and text.startswith('data: '):
+                        try:
+                            frame = json.loads(text[6:].strip())
+                            if frame.get('type') == 'run_snapshot':
+                                data = frame.get('data')
+                                if (not isinstance(data, dict) or data.get('run_id') != run_id
+                                        or data.get('session_id') != session_id):
+                                    raise _RequestError('回复范围已变化，请同步记录', 409)
+                                # Snapshot is the same SDK content as history;
+                                # presentation filters stay on the client.
+                            elif frame.get('type') in {'plain', 'complete'} and isinstance(frame.get('data'), str):
+                                frame['data'] = display(frame['data'])
+                                text = 'data: ' + json.dumps(frame, ensure_ascii=False) + '\n\n'
+                        except (ValueError, TypeError) as exc:
+                            if isinstance(exc, _RequestError):
+                                raise
+                    yield text
+        except TimeoutError:
+            end_reason = 'window_elapsed'
+        except (_RequestError, ChatServiceError):
+            # A revoked owner gets no more content; no provider error details.
+            yield 'data: ' + json.dumps({'type': 'error', 'data': '接续权限或会话已变化，请重新同步。'}) + '\n\n'
+            end_reason = 'unavailable'
+        finally:
+            if stream is not None:
+                await stream.aclose()
+        yield 'data: ' + json.dumps({'type': 'tls_run_watch_end', 'data': {
+            'run_id': run_id, 'source': 'sdk_run_observer', 'reason': end_reason}}) + '\n\n'
+
     def _model_route(self, service, username, session_id, session):
         expressions = self._expressions(service)
         return ChatModelRoute(ChatSessionState(expressions.journal, current=expressions.current),
             getattr(self.plugin, '_task_model_router', None), username=username,
             session_id=session_id, umo=build_webchat_unified_msg_origin(session))
+
+    async def observe_model_run(self, event, run_context, response=None):
+        """Apply an accepted APP route to this SDK runner; observe its real result.
+
+        AstrBot 4.27.1 registers this runner before OnAgentBegin and retains it
+        through OnAgentDone. Never patch a provider, global config or SDK method.
+        The request sidecar was created by our owner-checked send path, not by
+        client supplied event extras. Direct dashboard/QQ runs remain untouched.
+        """
+        from astrbot.core import db_helper
+        from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+        from astrbot.core.pipeline.process_stage.follow_up import _ACTIVE_AGENT_RUNNERS
+        from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
+        from astrbot.core.provider.provider import Provider
+        from .core.living.task_model_router import provider_id
+
+        if getattr(self.plugin, '_stopping', False) or event.get_platform_name() != 'webchat':
+            return
+        raw = getattr(event.message_obj, 'raw_message', None)
+        if (not isinstance(raw, tuple) or len(raw) != 3 or not isinstance(raw[2], dict)
+                or raw[0] != event.get_sender_id()):
+            return
+        username, session_id, payload = raw
+        runner = _ACTIVE_AGENT_RUNNERS.get(event.unified_msg_origin)
+        if (not isinstance(runner, ToolLoopAgentRunner) or runner.run_context is not run_context
+                or run_context.context.event is not event):
+            return
+        session = await db_helper.get_platform_session_by_id(session_id)
+        if (session is None or session.creator != username or session.session_id != session_id
+                or session.platform_id != 'webchat' or session.is_group != 0
+                or build_webchat_unified_msg_origin(session) != event.unified_msg_origin):
+            return
+        service = SimpleNamespace(attachments_dir=Path(get_astrbot_data_path()) / 'attachments')
+        expressions = self._expressions(service)
+        scope = expressions.message_scope(username, session_id)
+        checkpoint = payload.get('llm_checkpoint_id')
+        submission = await asyncio.to_thread(expressions.checkpoint_submission, scope, checkpoint)
+        plan = submission.get('model_route') if submission else None
+        if (not isinstance(plan, dict) or plan.get('provider_id') != payload.get('selected_provider')
+                or plan.get('session_id') != session_id):
+            return
+        route = self._model_route(service, username, session_id, session)
+        route._check()
+        # Recheck after the disk read; a removed/reassigned session grants no
+        # runtime configuration or telemetry access to its previous owner.
+        current = await db_helper.get_platform_session_by_id(session_id)
+        if (current is None or current.creator != username or current.platform_id != 'webchat'
+                or current.is_group != 0 or current.session_id != session_id
+                or _ACTIVE_AGENT_RUNNERS.get(event.unified_msg_origin) is not runner):
+            return
+        route._check()
+        if response is None:
+            ids = plan.get('fallback_provider_ids')
+            if not isinstance(ids, list) or len(ids) > 256:
+                return
+            selected = []
+            for identity in ids:
+                provider = self.plugin.context.get_provider_by_id(identity)
+                if isinstance(provider, Provider) and provider is not runner.provider and provider not in selected:
+                    selected.append(provider)
+            # For image input the SDK may already have selected a vision
+            # fallback before reset. Keep that real primary and its capability.
+            runner.fallback_providers = selected
+            event.set_extra('tls_chat_model_route_applied', checkpoint)
+        elif (event.get_extra('tls_chat_model_route_applied') == checkpoint
+                and runner.get_final_llm_resp() is response
+                and getattr(response, 'role', None) == 'assistant'
+                and not getattr(response, 'is_chunk', False) and not runner.was_aborted()):
+            raw_response = getattr(response, 'raw_completion', None)
+            model = (raw_response.get('model') if isinstance(raw_response, dict)
+                     else getattr(raw_response, 'model', None)) or runner.provider.get_model()
+            await asyncio.to_thread(route.record_response, provider_id(runner.provider), model,
+                plan['provider_id'], time.time(), checkpoint)
 
     async def sync(self):
         """Append catch-up for the existing watcher, not a push connection."""
@@ -485,7 +656,9 @@ class NativeChatWebApi:
             session_id = _session_id(request.query.get('session_id'))
             username, service, _, session = await self._owned_chat(session_id)
             route = self._model_route(service, username, session_id, session)
-            return self._ok(await asyncio.to_thread(route.view))
+            result = await asyncio.to_thread(route.view)
+            await self._recheck_owned_session(username, service, session_id)
+            return self._ok(result)
         except (_RequestError, ChatServiceError, ChatExpressionError, JournalConflict,
                 ValueError, RuntimeError, OSError) as exc:
             return self._expression_error(exc)
@@ -498,7 +671,9 @@ class NativeChatWebApi:
             session_id = _session_id(body['session_id'])
             username, service, _, session = await self._owned_chat(session_id)
             route = self._model_route(service, username, session_id, session)
-            return self._ok(await asyncio.to_thread(route.save, body['changes'], body['expected_revision']))
+            result = await asyncio.to_thread(route.save, body['changes'], body['expected_revision'])
+            await self._recheck_owned_session(username, service, session_id)
+            return self._ok(result)
         except (_RequestError, ChatServiceError, ChatExpressionError, JournalConflict,
                 ValueError, RuntimeError, OSError) as exc:
             return self._expression_error(exc)
@@ -509,7 +684,9 @@ class NativeChatWebApi:
             username, service, snapshot, _ = await self._owned_chat(session_id)
             expressions = self._expressions(service)
             receipts = ChatReceipts(expressions.journal, current=expressions.current)
-            return self._ok(await asyncio.to_thread(receipts.view, username, session_id, snapshot))
+            result = await asyncio.to_thread(receipts.view, username, session_id, snapshot)
+            await self._recheck_owned_session(username, service, session_id)
+            return self._ok(result)
         except (_RequestError, ChatServiceError) as exc:
             return self._error(exc)
         except (RuntimeError, OSError, ValueError):
@@ -545,6 +722,7 @@ class NativeChatWebApi:
             await self._recheck_owned_session(username, service, session_id)
             result = await asyncio.to_thread(receipts.report, username, session_id, snapshot,
                 body['phase'], body['message_ids'])
+            await self._recheck_owned_session(username, service, session_id)
             return self._ok(result)
         except (_RequestError, ChatServiceError) as exc:
             return self._error(exc)
@@ -787,6 +965,81 @@ class NativeChatWebApi:
         except (_RequestError, ChatServiceError, ChatExpressionError, JournalConflict, KeyError, RuntimeError, OSError, ValueError) as exc:
             return self._expression_error(exc)
 
+    async def _image_resources(self, session_id):
+        from .core.living.chat_generated_images import service_for
+        username, service, _, session = await self._owned_chat(session_id)
+        scope = actual_app_scope(self.plugin, username, session)
+        if scope is None:
+            raise _RequestError('请先在当前 APP 会话正常聊天，图片任务需要真实会话授权', 403)
+        coordinator = service_for(self.plugin)
+        return username, service, session, coordinator, scope
+
+    async def image_jobs_get(self):
+        try:
+            session_id = _session_id(request.query.get('session_id'))
+            username, service, _, coordinator, scope = await self._image_resources(session_id)
+            jobs = await coordinator.reconcile(scope)
+            lookup = await asyncio.to_thread(coordinator.lookup, scope, request.query.get('request_id')) if request.query.get('request_id') is not None else None
+            await self._recheck_owned_session(username, service, session_id)
+            return self._ok(dict(status=coordinator.status(scope), jobs=jobs,
+                request_lookup=lookup,stored_means='saved_in_server_chat_history', client_received_inferred=False))
+        except (_RequestError, ChatServiceError, JournalConflict, KeyError, PermissionError, RuntimeError, OSError, ValueError) as exc:
+            return self._expression_error(exc)
+
+    async def image_jobs_save(self):
+        try:
+            from .core.living.chat_generated_images import NAMESPACE
+            body = await self._body()
+            if set(body) - {'session_id', 'request_id', 'prompt', 'purpose', 'parent_message_id', 'retry_job_id', 'expected_revision'}:
+                raise _RequestError('图片任务字段无效')
+            session_id = _session_id(body.get('session_id'))
+            username, service, _, coordinator, scope = await self._image_resources(session_id)
+            if body.get('retry_job_id'):
+                previous = await asyncio.to_thread(coordinator.journal.fetch, NAMESPACE, body['retry_job_id'], scope)
+                if previous is None:
+                    raise _RequestError('原图片任务不存在', 404)
+                original = previous['data']
+                prompt, purpose, parent_id = original['prompt'], original['purpose'], original['parent_message_id']
+                source = original['source']
+            else:
+                prompt, purpose, parent_id = body.get('prompt'), body.get('purpose', 'chat'), str(body.get('parent_message_id', ''))
+                source = 'user_request'
+            if not parent_id.isdigit():
+                raise _RequestError('请关联当前聊天中的一条消息')
+            parent = await service.db.get_platform_message_history_by_id(int(parent_id))
+            if parent is None or parent.platform_id != 'webchat' or parent.user_id != session_id:
+                raise _RequestError('只能关联自己的当前会话消息', 403)
+            await self._recheck_owned_session(username, service, session_id)
+            result = await coordinator.request(scope, request_id=body.get('request_id'), prompt=prompt,
+                purpose=purpose, parent_message_id=parent_id, source=source,
+                retry_job_id=body.get('retry_job_id'), expected_revision=body.get('expected_revision'))
+            return self._ok(result)
+        except (_RequestError, ChatServiceError, JournalConflict, KeyError, PermissionError, RuntimeError, OSError, ValueError) as exc:
+            return self._expression_error(exc)
+
+    async def _saved_image_candidate(self, service, username, session_id, record, kind):
+        """Accept after an actual SDK save; never wait for the image provider."""
+        from .core.living.chat_generated_images import service_for, explicit_image_request
+        from .core.living.structured_reply import image_candidate
+        text = self._record_text(record.content)
+        selected = explicit_image_request(text) if kind == 'user_message_saved' else image_candidate(text)
+        if selected is None:
+            return None
+        # This also runs after the ASGI request context has ended. The captured
+        # authenticated identity is rechecked against the original SDK owner.
+        session = await service.db.get_platform_session_by_id(session_id)
+        if (getattr(self.plugin, '_stopping', False) or session is None
+                or session.creator != username or session.session_id != session_id
+                or session.platform_id != 'webchat' or session.is_group != 0):
+            return None
+        scope = actual_app_scope(self.plugin, username, session)
+        if scope is None:
+            return None
+        return await service_for(self.plugin).request(scope,
+            request_id='chat-image-run-' + str(record.llm_checkpoint_id),
+            prompt=selected['prompt'], purpose=selected['purpose'], parent_message_id=str(record.id),
+            source='user_request' if kind == 'user_message_saved' else 'model_candidate')
+
     async def _owned_chat(self, session_id):
         username, service = self._bound()
         snapshot = await service.get_session(username, session_id)
@@ -871,6 +1124,150 @@ class NativeChatWebApi:
         if isinstance(exc, (ValueError, TypeError)):
             return error_response('记忆内容或版本无效', status_code=400)
         return error_response('记忆操作结果请回读同一记录核对，不要重复提交', status_code=503)
+
+    def _voice_profile(self, username, session):
+        from .core.living.voice_profile import VoiceProfile
+        resources = self._app_memory_resources(username, session)
+        return VoiceProfile(resources[0].journal, resources[4],
+            lambda: self._same_app_memory_resources(username, session, resources))
+
+    def _voice_view(self, profile):
+        from .core.living.voice_cloud import availability
+        value = profile.get()
+        value['cloud'] = availability(self.plugin)
+        if not value['persisted'] and value['cloud']['available']:
+            value['profile']['binding'] = dict(service='fish_tts', voice_id='', model=value['cloud']['model'])
+            value['profile']['rights'] = 'provider_voice'
+            value['profile']['pitch'] = 1.0
+        value['capabilities']['tts'] = value['profile']['binding']['service']
+        value['capabilities']['cloud_asr'] = False
+        value['audio_stored_on_server'] = value['profile']['binding']['service'] == 'fish_tts'
+        return value
+
+    async def voice_synthesize(self):
+        from .core.living.voice_cloud import CloudVoice, VoiceError
+        from .core.living.voice_profile import validate
+        try:
+            body = await self._body()
+            preview = set(body) == {'session_id','preview_text','profile'}
+            if not preview and set(body) != {'session_id','message_id'}:
+                raise _RequestError('语音合成需要消息编号或独立试听文本')
+            session_id = _session_id(body.get('session_id'))
+            username, service, _, session = await self._owned_chat(session_id)
+            profile = self._voice_profile(username, session)
+            if preview:
+                chosen = validate(body['profile'])
+                text = body['preview_text']
+                if not isinstance(text, str) or len(text) > 300: raise _RequestError('试听文本不能超过 300 字')
+                identity = 'preview'
+            else:
+                identity = str(body['message_id'])
+                if not identity.isdigit() or len(identity) > 20: raise _RequestError('消息编号无效')
+                record = await service.db.get_platform_message_history_by_id(int(identity))
+                if (record is None or record.platform_id != 'webchat' or record.user_id != session_id
+                        or not isinstance(record.content, dict) or record.content.get('type') != 'bot'):
+                    raise _RequestError('只朗读当前会话已保存的角色回复', 403)
+                expressions = self._expressions(service)
+                parts = await asyncio.to_thread(expressions.saved_parts, expressions.message_scope(username, session_id), 'assistant', identity)
+                if parts is None: parts = record.content.get('message', [])
+                text = '\n\n'.join(part['text'] for part in parts if isinstance(part, dict)
+                    and part.get('type') in {'plain','text','speech'} and isinstance(part.get('text'), str))
+                chosen = self._voice_view(profile)['profile']
+            result = await CloudVoice(self.plugin, profile).synthesize(text, identity, chosen)
+            await self._recheck_owned_session(username, service, session_id)
+            return self._ok(dict(result, session_id=session_id))
+        except VoiceError as exc:
+            return error_response(str(exc), status_code=exc.status)
+        except (ChatServiceError, _RequestError, PermissionError, JournalConflict, KeyError,
+                RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
+            return self._life_error(exc)
+
+    async def voice_audio(self):
+        from .core.living.voice_cloud import CloudVoice, VoiceError
+        try:
+            values = dict(request.query or {})
+            if set(values) != {'session_id','audio_id'}: raise _RequestError('语音读取参数无效')
+            session_id = _session_id(values['session_id'])
+            username, service, _, session = await self._owned_chat(session_id)
+            path, _ = await asyncio.to_thread(CloudVoice(self.plugin, self._voice_profile(username, session)).read, values['audio_id'])
+            await self._recheck_owned_session(username, service, session_id)
+            return file_response(path, content_type='audio/mpeg', headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
+        except VoiceError as exc:
+            return error_response(str(exc), status_code=exc.status)
+        except (ChatServiceError, _RequestError, PermissionError, JournalConflict, KeyError,
+                RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
+            return self._life_error(exc)
+
+    async def voice_get(self):
+        try:
+            query = dict(request.query or {})
+            if set(query) != {'session_id'}: raise _RequestError('声音档案查询参数无效')
+            session_id = _session_id(query['session_id'])
+            username, service, _, session = await self._owned_chat(session_id)
+            value = await asyncio.to_thread(self._voice_view, self._voice_profile(username, session))
+            await self._recheck_owned_session(username, service, session_id)
+            return self._ok(dict(value, session_id=session_id))
+        except (ChatServiceError, _RequestError, PermissionError, JournalConflict, KeyError,
+                RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
+            return self._life_error(exc)
+
+    async def voice_post(self):
+        try:
+            body = await self._body()
+            if set(body) != {'session_id','profile','expected_revision'}: raise _RequestError('声音档案保存参数无效')
+            session_id = _session_id(body['session_id'])
+            username, service, _, session = await self._owned_chat(session_id)
+            profile = self._voice_profile(username, session)
+            await asyncio.to_thread(profile.save, body['profile'], body['expected_revision'])
+            value = await asyncio.to_thread(self._voice_view, profile)
+            await self._recheck_owned_session(username, service, session_id)
+            return self._ok(dict(value, session_id=session_id))
+        except (ChatServiceError, _RequestError, PermissionError, JournalConflict, KeyError,
+                RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
+            return self._life_error(exc)
+
+    async def life_get(self):
+        try:
+            query = dict(request.query or {})
+            if set(query)-{'session_id','event_id','person_id','thread_id','query','kind','limit','offset','view','id','status','category','sort'} or 'session_id' not in query:
+                raise _RequestError('生活档案读取参数无效')
+            session_id = _session_id(query['session_id'])
+            username, service, _, session = await self._owned_chat(session_id)
+            from .core.living.chat_life import get
+            value = get(self, username, session, query)
+            await self._recheck_owned_session(username, service, session_id)
+            return self._ok(value)
+        except (ChatServiceError, _RequestError, PermissionError, JournalConflict, KeyError,
+                RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
+            return self._life_error(exc)
+
+    async def life_post(self):
+        try:
+            body = await self._body()
+            if (set(body)-{'session_id','action','event_id','person_id','thread_id','expected_revision','changes','request_id'}
+                    or body.get('action') not in {'follow_up','correct'}):
+                raise _RequestError('生活档案操作参数无效')
+            session_id = _session_id(body.get('session_id'))
+            username, _, _, session = await self._owned_chat(session_id)
+            from .core.living.chat_life import post
+            return self._ok(post(self, username, session, body))
+        except (ChatServiceError, _RequestError, PermissionError, JournalConflict, KeyError,
+                RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
+            return self._life_error(exc)
+
+    @staticmethod
+    def _life_error(exc):
+        if isinstance(exc, (ChatServiceError, _RequestError)):
+            return NativeChatWebApi._error(exc)
+        if isinstance(exc, JournalConflict):
+            return error_response('生活资料版本已变化，请刷新并比较后修改', status_code=409)
+        if isinstance(exc, KeyError):
+            return error_response('当前授权档案中没有这项生活资料', status_code=404)
+        if isinstance(exc, PermissionError):
+            return error_response('生活档案的会话授权已变化，请重新读取', status_code=403)
+        if isinstance(exc, (ValueError, TypeError)):
+            return error_response('生活资料、搜索范围或修订号无效', status_code=400)
+        return error_response('生活档案暂不可用，请稍后读取；结果未知的保存请先核对', status_code=503)
 
     async def memory_detail(self):
         try:
@@ -978,6 +1375,7 @@ class NativeChatWebApi:
             expressions = self._expressions(service)
             result = await asyncio.to_thread(delivery_center_view, self.plugin, username, session_id,
                 snapshot, session, expressions.journal, expressions.current)
+            await self._recheck_owned_session(username, service, session_id)
             return self._ok(result)
         except (_RequestError, ChatServiceError) as exc:
             return self._error(exc)
@@ -1716,7 +2114,7 @@ class NativeChatWebApi:
             if (session is None or session.session_id != session_id or session.creator != username
                     or session.platform_id != 'webchat' or session.is_group != 0):
                 raise _RequestError('这个发送入口只接受自己的私有 APP 会话', 403)
-            expressions = preference_scope = submission = native_receipt = None
+            expressions = preference_scope = submission = native_receipt = model_plan = None
             expression_context = {'input_text': message, 'mode': 'chat', 'conversation_text':
                 '\n'.join(self._record_text(record.get('content')) for record in snapshot.get('history', [])[-6:])[-3000:]}
             try:
@@ -1737,11 +2135,13 @@ class NativeChatWebApi:
                     # ordinary text keeps the SDK's real streaming path.
                     payload['enable_streaming']=False
                 router=getattr(self.plugin,'_task_model_router',None)
-                if router is not None and not payload.get('selected_provider'):
+                if router is not None:
                     route = ChatModelRoute(state_store, router, username=username,
                         session_id=session_id, umo=build_webchat_unified_msg_origin(session))
-                    routed = await asyncio.to_thread(route.selected_provider_id)
-                    if routed:payload['selected_provider']=routed
+                    model_plan = await asyncio.to_thread(route.request_plan,
+                        payload.get('selected_provider'), payload.get('selected_model'))
+                    if model_plan['provider_id']:
+                        payload['selected_provider'] = model_plan['provider_id']
                 expression_context.update(persona_id=persona.get('configured_id'),
                     mode=session_state['mode'], scene=session_state['scene'],
                     roleplay=session_state['mode'] == 'roleplay')
@@ -1777,7 +2177,10 @@ class NativeChatWebApi:
                             # All explicit actions use one parser below. Quoting
                             # keeps the legacy free-text observer from replaying
                             # either a custom action or a native verb/part pair.
-                            text = '【用户主动选择的角色互动，触觉由TLS统一处理】' + json.dumps(part['label'] + '：' + part['description'], ensure_ascii=False)
+                            if part.get('target') == 'self':
+                                text = '【用户描述自己的动作（叙事输入，非现实感知；不触发角色身体）】' + json.dumps(part['label'] + '：' + part['description'], ensure_ascii=False)
+                            else:
+                                text = '【用户主动选择的角色互动，触觉由TLS统一处理】' + json.dumps(part['label'] + '：' + part['description'], ensure_ascii=False)
                         elif kind == 'sticker':
                             asset = expressions.asset(part['asset_id'])
                             text = '【用户用聊天表情表达情绪，不是上传照片：' + asset['name'] + '】' + asset['meaning']
@@ -1806,6 +2209,7 @@ class NativeChatWebApi:
                 digest = hashlib.sha256(json.dumps(body, ensure_ascii=False,
                     sort_keys=True, separators=(',', ':')).encode()).hexdigest()
                 message_scope = expressions.message_scope(username, session_id)
+                await self._recheck_owned_session(username, service, session_id)
                 submission = await asyncio.to_thread(expressions.begin, message_scope,
                     client_id, typed_parts, request_digest=digest)
                 if submission['duplicate']:
@@ -1813,15 +2217,24 @@ class NativeChatWebApi:
                         'data': {'client_message_id': client_id, 'state': submission['status'],
                                  'checkpoint_id': submission['checkpoint_id']}}, status_code=409)
                 await asyncio.to_thread(expressions.mark_submission, message_scope, submission,
-                    expression_context=expression_context)
+                    expression_context=expression_context, model_route=model_plan)
                 payload['_llm_checkpoint_id'] = submission['checkpoint_id']
-                self._bound()
+                await self._recheck_owned_session(username, service, session_id)
                 native_receipt = apply_chat_touch(self.plugin, username, session_id, typed_parts)
                 if native_receipt is not None:
                     await asyncio.to_thread(expressions.mark_submission, message_scope, submission,
                         native_touch=native_receipt)
-            self._bound()  # A hot unload while checking ownership closes new work.
+            # Attachment and expression preparation can await external storage;
+            # the SDK generation entry itself does not re-check this owner.
+            await self._recheck_owned_session(username, service, session_id)
             stream = await service.build_chat_stream(username, payload)
+            if expressions is not None:
+                try:
+                    from .core.living.chat_generated_images import service_for
+                    service_for(self.plugin).observe_saved_run(service, username, session_id,
+                        submission['checkpoint_id'], self._saved_image_candidate)
+                except (RuntimeError, ValueError, AttributeError):
+                    pass  # The original SDK chat run continues unchanged.
             if expressions is not None:
                 stream = self._expression_stream(stream, service, username, session_id,
                     expressions, message_scope, preference_scope, submission, expression_context, native_receipt)
@@ -1903,6 +2316,14 @@ class NativeChatWebApi:
                     payload = {'type': 'tls_parts', 'data': {'role': role, 'message_id': saved_id,
                         'client_message_id': submission['client_message_id'], 'parts': parts}}
                     yield 'data: ' + json.dumps(payload, ensure_ascii=False) + '\n\n'
+                    try:
+                        image_job = await self._saved_image_candidate(service, username, session_id, record, kind)
+                        if image_job is not None:
+                            yield 'data: ' + json.dumps({'type': 'tls_image_job', 'data': image_job}, ensure_ascii=False) + '\n\n'
+                    except (OSError, RuntimeError, PermissionError, ValueError, KeyError):
+                        # Optional paid work never invalidates or retries the
+                        # already saved text reply. Status remains queryable.
+                        pass
                 except (OSError, RuntimeError, ValueError, KeyError, TypeError):
                     # Preserve a successful SDK reply if optional presentation
                     # could not be recorded; do not call the LLM/send again.

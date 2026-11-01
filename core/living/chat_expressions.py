@@ -32,6 +32,7 @@ from .native_expression_assets import NativeExpressionAssets, NAMESPACE as ASSET
 PREFERENCES = 'tls.chat.expression.preferences'
 SEMANTICS = 'tls.chat.expression.semantics'
 ACTIONS = 'tls.chat.expression.actions'
+ACTION_USAGE = 'tls.chat.expression.action_usage'
 SETTINGS = 'tls.chat.expression.settings'
 USER_PROFILE = 'tls.chat.user.profile'
 SETTING_DEFAULTS = {'frequency': 'expressive', 'per_unit': True,
@@ -41,10 +42,22 @@ _LOCK = threading.RLock()
 _HEX = re.compile(r'[0-9a-f]{64}\Z')
 _CLIENT_ID = re.compile(r'[A-Za-z0-9_.:-]{8,128}\Z')
 DEFAULT_ACTIONS = (
-    {'id': 'headpat', 'label': '摸头', 'description': '轻轻摸摸德克萨斯的头', 'enabled': True, 'quick': True, 'order': 0},
-    {'id': 'poke', 'label': '轻戳', 'description': '轻轻戳一下德克萨斯，想引起她的注意', 'enabled': True, 'quick': True, 'order': 1},
-    {'id': 'hold_hands', 'label': '牵手', 'description': '伸手牵住德克萨斯的手，陪她待一会儿', 'enabled': True, 'quick': True, 'order': 2},
-    {'id': 'lean', 'label': '靠一会儿', 'description': '轻轻靠着德克萨斯休息一会儿', 'enabled': True, 'quick': True, 'order': 3},
+    {'id': 'headpat', 'label': '摸头', 'description': '轻轻摸摸角色的头', 'enabled': True, 'quick': True, 'order': 0},
+    {'id': 'poke', 'label': '轻戳', 'description': '轻轻戳一下角色，想引起她的注意', 'enabled': True, 'quick': True, 'order': 1},
+    {'id': 'hold_hands', 'label': '牵手', 'description': '伸手牵住角色的手，陪她待一会儿', 'enabled': True, 'quick': True, 'order': 2},
+    {'id': 'lean', 'label': '靠一会儿', 'description': '轻轻靠着角色休息一会儿', 'enabled': True, 'quick': True, 'order': 3},
+)
+SELF_ACTIONS = (
+    {'id': 'rub_eyes', 'label': '揉眼睛', 'description': '我轻轻揉了揉自己的眼睛。', 'targets': [{'id': 'eyes', 'label': '自己的眼睛'}]},
+    {'id': 'stretch', 'label': '伸懒腰', 'description': '我伸了个懒腰。', 'targets': [{'id': 'whole_body', 'label': '自己的身体'}]},
+    {'id': 'sit', 'label': '坐下', 'description': '我坐下来，放松了一点。', 'targets': [{'id': 'chair', 'label': '椅子'}, {'id': 'bed_edge', 'label': '床沿'}]},
+    {'id': 'lean_back', 'label': '靠在椅背上', 'description': '我靠在椅背上休息了一会儿。', 'targets': [{'id': 'chair_back', 'label': '椅背'}]},
+    {'id': 'hug_pillow', 'label': '抱着抱枕', 'description': '我把抱枕抱在怀里。', 'targets': [{'id': 'pillow', 'label': '抱枕'}]},
+    {'id': 'drink_water', 'label': '喝水', 'description': '我拿起杯子喝了口水。', 'targets': [{'id': 'water_cup', 'label': '自己的水杯'}]},
+    {'id': 'yawn', 'label': '打哈欠', 'description': '我打了个哈欠。', 'targets': [{'id': 'self', 'label': '自己'}]},
+    {'id': 'lie_down', 'label': '躺下休息', 'description': '我躺下来休息。', 'targets': [{'id': 'bed', 'label': '床上'}, {'id': 'sofa', 'label': '沙发'}]},
+    {'id': 'adjust_clothes', 'label': '整理衣服', 'description': '我整理了一下自己的衣服。', 'targets': [{'id': 'clothes', 'label': '自己的衣服'}]},
+    {'id': 'look_phone', 'label': '看手机', 'description': '我低头看了一眼自己的手机。', 'targets': [{'id': 'phone', 'label': '自己的手机'}]},
 )
 USER_DEFAULT = {'favorite': False, 'liked': False, 'disliked': False, 'hidden': False, 'quick_send': False, 'quick_order': 0,
                 'last_used': None, 'use_count': 0}
@@ -66,8 +79,8 @@ _EMOTIONS = {
     '得意': ('得意', '自豪', '果然', '那当然', '早就知道', 'proud'),
     '音乐': ('听歌', '听音乐', '配乐', '旋律', '背景音乐', 'bgm', 'music'),
 }
-_GENERIC_TAGS = {'德克萨斯', 'texas', '表情', '表情包', '图片', '日常', '聊天'}
-_GENERIC_TERMS = _terms('德克萨斯表情图片使用这个时候可以现在今天一下这里我们你们')
+_GENERIC_TAGS = {'角色', 'texas', '表情', '表情包', '图片', '日常', '聊天'}
+_GENERIC_TERMS = _terms('角色表情图片使用这个时候可以现在今天一下这里我们你们')
 
 
 class ChatExpressionError(ValueError):
@@ -395,8 +408,13 @@ class ChatExpressions:
     def actions(self, scope):
         record = self.journal.fetch(ACTIONS, 'definitions', scope)
         items = deepcopy(record['data']['items'] if record else list(DEFAULT_ACTIONS))
+        for item in items:
+            used = self.journal.fetch(ACTION_USAGE, item['id'], scope)
+            item.update(last_used=used['data']['last_used'] if used else None,
+                        use_count=used['data']['use_count'] if used else 0)
         return {'items': sorted(items, key=lambda row: (row['order'], row['id'])), 'revision': record['revision'] if record else 0,
-                'native_touch': self.touch_catalog(), 'defaults': deepcopy(list(DEFAULT_ACTIONS))}
+                'native_touch': self.touch_catalog(), 'defaults': deepcopy(list(DEFAULT_ACTIONS)),
+                'self_actions': deepcopy(list(SELF_ACTIONS)), 'action_targets': ['character', 'self']}
 
     def save_action(self, scope, op, record, request_id=None, expected_revision=None):
         if op not in {'create', 'update', 'delete', 'import'} or not isinstance(record, dict):
@@ -408,7 +426,7 @@ class ChatExpressions:
                     raise ChatExpressionError('请先读取当前动作版本')
                 if expected_revision != snapshot['revision']:
                     raise JournalConflict('动作已在其他位置修改，请重新读取后再保存')
-            rows = {row['id']: row for row in snapshot['items']}
+            rows = {row['id']: {key: value for key, value in row.items() if key not in {'last_used', 'use_count'}} for row in snapshot['items']}
             if op == 'import':
                 values = record.get('items')
                 if not isinstance(values, list) or not 1 <= len(values) <= 64:
@@ -464,7 +482,21 @@ class ChatExpressions:
             enabled=value.get('enabled', True), quick=value.get('quick', True), order=value.get('order', order))
         if any(type(result[key]) is not bool for key in ('enabled', 'quick')) or type(result['order']) is not int or not -1000 <= result['order'] <= 1000:
             raise ChatExpressionError('动作启用或排序无效')
+        actor, target = value.get('actor', 'user'), value.get('target', 'character')
+        if actor != 'user' or target not in {'character', 'self'}:
+            raise ChatExpressionError('用户动作只能由你发起，对象请选择自己或当前角色')
+        if 'actor' in value or 'target' in value or target == 'self':
+            result.update(actor='user', target=target)
+        if 'target_part' in value:
+            result['target_part'] = _text(value['target_part'], '动作目标', 80, blank=True)
+        if target == 'self' and value.get('self_template') is not None:
+            template = next((row for row in SELF_ACTIONS if row['id'] == value['self_template']), None)
+            if template is None or result.get('target_part') not in {row['id'] for row in template['targets']}:
+                raise ChatExpressionError('自身动作或目标已变化，请重新选择')
+            result['self_template'] = template['id']
         if value.get('native_touch') is not None:
+            if target == 'self':
+                raise ChatExpressionError('描述自己的动作不能关联角色的身体触觉')
             if (existing is not None and existing.get('id') == identity
                     and existing.get('native_touch') == value['native_touch']):
                 # Maintaining an unchanged saved binding is not permission to
@@ -561,11 +593,18 @@ class ChatExpressions:
                 action = actions.get(identity)
                 if action is None:
                     raise ChatExpressionError('动作不存在或已停用，请刷新动作面板')
+                action = self._action_record(action, 0)
+                target = action.get('target', 'character')
+                if part.get('actor', 'user') != 'user' or part.get('target', target) != target:
+                    raise ChatExpressionError('动作执行者或对象与已保存定义不一致，请刷新动作面板')
                 action_count += 1
                 result.append({'type': 'action', 'action_id': identity, 'label': action['label'],
-                    'description': action['description'], 'source': 'user_action', 'fragment_id': fragment,
+                    'description': action['description'], 'actor': 'user', 'target': target,
+                    'character_id': scope['character_id'],
+                    'target_part': action.get('target_part', action.get('native_touch', {}).get('part', '')),
+                    'source': 'user_self_action' if target == 'self' else 'user_action', 'fragment_id': fragment,
                     **({'native_touch': self._action_record(action, 0)['native_touch']} if action.get('native_touch') else {})})
-                projection.append('【用户角色互动输入（非现实感知）：' + action['label'] + '】' + action['description'])
+                projection.append(('【用户自身动作描述（叙事输入，非现实感知）：' if target == 'self' else '【用户角色互动输入（非现实感知）：') + action['label'] + '】' + action['description'])
             elif kind == 'sticker':
                 asset = self.asset(part.get('asset_id'))
                 user = self._preference(scope, asset['id'], 'user')
@@ -621,6 +660,11 @@ class ChatExpressions:
         checkpoint = str(uuid.UUID(key))
         value = {'schema': 1, 'client_message_id': client_id, 'scope': scope, 'parts': parts,
                  'checkpoint_id': checkpoint, 'request_digest': request_digest, 'status': 'started', 'created_at': time.time()}
+        value['parts'] = [dict(part, actor='user', actor_id=scope['user_id'],
+            target_id=scope['user_id'] if part.get('target') == 'self' else part.get('native_touch', {}).get('character', part.get('character_id', scope['character_id'])),
+            session_id=scope['session_id'], event_at=value['created_at'],
+            event_id='action-' + hashlib.sha256((checkpoint + ':' + str(part.get('fragment_id') or index)).encode()).hexdigest()[:24])
+            if part.get('type') == 'action' else dict(part) for index, part in enumerate(parts)]
         with _LOCK:
             try:
                 with path.open('x', encoding='utf-8') as output:
@@ -693,6 +737,11 @@ class ChatExpressions:
             for part in parts:
                 if part.get('type') == 'sticker':
                     self._used(preference_scope, part['asset_id'], 'user')
+                elif part.get('type') == 'action':
+                    used = self.journal.fetch(ACTION_USAGE, part['action_id'], preference_scope)
+                    count = used['data'].get('use_count', 0) if used else 0
+                    self.journal.put(ACTION_USAGE, part['action_id'], preference_scope,
+                        {'last_used': time.time(), 'use_count': count + 1}, authorize=self.current)
         return saved
 
     def mark_submission(self, scope, submission, **changes):
@@ -746,7 +795,8 @@ class ChatExpressions:
                 if not isinstance(part, dict):
                     continue
                 if part.get('type')=='tls_narrative':
-                    result.append({'type':'action','label':'德克萨斯的动作','description':part['text'],
+                    result.append({'type':'action','label':'角色的动作','description':part['text'],
+                        'actor':'character', 'target':'unspecified',
                         'source':'assistant_narrative'})
                     continue
                 if part.get('type') != 'plain':
