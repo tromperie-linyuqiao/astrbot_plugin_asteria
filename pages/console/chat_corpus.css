@@ -6,4 +6,15 @@
 #chat-corpus-mount details summary{cursor:pointer;padding:12px 0}#chat-corpus-mount #console-corpus-body{min-height:180px}#chat-corpus-mount .switch-label{flex-direction:row}
 #chat-corpus-mount button{background:var(--surface);color:var(--text);border-color:var(--line)}#chat-corpus-mount button.primary{background:var(--blue);color:var(--bg)}
 #chat-corpus-mount button:disabled{background:var(--surface);color:var(--muted);opacity:.65;cursor:default}
-@media(max-width:850px){#chat-corpus-mount .corpus-columns{grid-template-columns:1fr}}
+#chat-corpus-mount .corpus-library-layout{display:grid;grid-template-columns:minmax(180px,.7fr) minmax(0,1.3fr);gap:22px;align-items:start}
+#chat-corpus-mount .corpus-library-list{display:flex;flex-direction:column;gap:10px;max-height:580px;overflow:auto;padding:2px}
+#chat-corpus-mount .corpus-library-card{display:flex;flex-direction:column;gap:8px;width:100%;text-align:left;white-space:normal;overflow-wrap:anywhere;padding:14px}
+#chat-corpus-mount .corpus-library-card[aria-pressed=true]{border:2px solid var(--blue);padding:13px}
+#chat-corpus-mount .corpus-library-card .hint{margin:0;color:var(--muted)}
+#chat-corpus-mount .panel-head{flex-wrap:wrap;gap:12px}#chat-corpus-mount form{min-width:0}
+#chat-corpus-mount input,#chat-corpus-mount textarea,#chat-corpus-mount select{max-width:100%;box-sizing:border-box}
+#chat-corpus-mount textarea{resize:vertical}#chat-corpus-mount .actions{flex-wrap:wrap}
+#chat-corpus-mount #console-corpus-list{max-height:960px;overflow:auto;padding-right:4px}
+#chat-corpus-mount #console-corpus-library-form .notice,#chat-corpus-mount #console-corpus-form .notice{overflow-wrap:anywhere}
+#chat-corpus-mount .notice:empty{display:none}#chat-corpus-mount button[hidden]{display:none}
+@media(max-width:850px){#chat-corpus-mount .corpus-columns,#chat-corpus-mount .corpus-library-layout{grid-template-columns:1fr}#chat-corpus-mount .corpus-library-list{max-height:300px}#chat-corpus-mount #console-corpus-list{max-height:560px}}

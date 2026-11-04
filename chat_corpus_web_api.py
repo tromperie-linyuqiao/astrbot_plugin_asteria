@@ -41,7 +41,7 @@ class NativeChatCorpusWebApi:
                 if request.query:
                     raise _RequestError('写入不接受查询参数')
                 data = await self.chat._body()
-                if set(data) != {'session_id', 'op', 'id', 'expected_revision', 'request_id', 'record'} or data['op'] != 'save':
+                if set(data) != {'session_id', 'op', 'id', 'expected_revision', 'request_id', 'record'} or data['op'] not in ('save', 'save_library'):
                     raise _RequestError('请提供完整的语料保存操作')
             else:
                 data = dict(request.query or {})
@@ -55,7 +55,8 @@ class NativeChatCorpusWebApi:
             library = ChatCorpusLibrary(expressions.journal, current=expressions.current)
             await self.chat._recheck_owned_session(username, service, sid)
             if write:
-                result = await asyncio.to_thread(library.save, scope, sid, identity=data['id'],
+                writer = library.save_library if data['op'] == 'save_library' else library.save
+                result = await asyncio.to_thread(writer, scope, sid, identity=data['id'],
                     expected_revision=data['expected_revision'], request_id=data['request_id'], record=data['record'])
                 write_completed = True
             else:

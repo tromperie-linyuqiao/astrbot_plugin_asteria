@@ -39,6 +39,13 @@
 - 历史分享记录与最近推进状态分开显示；主动消息展示后台已有的当前阻止原因和处理方向。
 - 本轮更新插件控制台与日常接口，客户端保持原版本。既有资料、来源与用户设置保留。
 
+## 语料资料库工作台（0.75.5）
+
+- 修复 AstrBot 页面桥成功响应解包后，已有语料无法加载的问题。
+- 在后台创建逻辑资料库，逐块录入、修改和停用参考文本；保留原条目和修订。
+- 为参考资料库设置语境匹配、关键词匹配或每次提供候选；排除词优先，沿原候选数量与上下文预算。
+- 账号、角色及会话权限不变；旧客户端接口保持，资料库不新建物理数据库或自动调用模型。
+
 ## 本轮改进
 
 - 细分部位与用户动作，保存姿态、相对位置和接触状态；明确结束接触，持续状态不靠时间重复增加数值。
@@ -78,7 +85,7 @@ https://cdn.jsdelivr.net/gh/tromperie-linyuqiao/astrbot_plugin_asteria@main/mark
 
 [下载 Android 安装包](https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria/releases) · [客户端说明](client/asteria-chat/README.md)
 
-当前源码：**Asteria 0.75.4 / Asteria Chat 2.7.0（code 78）**。本轮发布客户端源码；Releases 中旧版本 APK 不代表本轮版本，请按客户端说明自行构建。
+当前源码：**Asteria 0.75.5 / Asteria Chat 2.7.0（code 78）**。本轮发布客户端源码；Releases 中旧版本 APK 不代表本轮版本，请按客户端说明自行构建。
 
 客户端连接你自己的 AstrBot 服务，复用现有角色、模型与聊天历史。默认不预置服务器或账号。服务端连接配置见 [反向代理示例](deploy/nginx-chat.conf.example)。
 

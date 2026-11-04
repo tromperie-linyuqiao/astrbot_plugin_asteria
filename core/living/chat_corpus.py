@@ -18,14 +18,20 @@ from .journal import JournalConflict
 from .models import canonical, private_scope, scope_key
 
 NAMESPACE = 'asteria.chat.corpus.v1'
+LIBRARY_NAMESPACE = 'asteria.chat.corpus.library.v1'
+MAX_LIBRARIES = 16
 MAX_ITEMS = 128
 MAX_BODY = 12000
 MAX_CONTEXT = 2400
 MAX_SAMPLES = 4
 MAX_PREFERENCES = 6
 _ID = re.compile(r'corpus_[a-f0-9]{24}\Z')
+_LIBRARY_ID = re.compile(r'library_[a-f0-9]{24}\Z')
 _REQUEST = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.:-]{7,127}\Z')
-_FIELDS = {'kind', 'body', 'title', 'tags', 'source', 'enabled', 'lifetime', 'expires_at'}
+_BASE_FIELDS = {'kind', 'body', 'title', 'tags', 'source', 'enabled', 'lifetime', 'expires_at'}
+_FIELDS = _BASE_FIELDS | {'library_id'}
+_DEFAULT_LIBRARY = dict(name='原有语料', enabled=True,
+    trigger=dict(mode='relevance', match='any', include=[], exclude=[]))
 
 
 def _text(value, name, maximum, *, blank=False):
@@ -41,6 +47,40 @@ def _terms(text):
     for word in re.findall(r'[\u3400-\u9fff]+', value):
         terms.update(word[i:i + 2] for i in range(len(word) - 1))
     return terms
+
+
+def _library_identity(value):
+    if type(value) is not str or value != 'default' and not _LIBRARY_ID.fullmatch(value):
+        raise ValueError('invalid corpus library id')
+    return value
+
+
+def _literal(text):
+    return unicodedata.normalize('NFKC', text).casefold()
+
+
+def _library_definition(record):
+    if type(record) is not dict or set(record) != {'name', 'enabled', 'trigger'}:
+        raise ValueError('library name, enabled and trigger are required')
+    name = _text(record['name'], 'library name', 80)
+    if type(record['enabled']) is not bool:
+        raise ValueError('library enabled must be boolean')
+    trigger = record['trigger']
+    if (type(trigger) is not dict or set(trigger) != {'mode', 'match', 'include', 'exclude'}
+            or trigger['mode'] not in ('relevance', 'keywords', 'always')
+            or trigger['match'] not in ('any', 'all')):
+        raise ValueError('invalid library trigger')
+    cleaned = dict(mode=trigger['mode'], match=trigger['match'])
+    for field in ('include', 'exclude'):
+        words = trigger[field]
+        if (type(words) is not list or len(words) > 12 or any(type(word) is not str
+                or not 2 <= len(word) <= 40 or not word.strip() or any(ord(c) < 32 for c in word)
+                for word in words)):
+            raise ValueError('up to twelve literal trigger keywords of 2 to 40 characters are accepted')
+        cleaned[field] = list(dict.fromkeys(words))
+    if cleaned['mode'] == 'keywords' and not cleaned['include']:
+        raise ValueError('keyword trigger needs at least one include keyword')
+    return dict(name=name, enabled=record['enabled'], trigger=cleaned)
 
 
 class ChatCorpusLibrary:
@@ -70,6 +110,9 @@ class ChatCorpusLibrary:
         kind = record.get('kind', 'sample')
         if kind not in ('sample', 'preference'):
             raise ValueError('invalid corpus kind')
+        library_id = _library_identity(record.get('library_id', (previous or {}).get('library_id', 'default')))
+        if kind == 'preference' and library_id != 'default':
+            raise ValueError('preferences retain their original default scope independently of library triggers')
         body = _text(record.get('body'), 'body', MAX_BODY if kind == 'sample' else 1000)
         title = _text(record.get('title', ''), 'title', 80, blank=True)
         source = _text(record.get('source', ''), 'source', 240, blank=True)
@@ -92,7 +135,7 @@ class ChatCorpusLibrary:
                 raise ValueError('temporary preference needs a future expiry within seven days')
         elif expiry is not None:
             raise ValueError('only temporary preferences have an expiry')
-        return dict(kind=kind, body=body, title=title, tags=list(dict.fromkeys(tags)), source=source,
+        return dict(kind=kind, body=body, title=title, tags=list(dict.fromkeys(tags)), source=source, library_id=library_id,
             enabled=enabled, lifetime=lifetime, expires_at=expiry,
             session_id=session_id if lifetime != 'persistent' else None)
 
@@ -103,22 +146,101 @@ class ChatCorpusLibrary:
     def _public(self, row, session_id, now):
         data = row['data']
         return dict(id=row['key'], revision=row['revision'], updated_at=row['updated_at'],
-            **{k: deepcopy(data[k]) for k in (*_FIELDS, 'session_id', 'created_at')},
+            **{k: deepcopy(data[k]) for k in (*_BASE_FIELDS, 'session_id', 'created_at')},
+            library_id=data.get('library_id', 'default'),
             history=deepcopy(data.get('history', [])), eligible=self._eligible(data, session_id, now))
+
+    def _library_rows(self, scope):
+        rows = self.journal.list(LIBRARY_NAMESPACE, scope, limit=MAX_LIBRARIES + 1)
+        if len(rows) + (not any(row['key'] == 'default' for row in rows)) > MAX_LIBRARIES:
+            raise RuntimeError('corpus library capacity exceeded')
+        return rows
+
+    def _public_library(self, row, items):
+        identity = row['key'] if row else 'default'
+        data = row['data'] if row else _DEFAULT_LIBRARY
+        return dict(id=identity, revision=row['revision'] if row else 0,
+            updated_at=row['updated_at'] if row else None, created_at=data.get('created_at'),
+            name=data['name'], enabled=data['enabled'], trigger=deepcopy(data['trigger']),
+            item_count=sum(item['library_id'] == identity for item in items),
+            history=deepcopy(data.get('history', [])))
+
+    def _items(self, scope, session_id, now):
+        rows = self.journal.list(NAMESPACE, scope, limit=MAX_ITEMS + 1)
+        if len(rows) > MAX_ITEMS:
+            raise RuntimeError('corpus capacity exceeded')
+        return rows, [self._public(row, session_id, now) for row in rows
+            if row['data'].get('session_id') in (None, session_id)]
 
     def list(self, scope, session_id):
         scope = self._check(scope)
         _text(session_id, 'session_id', 256)
         now = self._now()
-        rows = self.journal.list(NAMESPACE, scope, limit=MAX_ITEMS + 1)
-        if len(rows) > MAX_ITEMS:
-            raise RuntimeError('corpus capacity exceeded')
-        result = [self._public(row, session_id, now) for row in rows
-            if row['data'].get('session_id') in (None, session_id)]
-        self._check(scope)
-        return dict(items=result, limits=dict(items=MAX_ITEMS, body_chars=MAX_BODY,
-            sample_candidates=MAX_SAMPLES, preference_candidates=MAX_PREFERENCES,
-            context_chars=MAX_CONTEXT), writes=0, provider_calls=0)
+        with self.journal._lock:
+            self._check(scope)
+            rows, result = self._items(scope, session_id, now)
+            library_rows = self._library_rows(scope)
+            default = next((row for row in library_rows if row['key'] == 'default'), None)
+            libraries = [self._public_library(default, result)] + [self._public_library(row, result)
+                for row in library_rows if row['key'] != 'default']
+            self._check(scope)
+            return dict(items=result, libraries=libraries, total_items=len(rows), visible_items=len(result),
+                limits=dict(items=MAX_ITEMS, libraries=MAX_LIBRARIES, body_chars=MAX_BODY,
+                sample_candidates=MAX_SAMPLES, preference_candidates=MAX_PREFERENCES,
+                context_chars=MAX_CONTEXT), writes=0, provider_calls=0)
+
+    def save_library(self, scope, session_id, *, identity, expected_revision, request_id, record):
+        scope = self._check(scope)
+        _text(session_id, 'session_id', 256)
+        if type(expected_revision) is not int or not 0 <= expected_revision <= 2147483647:
+            raise ValueError('explicit library revision required')
+        if type(request_id) is not str or not _REQUEST.fullmatch(request_id):
+            raise ValueError('stable request_id required')
+        create = identity is None
+        if create:
+            if expected_revision != 0:
+                raise ValueError('new libraries require revision zero')
+            identity = 'library_' + hashlib.sha256(canonical([scope_key(scope), request_id]).encode()).hexdigest()[:24]
+        else:
+            _library_identity(identity)
+        fingerprint = hashlib.sha256(canonical([identity, session_id, expected_revision, record]).encode()).hexdigest()
+        receipt_id = hashlib.sha256(request_id.encode()).hexdigest()
+        with self.journal._lock:
+            self._check(scope)
+            previous = self.journal.fetch(LIBRARY_NAMESPACE, identity, scope)
+            old = previous['data'] if previous else None
+            if previous is None and not create and identity != 'default':
+                raise KeyError('corpus library not in current account and character scope')
+            receipts = deepcopy(old.get('receipts', {})) if old else {}
+            if receipt_id in receipts:
+                receipt = receipts[receipt_id]
+                if receipt['fingerprint'] != fingerprint:
+                    raise JournalConflict('request identity reused with different library content')
+                _, items = self._items(scope, session_id, self._now())
+                self._check(scope)
+                return dict(library=self._public_library(dict(previous, key=identity), items),
+                    replayed=True, applied_revision=receipt['revision'])
+            if (previous['revision'] if previous else 0) != expected_revision:
+                raise JournalConflict('corpus library revision changed')
+            rows = self._library_rows(scope)
+            if old is None and identity != 'default' and len(rows) + (not any(row['key'] == 'default' for row in rows)) >= MAX_LIBRARIES:
+                raise ValueError('corpus library capacity reached; edit or disable existing libraries')
+            definition = _library_definition(record)
+            if len(receipts) >= 32:
+                raise ValueError('library revision receipt capacity reached; retain this library')
+            now = self._now()
+            _, items = self._items(scope, session_id, now)
+            history = deepcopy(old.get('history', [])) if old else []
+            if old:
+                history.append(dict(revision=previous['revision'], updated_at=previous['updated_at'],
+                    name=old['name'], enabled=old['enabled'], trigger=deepcopy(old['trigger'])))
+            receipts[receipt_id] = dict(fingerprint=fingerprint, revision=expected_revision + 1)
+            data = dict(definition, created_at=old['created_at'] if old else now,
+                history=history[-4:], receipts=receipts)
+            saved = self.journal.put(LIBRARY_NAMESPACE, identity, scope, data, expected_revision=expected_revision,
+                authorize=lambda: self._check(scope) == scope)
+            return dict(library=self._public_library(dict(saved, key=identity), items),
+                replayed=False, applied_revision=saved['revision'])
 
     def save(self, scope, session_id, *, identity, expected_revision, request_id, record):
         scope = self._check(scope)
@@ -154,6 +276,8 @@ class ChatCorpusLibrary:
             if old is None and len(self.journal.list(NAMESPACE, scope, limit=MAX_ITEMS + 1)) >= MAX_ITEMS:
                 raise ValueError('corpus capacity reached; edit or disable existing entries')
             definition = self._definition(record, session_id, previous=old)
+            if definition['library_id'] != 'default' and self.journal.fetch(LIBRARY_NAMESPACE, definition['library_id'], scope) is None:
+                raise KeyError('corpus library not in current account and character scope')
             if old and definition['kind'] != old['kind']:
                 raise ValueError('a sample cannot be relabelled as a user preference')
             if len(receipts) >= 32:
@@ -165,7 +289,8 @@ class ChatCorpusLibrary:
                     body=old['body'][:240], body_truncated=len(old['body']) > 240,
                     body_sha256=hashlib.sha256(old['body'].encode()).hexdigest(),
                     title=old['title'], enabled=old['enabled'], lifetime=old['lifetime'],
-                    expires_at=old['expires_at'], source=old['source'], tags=list(old['tags'])))
+                    expires_at=old['expires_at'], source=old['source'], tags=list(old['tags']),
+                    library_id=old.get('library_id', 'default')))
             receipts[receipt_id] = dict(fingerprint=fingerprint, revision=expected_revision + 1)
             data = dict(definition, created_at=old['created_at'] if old else now,
                 history=history[-4:], receipts=receipts)
@@ -179,20 +304,34 @@ class ChatCorpusLibrary:
             raise ValueError('bounded context required')
         _text(query, 'query', 16000, blank=True)
         _text(scene, 'scene', 1000, blank=True)
-        items = self.list(scope, session_id)['items']
-        terms = _terms(query[-3000:] + '\n' + scene)
+        packet = self.list(scope, session_id)
+        items = packet['items']
+        current_text = query[-3000:] + '\n' + scene[:1000]
+        terms = _terms(current_text)
+        literal = _literal(current_text)
+        libraries = {row['id']: row for row in packet['libraries']}
         preferences = [row for row in items if row['eligible'] and row['kind'] == 'preference']
         preferences.sort(key=lambda row: (row['lifetime'] == 'persistent', -row['updated_at'], row['id']))
         scored = []
         for row in items:
             if not row['eligible'] or row['kind'] != 'sample':
                 continue
+            library = libraries.get(row['library_id'])
+            if not library or library['enabled'] is not True:
+                continue
+            trigger = library['trigger']
+            if any(_literal(word) in literal for word in trigger['exclude']):
+                continue
+            if trigger['mode'] == 'keywords':
+                hits = [_literal(word) in literal for word in trigger['include']]
+                if not hits or not (all(hits) if trigger['match'] == 'all' else any(hits)):
+                    continue
             best = None
             # The import stays intact; only a bounded relevant excerpt joins this request.
             for start in range(0, len(row['body']), 480):
                 snippet = row['body'][start:start + 600]
                 score = len(terms & _terms(snippet)) + 2 * len(terms & _terms(row['title'] + ' ' + ' '.join(row['tags'])))
-                if score and (best is None or score > best[0]):
+                if (score or trigger['mode'] != 'relevance') and (best is None or score > best[0]):
                     best = (score, snippet)
             if best:
                 scored.append((best[0], row, best[1]))
@@ -218,4 +357,4 @@ class ChatCorpusLibrary:
         self._check(scope)
         text = header + '\n'.join(json.dumps(row, ensure_ascii=False, separators=(',', ':')) for row in selected) if selected else ''
         return dict(text=text, items=selected, chars=len(text), writes=0, provider_calls=0,
-            factual_memory_writes=0, actual_use='not_observed', selection='local_lexical_candidates')
+            factual_memory_writes=0, actual_use='not_observed', selection='local_bounded_library_candidates')
