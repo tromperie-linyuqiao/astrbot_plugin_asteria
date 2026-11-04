@@ -7,5 +7,5 @@
 .pc-daily-native-actions { display: flex; align-items: flex-end; flex-wrap: wrap; gap: .65rem; padding-top: 1rem; margin-top: 1rem; border-top: 1px solid var(--pcd-line); }
 .pc-daily-native-actions label { display: flex; flex-direction: column; gap: .35rem; }
 .pc-daily-native [data-pcd-result] { line-height: 1.65; }
-.pc-daily-native-error { color: var(--danger, #c04444); }
+.pc-daily-native-error { color: var(--red, #c04444); overflow-wrap: anywhere; }
 @media (max-width: 600px) { .pc-daily-native-actions > * { flex: 1 1 45%; min-width: 0; } .pc-daily-native .panel-head { align-items: flex-start; } }

@@ -3,7 +3,7 @@
   const mount = document.getElementById('proactive-chat-native-mount');
   if (!mount || typeof api !== 'function') return;
   const base = 'page/proactive-chat-native/';
-  let state = null, busy = false, selected = null, editor = null, pending = null, serial = 0;
+  let state = null, busy = false, selected = null, editor = null, pending = null, serial = 0, stateFresh = false;
   const triggerPending = new Map();
   const copy = value => JSON.parse(JSON.stringify(value));
   const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
@@ -33,6 +33,31 @@
       : '请输入0–23的起止小时；多段用英文逗号分隔。原有非标准值若未修改会保持。';
   }
   const labels = {enabled_tts_not_supported_by_unified_lane: '当前会话需要TTS，但统一通道暂不可用。', enabled_segmentation_not_supported_by_single_task_lane: '当前会话启用了尚不兼容的分段发送。', enabled_decorating_handlers_not_supported_by_unified_lane: '存在不能静默跳过的消息装饰器。', decorating_handler_inventory_unknown: '消息装饰器清单尚未确认。', group_scope_not_authorized_by_private_lane: '群聊需要独立明确授权，不能使用私聊许可。'};
+  const blockingReasons = {
+    quiet_hours: '当前处于安静时段。可查看本会话的安静时段设置，原计划保持。',
+    session_policy_disabled: '此会话的主动消息已关闭。可在会话设置中核对启用选择。',
+    waiting_for_real_scope: '等待真实会话登记。请在对应聊天中正常交流后刷新，后台选择范围不会授予发送权限。',
+    native_pc_scope_not_current: '角色与真实私聊来源尚未对应。请在目标角色的聊天中正常交流后刷新。',
+    occurrence_outcome_unknown: '原任务结果尚未确认。请核对投递记录，不要重复触发。',
+    original_occurrence_overdue_requires_review: '保留的原计划已经逾期，需要核对原任务；页面不会重放。',
+    quiet_hours_configuration_unavailable: '安静时段配置尚未确认。请核对本会话设置。',
+    linked_app_source_changed: '已关联的 Chat 来源发生变化。请核对关联与当前角色后刷新。',
+    linked_app_authority_or_persona_unavailable: '已关联的 Chat 会话或角色授权尚未确认。请在对应聊天中正常交流后刷新。',
+    linked_app_source_selected: '主动消息已选择在关联的 Chat 会话接收，此处保留原计划。',
+    linked_source_status_unavailable: '关联接收来源暂时无法核对。请检查关联后重新读取状态。',
+    paired_source_in_flight: '关联来源仍有进行中的操作。请等待完成后刷新。',
+    paired_source_unknown: '关联来源存在未确认结果。请先核对原记录，不要重复触发。',
+    paired_delivery_unknown: '关联来源的投递结果待核对。请先查看投递记录。',
+    paired_delivery_in_flight: '关联来源正在投递。请等待完成后刷新。',
+    paired_occurrence_unknown: '关联来源的原任务结果待核对。请先查看原记录。'
+  };
+  function blockingText(session) {
+    const prefix = stateFresh ? '当前阻止条件：' : '上次读取的阻止条件（当前未确认）：';
+    if (!Object.prototype.hasOwnProperty.call(session, 'blocking_reason')) return prefix + '后台尚未提供当前条件，请刷新核对。';
+    if (session.blocking_reason === null) return prefix + '未报告阻止条件；仍需通过生成与投递检查，不代表已经生成或送达。';
+    return prefix + (Object.prototype.hasOwnProperty.call(blockingReasons, session.blocking_reason)
+      ? blockingReasons[session.blocking_reason] : '存在未分类的阻止条件，请查看系统服务与投递记录后核对。');
+  }
   function notice(text, error = false) { $('notice').textContent = text; $('notice').classList.toggle('pcn-error', error); }
   async function request(method, suffix, body) {
     const result = await api(method, base + suffix, body);
@@ -82,6 +107,8 @@
         const row = node('article'); row.className = 'pcn-session';
         row.append(node('strong', session.session_id), node('p', `未回复 ${session.unanswered_count ?? 0} 次 · ${session.execution_state === 'waiting_for_real_scope' ? '等待真实私聊，原任务保留' : session.scheduled ? '已有计划' : '当前未运行'}`));
         row.append(node('p', session.next_trigger_time ? '计划时间：' + new Date(session.next_trigger_time * 1000).toLocaleString() : '原记录没有下一次时间'));
+        const blocker = node('p', blockingText(session)); blocker.dataset.pcnBlockingReason = 'true';
+        row.append(blocker);
         if (session.last_admission) {
           const check = session.last_admission;
           row.append(node('p', '最新准入：' + (check.reason || check.state || '待核对') + ' · '
@@ -99,8 +126,8 @@
   }
   async function load(inspect = false, quiet = false) {
     if (busy) return false; busy = true; controls();
-    try { state = await request('GET', inspect ? 'inspect' : 'status'); if (!quiet) notice(inspect ? '已读取真实原状态，未触发发送。' : '已读取当前运行状态。'); return true; }
-    catch (error) { notice('刷新未确认，保留上次显示。' + (error.publicMessage || error.message || ''), true); return false; }
+    try { state = await request('GET', inspect ? 'inspect' : 'status'); stateFresh = true; if (!quiet) notice(inspect ? '已读取真实原状态，未触发发送。' : '已读取当前运行状态。'); return true; }
+    catch (error) { stateFresh = false; notice('刷新未确认，保留上次显示。' + (error.publicMessage || error.message || ''), true); return false; }
     finally { busy = false; render(); }
   }
   async function operate(path) {
@@ -113,7 +140,7 @@
   async function triggerSession(session) {
     if (busy || triggerPending.has(session)) return;
     const identity = requestId(); triggerPending.set(session, identity); busy = true; controls();
-    try { state = await request('POST', 'trigger', {session_id: session, request_id: identity}); triggerPending.delete(session);
+    try { state = await request('POST', 'trigger', {session_id: session, request_id: identity}); stateFresh = true; triggerPending.delete(session);
       const attempt = state.attempt;
       notice(attempt?.confirmed === true ? '统一队列已返回发送确认；这不代表用户已阅读。'
         : '本次未确认送达：' + (attempt?.reason || attempt?.state || '请核对真实任务与历史') + '。不会自动重发。'); }

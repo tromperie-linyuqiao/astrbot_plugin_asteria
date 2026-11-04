@@ -12,7 +12,7 @@ from .core.living.native_pc_goal_handoff import PCGoalHandoffError
 from .memory_web_api import SCOPE_FIELDS, _scope, _InvalidRequest
 
 PREFIX = '/astrbot_plugin_virtual_body/page/pc-daily-native'
-ROUTES = (('status', 'GET'), ('settings', 'POST'), ('generate', 'POST'), ('tick', 'POST'),
+ROUTES = (('status', 'GET'), ('generation', 'GET'), ('settings', 'POST'), ('generate', 'POST'), ('tick', 'POST'),
           ('owner_status', 'GET'), ('owner_activate', 'POST'), ('owner_stop', 'POST'), ('owner_restore', 'POST'))
 
 
@@ -44,7 +44,7 @@ class NativePCDailyWebApi:
             if not isinstance(username, str) or not username.strip():
                 return error_response('需要通过 AstrBot 管理后台认证', status_code=401)
             resources = self._resources(); service = resources[-1]
-            if operation in {'status', 'owner_status'}:
+            if operation in {'status', 'generation', 'owner_status'}:
                 data = dict(getattr(request, 'query', None) or {})
             else:
                 if getattr(request, 'query', None): raise _InvalidRequest('写操作不接受查询参数')
@@ -70,7 +70,19 @@ class NativePCDailyWebApi:
                         service.stop()
                         result = service.handoff.status()
             else:
-                if operation == 'status':
+                if operation == 'generation':
+                    if not set(SCOPE_FIELDS) <= set(data): raise _InvalidRequest('需要完整用户、角色及会话范围')
+                    scope = _scope({key: data[key] for key in SCOPE_FIELDS})
+                    if 'intent' in data:
+                        if set(data) != set(SCOPE_FIELDS) | {'intent'} or len(data['intent']) > 2048:
+                            raise _InvalidRequest('仅接受原始有界生成意图进行核对')
+                        result = service.generation_status(scope, json.loads(data['intent']))
+                    else:
+                        if set(data) - set(SCOPE_FIELDS) - {'day', 'routines'} or data.get('routines') not in {'true', 'false'}:
+                            raise _InvalidRequest('需要明确的计划类型与可选角色日期')
+                        result = await service.generation_preview(scope, day=data.get('day') or None,
+                            routines=data['routines'] == 'true')
+                elif operation == 'status':
                     if set(data) != set(SCOPE_FIELDS): raise _InvalidRequest('需要完整用户、角色及会话范围')
                     scope = _scope(data)
                     result = service.diagnostics(scope)
@@ -81,9 +93,12 @@ class NativePCDailyWebApi:
                         if set(data) != {'scope', 'expected_revision', 'flags'}: raise _InvalidRequest('设置字段不完整')
                         result = service.configure(scope, expected_revision=data['expected_revision'], flags=data['flags'], actor=username)
                     elif operation == 'generate':
-                        if set(data) != {'scope', 'day', 'routines'} or type(data['routines']) is not bool:
+                        if (not {'scope', 'day', 'routines'} <= set(data)
+                                or set(data) - {'scope', 'day', 'routines', 'expected_generation'}
+                                or type(data['routines']) is not bool):
                             raise _InvalidRequest('需要日期及明确的计划类型')
-                        result = await service.generate(scope, day=data['day'] or None, routines=data['routines'])
+                        result = await service.generate(scope, day=data['day'] or None, routines=data['routines'],
+                            expected_generation=data.get('expected_generation'))
                     else:
                         if set(data) != {'scope'}: raise _InvalidRequest('推进操作只接受当前范围')
                         result = await service.tick(scope)
@@ -101,6 +116,7 @@ class NativePCDailyWebApi:
             return error_response('日常执行状态暂不可用，请刷新核对；不要自动重发写操作。', status_code=503)
 
     async def status(self): return await self._respond('status')
+    async def generation(self): return await self._respond('generation')
     async def settings(self): return await self._respond('settings')
     async def generate(self): return await self._respond('generate')
     async def tick(self): return await self._respond('tick')

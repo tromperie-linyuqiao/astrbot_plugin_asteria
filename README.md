@@ -32,6 +32,13 @@
 - 新增“资料中心 → 语料与聊天偏好”独立分区，支持 `#chat_corpus` 直达，复用当前登录账号的 WebChat 会话库。
 - 本轮只更新插件控制台；Asteria Chat 仍为 2.7.0，未生成新 APK。
 
+## 日常与主动消息修复（0.75.4）
+
+- 准备虚构日常前先按角色时区核对日期；没有未来时段或可用目标时保留明确原因，不生成无用准备记录。
+- 回执丢失时只读核对原日期、角色、会话及计划来源；完整证明才解除等待，不自动重发或清除旧未知记录。
+- 历史分享记录与最近推进状态分开显示；主动消息展示后台已有的当前阻止原因和处理方向。
+- 本轮更新插件控制台与日常接口，客户端保持原版本。既有资料、来源与用户设置保留。
+
 ## 本轮改进
 
 - 细分部位与用户动作，保存姿态、相对位置和接触状态；明确结束接触，持续状态不靠时间重复增加数值。
@@ -71,7 +78,7 @@ https://cdn.jsdelivr.net/gh/tromperie-linyuqiao/astrbot_plugin_asteria@main/mark
 
 [下载 Android 安装包](https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria/releases) · [客户端说明](client/asteria-chat/README.md)
 
-当前源码：**Asteria 0.75.3 / Asteria Chat 2.7.0（code 78）**。本轮发布客户端源码；Releases 中旧版本 APK 不代表本轮版本，请按客户端说明自行构建。
+当前源码：**Asteria 0.75.4 / Asteria Chat 2.7.0（code 78）**。本轮发布客户端源码；Releases 中旧版本 APK 不代表本轮版本，请按客户端说明自行构建。
 
 客户端连接你自己的 AstrBot 服务，复用现有角色、模型与聊天历史。默认不预置服务器或账号。服务端连接配置见 [反向代理示例](deploy/nginx-chat.conf.example)。
 

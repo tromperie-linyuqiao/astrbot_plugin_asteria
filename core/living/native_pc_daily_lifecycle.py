@@ -27,6 +27,17 @@ STATE = 'tls.native.pc.daily_settings.v1'
 _WAITING = {'attempting', 'generating', 'imaging', 'submitting', 'queued'}
 _SETTLED = {'acked', 'failed', 'dropped', 'duplicate', 'delivered_unclaimed', 'claimed', 'claim_unknown'}
 _DEFAULTS = dict(auto_generate=False, auto_progress=False, share_enabled=False, routine_enabled=False)
+_SHARE_REASONS = {
+    'scope_or_lane_unavailable': '当时范围或统一发送通道不可用',
+    'one_proactive_tick_inflight': '当时已有主动消息操作在处理',
+    'clock_moved_backwards': '当时检测到时钟回退',
+    'handoff_transition': '当时服务仍处于切换等待期',
+    'pending_scope_capacity': '当时待处理范围已达容量上限',
+    'native_admission_denied': '当时未通过原统一发送通道的接纳检查',
+    'proactive_pending_conflict': '当时原待处理记录发生版本冲突',
+    'proactive_input_or_state_unavailable': '当时输入或原主动状态不可用',
+    'proactive_tick_failed': '当时主动操作失败',
+}
 
 
 def _digest(value):
@@ -63,7 +74,7 @@ class NativePCDailyLifecycle:
         self.life_coordinator = None
         self.defaults = self._settings(defaults or _DEFAULTS)
         self.active = True; self._scopes = {}; self._serial = asyncio.Lock()
-        self._last = {}; self._active_tasks = set(); self._source_epoch = 0
+        self._last = {}; self._last_at = {}; self._active_tasks = set(); self._source_epoch = 0
 
     @staticmethod
     def _settings(value):
@@ -169,7 +180,100 @@ class NativePCDailyLifecycle:
             authorize=lambda: self.active and self.authorize_material(dict(scope)) is True)
         return self.settings(scope)
 
-    async def generate(self, scope, *, day=None, routines=False):
+    @staticmethod
+    def _generation_intent(scope, persona, day, routines):
+        if type(routines) is not bool or type(day) is not str or date.fromisoformat(day).isoformat() != day:
+            raise ValueError('exact role-calendar day and routine flag required')
+        persona = _text(persona, 256)
+        request = 'pc.daily.' + _digest([scope, persona, day, 'routine' if routines else 'goals'])
+        return dict(day=day, routines=routines, persona_id=persona, request_id=request,
+                    plan_id='plan.' + _digest([scope, request]))
+
+    def _checked_generation_intent(self, scope, value):
+        if type(value) is not dict or set(value) != {'day', 'routines', 'persona_id', 'request_id', 'plan_id'}:
+            raise ValueError('complete original generation intent required')
+        expected = self._generation_intent(scope, value['persona_id'], value['day'], value['routines'])
+        if value != expected: raise ValueError('generation intent does not match this exact scope')
+        return expected
+
+    def generation_status(self, scope, intent):
+        """Read an existing exact mapping, never repair it or grant a live source."""
+        scope = self._material(scope)
+        intent = self._checked_generation_intent(scope, intent)
+        now = datetime.fromtimestamp(self.clock(), self.plans.timezone)
+        result = dict(state='not_found', reason_code='generation_not_confirmed',
+            reason_label='尚未找到该意图的完整计划证明；不能据此认定原请求未执行或重新提交。',
+            can_generate=False, intent=intent, role_date=now.date().isoformat(),
+            timezone=self.plans.timezone_name, suggested_day=None)
+        link = self.journal.fetch(NAMESPACE, 'plan.' + intent['plan_id'], scope)
+        plan = self.plans.get(scope, intent['plan_id'])
+        if link is None:
+            if plan is not None: result.update(state='inconsistent', reason_code='generation_source_missing')
+            return result
+        proof = link['data']
+        if (proof.get('schema') != 1 or proof.get('fictional') is not True
+                or proof.get('legacy_history_migrated') is not False
+                or type(proof.get('inbound_event_id')) is not str or not proof['inbound_event_id'].strip()
+                or proof.get('scope') != scope or proof.get('plan_id') != intent['plan_id']
+                or proof.get('persona_id') != intent['persona_id']
+                or proof.get('kind') != ('routine' if intent['routines'] else 'goals')
+                or proof.get('source') != 'genuine_private_inbound_sdk_selection'):
+            return dict(result, state='inconsistent', reason_code='generation_source_changed')
+        if proof.get('phase') != 'ready':
+            return dict(result, state='pending', reason_code='generation_preparing',
+                reason_label='已有该意图的准备记录，但没有完整完成证明；保留原记录，不自动重发。')
+        actor = 'inbound.' + _digest([scope, intent['persona_id']])[:32]
+        if (plan is None or plan.get('scope') != scope or plan.get('date') != intent['day']
+                or plan.get('provenance', {}).get('request_id') != intent['request_id']
+                or plan.get('provenance', {}).get('actor') != actor):
+            return dict(result, state='inconsistent', reason_code='generation_plan_changed')
+        self._material(scope)
+        return dict(result, state='confirmed', reason_code='generation_plan_exists', plan=plan,
+            reason_label='该意图对应的计划已存在；这不证明是本次请求新建。')
+
+    def _routine_items(self, target, now):
+        items = []
+        for hour, title in [(10, '整理日常思绪'), (15, '留一段轻松休息的时间'), (21, '回顾今天的虚构经历')]:
+            at = datetime.combine(target, time(hour, 0), self.plans.timezone).timestamp()
+            if at > now:
+                items.append(dict(title=title, description='目标之外的虚构角色日常；仅在到时或明确完成后记为角色事件。',
+                                  scheduled_at=at, goal_ids=[]))
+        return items
+
+    def _generation_block(self, scope, target, routines, now):
+        tomorrow = (datetime.fromtimestamp(now, self.plans.timezone).date() + timedelta(days=1)).isoformat()
+        if routines and not self._routine_items(target, now):
+            return dict(reason_code='no_future_routine_slot', suggested_day=tomorrow,
+                reason_label='角色所在时区的当天已没有未来日常时段，请选择明天或之后的日期；未创建计划。')
+        if not routines:
+            goals = [row for row in self.plans.goal_options(scope) if row['status'] == 'active' and not row['archived']]
+            if not goals:
+                return dict(reason_code='no_active_goals', suggested_day=None,
+                    reason_label='当前范围没有可用的进行中目标；请先在个人目标中维护目标，再准备目标计划。')
+            start = datetime.combine(target, time(9, 0), self.plans.timezone).timestamp()
+            if start <= now: start = (math.floor(now / 1800) + 1) * 1800
+            if datetime.fromtimestamp(start, self.plans.timezone).date() != target:
+                return dict(reason_code='no_future_goal_slot', suggested_day=tomorrow,
+                    reason_label='角色当天已没有未来目标时段，请选择明天或之后的日期；未创建计划。')
+        return None
+
+    async def generation_preview(self, scope, *, day=None, routines=False):
+        """Bind a new UI intent to the actual persona/date without writing."""
+        scope = private_scope(scope)
+        source = await self._source(scope, 'generate')
+        now = self.clock(); today = datetime.fromtimestamp(now, self.plans.timezone).date()
+        target = today if day is None else date.fromisoformat(day)
+        if target < today or target > today + timedelta(days=7):
+            raise ValueError('select today or one of the next seven role-calendar days')
+        intent = self._generation_intent(scope, source['persona_id'], target.isoformat(), routines)
+        result = self.generation_status(scope, intent)
+        if result['state'] != 'not_found': return result
+        blocked = self._generation_block(scope, target, routines, now)
+        if blocked: return dict(result, state='blocked', **blocked)
+        return dict(result, state='ready', can_generate=True, reason_code='generation_ready',
+            reason_label='当前可以准备该意图的计划；仍需点击原生成操作后提交。')
+
+    async def generate(self, scope, *, day=None, routines=False, expected_generation=None):
         scope = private_scope(scope)
         source = await self._source(scope, 'generate')
         now = self.clock(); today = datetime.fromtimestamp(now, self.plans.timezone).date()
@@ -177,9 +281,10 @@ class NativePCDailyLifecycle:
         if target < today or target > today + timedelta(days=7):
             raise ValueError('select today or one of the next seven role-calendar days')
         day = target.isoformat()
-        identity = _digest([scope, source['persona_id'], day, 'routine' if routines else 'goals'])
-        request = 'pc.daily.' + identity
-        plan_id = 'plan.' + _digest([scope, request])
+        intent = self._generation_intent(scope, source['persona_id'], day, routines)
+        if expected_generation is not None and self._checked_generation_intent(scope, expected_generation) != intent:
+            raise JournalConflict('预检后的角色、日期或计划类型已变化；未执行该次计划准备')
+        request, plan_id = intent['request_id'], intent['plan_id']
         link_key = 'plan.' + plan_id
         link = self.journal.fetch(NAMESPACE, link_key, scope)
         if link is not None and link['data'].get('phase') == 'ready':
@@ -187,6 +292,12 @@ class NativePCDailyLifecycle:
             if existing is None: raise RuntimeError('sourced daily plan is missing; do not recreate history')
             return existing
         actor = 'inbound.' + _digest([scope, source['persona_id']])[:32]
+        # Known refusal must happen before creating even a preparing proof.
+        # Existing proofs/plans are retained and never rewritten by this check.
+        existing = self.plans.get(scope, plan_id)
+        if existing is None:
+            blocked = self._generation_block(scope, target, routines, now)
+            if blocked: raise ValueError(blocked['reason_label'])
         # Provenance is durable before the plan, so a crash cannot leave an
         # apparently ownerless plan that a later inbound silently adopts.
         if link is None:
@@ -199,7 +310,6 @@ class NativePCDailyLifecycle:
             proof = dict(link['data'])
             if proof['persona_id'] != source['persona_id'] or proof['plan_id'] != plan_id:
                 raise JournalConflict('daily creation source changed')
-        existing = self.plans.get(scope, plan_id)
         if existing is not None:
             if existing['provenance']['actor'] != actor:
                 raise JournalConflict('existing daily plan has another creation source')
@@ -209,14 +319,7 @@ class NativePCDailyLifecycle:
         if routines:
             # These are explicitly fictional proposals, never imported global
             # PC history or claims about real observation, reading, or skills.
-            slots = [(10, '整理日常思绪'), (15, '留一段轻松休息的时间'), (21, '回顾今天的虚构经历')]
-            items = []
-            for hour, title in slots:
-                at = datetime.combine(target, time(hour, 0), self.plans.timezone).timestamp()
-                if at <= now: continue
-                items.append(dict(title=title, description='目标之外的虚构角色日常；仅在到时或明确完成后记为角色事件。', scheduled_at=at, goal_ids=[]))
-            if not items:
-                raise ValueError('today has no future routine slot; choose tomorrow')
+            items = self._routine_items(target, now)
             plan = self.plans.create(scope, request, title='明确归属的虚构日常', day=day, items=items, actor=actor)
         else:
             plan = self.plans.generate(scope, request, day=day, limit=6, actor=actor)
@@ -398,6 +501,8 @@ class NativePCDailyLifecycle:
                     and actual['data'].get('signature') == _digest([scope, event_id, topic])):
                 return await self._reconcile_share(scope, row)
             work['phase'] = 'blocked' if result.get('state') in {'blocked', 'disabled', 'busy'} else 'unknown'
+            reason = result.get('reason')
+            if type(reason) is str and reason in _SHARE_REASONS: work['reason_code'] = reason
             self._share_put(scope, work, row['revision'])
             return dict(state=work['phase'], reason=result.get('reason'), task_id=task_id)
         return dict(state='idle', reason='no_new_eligible_goal_share')
@@ -422,6 +527,7 @@ class NativePCDailyLifecycle:
                 if flags['auto_progress']: result['completed_items'] = await self._advance(scope, source)
                 result['share'] = await self._share(scope) if flags['share_enabled'] else dict(state='disabled')
                 self._last[scope_key(scope)] = result
+                self._last_at[scope_key(scope)] = self.clock()
                 return result
         except PermissionError:
             return dict(state='disabled', reason='scope_persona_or_goal_handoff_not_current')
@@ -474,9 +580,13 @@ class NativePCDailyLifecycle:
         scope = self._material(scope); key = scope_key(scope)
         pointer = self.journal.fetch(NAMESPACE, 'active_share', scope)
         row = self.journal.fetch(SHARES, pointer['data']['key'], scope) if pointer else None
+        reason = row['data'].get('reason_code') if row else None
+        reason = reason if type(reason) is str and reason in _SHARE_REASONS else None
         return dict(result, settings=self.settings(scope), genuine_scope_registered=key in self._scopes,
-            last_tick=self._last.get(key), share=dict(phase=row['data']['phase'],
+            last_tick=self._last.get(key), last_tick_at=self._last_at.get(key), share=dict(phase=row['data']['phase'],
                 delivery_confirmed=row['data'].get('delivery_confirmed', False),
+                created_at=row['data'].get('created_at'), updated_at=row['updated_at'],
+                reason_code=reason, reason_label=_SHARE_REASONS.get(reason, '原记录未保存可核对的原因，不能据此推断当前状态。'),
                 automatic_retry=False) if row else None)
 
     def stop(self):
