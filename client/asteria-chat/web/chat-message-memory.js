@@ -87,7 +87,7 @@ window.ChatMessageMemory = (() => {
   }
   function render(){
     searchBox.hidden=false;list.replaceChildren();const data=snapshot;
-    heading.textContent=(data.message.role==='user'?'你的消息':'伙伴的回复')+' · 记忆';
+    heading.textContent=(data.message.role==='user'?'你的消息':'角色的回复')+' · 记忆';
     const candidate=data.pending_candidate;
     if(candidate){const row=node('article');row.append(node('h3','这条消息的记忆候选'),node('p',candidate.original_text),node('small',kind(candidate.evidence_kind)+' · 修订 '+candidate.revision),
       node('p',candidate.status==='pending'?(data.important_saved?'候选状态仍待核对；下方已经存在真实长期记忆。':'待你确认，候选本身不会进入记忆检索或回复上下文。'):candidate.status==='confirmed'?'已明确确认长期保存。':'已放弃这个候选。'));list.append(row);}

@@ -85,6 +85,7 @@ from .time_intent import TimeIntent, parse_time_intent
 from .turn_signal import analyze_turn_signal, message_terms
 from .visibility import VisibilityPolicy
 from ..memory_routing_strategy import route as memory_route, route_derived, settings_for as memory_strategy_settings, summary_plan, capture_mode, is_roleplay_record
+from ..structured_reply import visible_text, visible_timeline_rows
 
 
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
@@ -1224,6 +1225,8 @@ class MemoryCompanionService:
                 await asyncio.sleep(15 * 60)
 
     async def run_due_portrait_batches(self, *, force_window: bool = False) -> dict[str, Any]:
+        if self._closing or self._closed:
+            return {"ok": False, "code": "portrait_dispatch_stopping", "processed": 0, "results": []}
         now = datetime.now(LOCAL_TZ)
         if not force_window and self._portrait_seconds_until_window(now) > 0:
             return {"ok": True, "code": "portrait_window_closed", "processed": 0, "results": []}
@@ -1231,16 +1234,23 @@ class MemoryCompanionService:
         people = await self.store.list_pending_portrait_people(limit=500)
         results: list[dict[str, Any]] = []
         for person_id in people:
+            # Finish the in-flight unit, but leave further queued people for
+            # the next owner. Shutdown must not start another portrait batch.
+            if self._closing or self._closed:
+                break
             result = await self.portraits.run_daily_batch(person_id, run_day=run_day)
             results.append({"person_id": person_id, "code": clean_text(result.get("code"), 80), "ok": bool(result.get("ok"))})
         code = "profile_exact" if any(item["ok"] for item in results) else "portrait_insufficient_evidence"
+        stopping = self._closing or self._closed
+        if stopping:
+            code = "portrait_dispatch_stopping"
         self._portrait_dispatch_status.update({
-            "state": "ready",
+            "state": "stopping" if stopping else "ready",
             "last_run_day": run_day,
             "last_result": code,
             "last_completed_at": utc_now(),
         })
-        return {"ok": True, "code": code, "processed": len(results), "results": results}
+        return {"ok": not stopping, "code": code, "processed": len(results), "results": results}
 
     async def handle_llm_response(self, event: Any, resp: Any) -> None:
         if self._private_companion_internal_generation_event(event):
@@ -1254,7 +1264,7 @@ class MemoryCompanionService:
         if getattr(resp, "tools_call_name", None) or getattr(resp, "tools_call_extra_content", None):
             return
 
-        text = clean_text(getattr(resp, "completion_text", "") or "", 2000)
+        text = clean_text(visible_text(getattr(resp, "completion_text", "") or ""), 2000)
         if not text:
             return
 
@@ -1558,12 +1568,10 @@ class MemoryCompanionService:
         ctx.companion_expression_humor_mode = clean_text(decision.get("humor_mode"), 24)
         ctx.companion_expression_topic_initiative = clean_text(decision.get("topic_initiative"), 24)
 
-    def _sanitize_visible_timeline_text(self, text: Any) -> str:
-        cleaned = clean_text(text, 1200)
+    def _sanitize_visible_timeline_text(self, text: Any, *, assistant: bool = False) -> str:
+        cleaned = clean_text(visible_text(text) if assistant else text, 1200)
         if not cleaned:
             return ""
-        cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
-        cleaned = re.sub(r"<reasoning>.*?</reasoning>", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
         cleaned = re.sub(r"\[\[TTSBLOCK:[^\]]*\]\]", "", cleaned)
         cleaned = re.sub(r"\[\[PCTTS:[^\]]*\]\]", "", cleaned)
         cleaned = re.sub(r"<timer\b[^>]*>.*?</timer>", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
@@ -1604,10 +1612,11 @@ class MemoryCompanionService:
         metadata: dict[str, Any] | None = None,
         occurred_at: str = "",
     ) -> str:
-        text = self._sanitize_visible_timeline_text(content)
+        normalized_role = clean_text(role, 40).lower()
+        text = self._sanitize_visible_timeline_text(content,
+            assistant=normalized_role in {"assistant", "bot", "self"})
         if not text:
             return ""
-        normalized_role = clean_text(role, 40).lower()
         if normalized_role in {"assistant", "bot", "self"}:
             event_type = "bot_response"
             bridge_ctx = SessionContext(bot_id=clean_text((metadata or {}).get("bot_id"), 120))
@@ -1689,10 +1698,10 @@ class MemoryCompanionService:
                 timeline_content = self._sanitize_visible_timeline_text(
                     record.metadata.get("clean_visible_text")
                     or record.metadata.get("visible_text")
-                    or record.metadata.get("response_text")
+                    or record.metadata.get("response_text"), assistant=True
                 )
             if not timeline_content:
-                timeline_content = self._sanitize_visible_timeline_text(record.content)
+                timeline_content = self._sanitize_visible_timeline_text(record.content, assistant=True)
             await self.store.add_timeline_event(
                 event_type=record.memory_type,
                 session_id=record.session_id,
@@ -8367,7 +8376,8 @@ class MemoryCompanionService:
             )
             if occurred_at is None or occurred_at < cutoff:
                 continue
-            visible = self._sanitize_visible_timeline_text(row.get("content"))
+            visible = self._sanitize_visible_timeline_text(row.get("content"),
+                assistant=event_type == "bot_response")
             snippet = self._recent_fact_direct_text(visible)
             snippet = self.injection._redact_sensitive_text(snippet)
             if not snippet:
@@ -8423,7 +8433,8 @@ class MemoryCompanionService:
             )
             if occurred_at is None or occurred_at < cutoff:
                 continue
-            text = self._recent_fact_direct_text(self._sanitize_visible_timeline_text(row.get("content")))
+            text = self._recent_fact_direct_text(self._sanitize_visible_timeline_text(row.get("content"),
+                assistant=event_type == "bot_response"))
             if not text:
                 continue
             categories = (
@@ -8489,7 +8500,8 @@ class MemoryCompanionService:
         current_terms = set(turn_signal.terms or [])
         if len(current_terms) < 2 or not rows:
             return ""
-        recent_text = " ".join(clean_text(row.get("content"), 500) for row in rows if row.get("content"))
+        recent_text = " ".join(clean_text(row.get("content"), 500)
+                               for row in visible_timeline_rows(rows) if row.get("content"))
         recent_terms = set(message_terms(recent_text, limit=120))
         if not recent_terms:
             return ""
@@ -8737,6 +8749,9 @@ class MemoryCompanionService:
         *,
         limit: int,
     ) -> list[str]:
+        # Old timeline rows remain intact; only spoken assistant content may
+        # steer a follow-up query, including before the per-row length limit.
+        rows = visible_timeline_rows(rows)
         current_terms = set(self._anchor_terms_for_text(query))
         scores: dict[str, float] = {}
         by_term_rows: dict[str, set[int]] = defaultdict(set)

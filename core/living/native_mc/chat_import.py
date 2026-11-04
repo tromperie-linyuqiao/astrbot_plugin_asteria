@@ -1695,21 +1695,50 @@ class HistoricalChatImporter:
         return await self.status(batch_id)
 
     async def rollback_batch(self, batch_id: str) -> dict[str, Any]:
+        batch = await self.store.get_chat_import_batch(batch_id)
+        if not batch:
+            raise ValueError("导入批次不存在")
+        previous = (batch.get("stats") or {}).get("rollback_report")
+        if batch.get("state") == "rolled_back" and isinstance(previous, dict):
+            # A repeated request must not hide an earlier partial result behind
+            # zero removed rows or repeat the companion-side operation.
+            return previous
         task = self._tasks.get(batch_id)
         if task is not None and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         api = self._private_api()
         rollback = getattr(api, "rollback_historical_relationship_observations", None) if api is not None else None
+        relationships = {
+            "status": "unavailable" if int(batch.get("relationship_observation_count") or 0) else "not_needed",
+            "message": "关系维护未连接，已记录的候选需在陪伴管理核对。" if int(batch.get("relationship_observation_count") or 0)
+            else "本批未记录关系候选，未调用关系维护。",
+        }
         if callable(rollback):
             try:
                 result = rollback(batch_id)
                 if hasattr(result, "__await__"):
-                    await result
+                    result = await result
+                removed = result.get("removed") if isinstance(result, dict) else None
+                if type(removed) is int and removed >= 0 and result.get("batch_id", batch_id) == batch_id:
+                    relationships = {"status": "completed", "removed": removed,
+                        "message": "已清理本批待确认观察；已确认关系不在此回滚范围。"}
+                else:
+                    relationships = {"status": "unconfirmed", "message": "关系维护未返回完整结果，请在陪伴管理核对。"}
             except Exception as exc:
                 logger.warning("[MemoryCompanion] 回滚关系网历史观察失败: batch=%s error=%s", batch_id, exc)
+                relationships = {"status": "failed", "message": "关系待确认记录未能清理，请在陪伴管理核对；不会自动重试。"}
         deleted = await self.store.rollback_chat_import_batch(batch_id)
-        return {"batch_id": batch_id, "state": "rolled_back", "deleted": deleted}
+        report = {"batch_id": batch_id, "state": "rolled_back", "deleted": deleted,
+            "rollback_status": "completed" if relationships["status"] in {"completed", "not_needed"} else "partial",
+            "relationship_observations": relationships, "at": utc_now()}
+        # The MC transaction and companion store are independent. Preserve an
+        # explicit receipt in the existing batch metadata, not a new work queue.
+        current = await self.store.get_chat_import_batch(batch_id)
+        stats = dict((current or {}).get("stats") or {})
+        stats["rollback_report"] = report
+        await self.store.update_chat_import_batch(batch_id, stats=stats)
+        return report
 
     async def _rebind_relationship_observations(
         self,

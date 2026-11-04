@@ -163,6 +163,13 @@ def persist_events(state: dict[str, Any], events: list[dict[str, Any]] | None,
             continue
         if pid in direct:
             continue              # 本轮有直接事件：不叠加延续（记录面稍后覆盖刷新）
+        # Explicit APP scene continuity keeps the original contact/expiry,
+        # without turning reading or background ticks into additional touches.
+        interaction = state.get("interaction")
+        if isinstance(interaction, dict) and interaction.get("mode") == "narrative":
+            if not tick:
+                entry["last_renew"] = decay.iso_ts(now)
+            continue
         s = decay.clamp01(entry.get("s") or 0.0) * rate
         if tick:
             last_tick = decay.parse_ts(entry.get("last_tick"))

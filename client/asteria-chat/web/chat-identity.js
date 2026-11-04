@@ -22,7 +22,7 @@ window.ChatIdentity = (() => {
       if (result.linked) {
         node('identity-command').hidden = true;
         say(result.qq_persona_observed ? '绑定已生效。两端会按原有记忆规则读取获授权的长期资料。'
-          : 'QQ私聊已确认。再与QQ里的伙伴正常聊一句，便可登记当前角色并读取其记忆。');
+          : 'QQ私聊已确认。再与QQ里的对应 Bot正常聊一句，便可登记当前角色并读取其记忆。');
       } else say(result.pending ? '有一条待QQ确认的绑定码；生成新码会使旧码失效。' : '只会在你用QQ私聊确认后启用共享。');
     } catch (error) { if (active(selected)) say(errorText(error)); }
     finally { busy = false; if (owner && selected !== owner && active(owner)) read(); }
@@ -38,7 +38,7 @@ window.ChatIdentity = (() => {
       if (!active(selected)) return;
       const code = node('identity-command'); code.value = data.command; code.hidden = false;
       node('identity-revoke').hidden = false;
-      say('长按复制上方整条命令，发给QQ里的伙伴。绑定码10分钟有效；发完点“刷新绑定状态”。');
+      say('长按复制上方整条命令，发给QQ里的对应 Bot。绑定码10分钟有效；发完点“刷新绑定状态”。');
     } catch (error) { if (active(selected)) say(errorText(error) + ' 请先刷新状态，不会自动重复提交。'); }
     finally { busy = false; node('identity-generate').disabled = false; if (owner && selected !== owner && active(owner)) read(); }
   }
@@ -56,7 +56,7 @@ window.ChatIdentity = (() => {
     if (owner && active(owner)) await read();
   }
   function open() {
-    if (!state.authenticated || !state.activeId) { showNotice('先登录并连接伙伴。'); return; }
+    if (!state.authenticated || !state.activeId) { showNotice('先登录并连接对应 Bot。'); return; }
     hideMoreMenu(); owner = scope();
     node('identity-command').value = ''; node('identity-command').hidden = true;
     node('identity-consent').checked = false;

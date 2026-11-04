@@ -10,8 +10,11 @@ import asyncio
 import json
 import math
 
+from ....identity import PLUGIN_NAME, LEGACY_PLUGIN_NAME
+
 PROTOCOL = 'tls.native.memo_tool.pc_router.v1'
-TLS_ROOT = 'astrbot_plugin_virtual_body'
+TLS_ROOT = PLUGIN_NAME
+TLS_ROOTS = (PLUGIN_NAME, LEGACY_PLUGIN_NAME)
 MAX_STARS = 128
 MAX_REPLY = 262144
 _CREATE = frozenset(('', 'create', 'add', '新增', '添加', '创建', '记录')) - {''}
@@ -62,7 +65,7 @@ def _resolve(pc):
     rows=getter()
     if type(rows) not in (list,tuple) or len(rows)>MAX_STARS:
         return None
-    matches=[row for row in rows if getattr(row,'root_dir_name',None)==TLS_ROOT]
+    matches=[row for row in rows if getattr(row,'root_dir_name',None) in TLS_ROOTS]
     if len(matches)!=1:
         return None
     metadata=matches[0]

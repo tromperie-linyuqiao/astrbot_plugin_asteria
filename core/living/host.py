@@ -155,7 +155,7 @@ class LivingHost:
             runtime = runtime_factory(self.presence, journal, governance, clock=self.clock,
                                       scope_validator=self.authorized_scope)
             if hasattr(runtime, 'memory'):
-                backend = self.plugin._cfg('living_memory_backend', 'legacy')
+                backend = self.plugin._cfg('living_memory_backend', 'native')
                 if backend == 'native':
                     from .native_memory import NativeMemoryStore
                     from .native_memory_adapter import NativeMemoryAdapter
@@ -166,7 +166,7 @@ class LivingHost:
                     runtime.memory.profile_candidates=runtime.profile_candidates
                     self.plugin._native_profile_candidates=runtime.profile_candidates
                 elif backend == 'legacy':
-                    pass  # Preserve legacy construction order after the owned factories.
+                    raise ValueError('legacy memory bridge is retired; review retained data before selecting native storage')
                 else:
                     raise ValueError('invalid living_memory_backend')
             if getattr(getattr(runtime, 'memory', None), 'backend', None) == 'native':
@@ -243,9 +243,6 @@ class LivingHost:
                         abort()
                     raise PermissionError('reminder factory requires isolated lifecycle contract')
                 runtime.reminders=reminders
-            if hasattr(runtime, 'memory') and self.plugin._cfg('living_memory_backend', 'legacy') == 'legacy':
-                from .bridges import MemoryBridgeAdapter
-                runtime.memory = MemoryBridgeAdapter(journal, clock=self.clock)
             from .native_history_archive import NativeHistoryArchive
             runtime.history_archive = NativeHistoryArchive(journal.path.parent / 'history_archive.sqlite3', clock=self.clock)
             if getattr(getattr(runtime, 'memory', None), 'backend', None) == 'native':
@@ -377,7 +374,7 @@ class LivingHost:
 
     def _native_memory_allowed(self, scope):
         sessions = self.plugin._cfg('living_memory_sessions', [])
-        return (self.plugin._cfg('living_memory_backend', 'legacy') == 'native'
+        return (self.plugin._cfg('living_memory_backend', 'native') == 'native'
                 and isinstance(sessions, list) and all(isinstance(s, str) for s in sessions)
                 and (not sessions or scope['session_id'] in sessions)
                 and self.authorized_scope(scope))

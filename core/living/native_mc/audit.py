@@ -310,11 +310,14 @@ class MemoryAuditManager:
                     salience=before.get("salience"),
                     durability=clean_text(before.get("durability"), 24) or None,
                     sensitivity=clean_text(before.get("sensitivity"), 24) or None,
+                    manual_summary_actor="memory_audit_rollback",
+                    expected_current=current,
                 )
-                refreshed = await self.service.store.get_memory(memory_id) if restored else None
-                if refreshed is not None:
+                refreshed = await self.service.store.get_memory(memory_id)
+                if restored and refreshed is not None:
                     changed_records.append(refreshed)
-                rollback_results.append({"memory_id": memory_id, "status": "rolled_back" if restored else "failed"})
+                result_status = "rolled_back" if restored else "stale" if refreshed != current else "failed"
+                rollback_results.append({"memory_id": memory_id, "status": result_status})
                 batch["rollback_results"] = rollback_results
                 await asyncio.to_thread(self._write_batch, batch)
             rolled_back = sum(1 for item in rollback_results if item.get("status") == "rolled_back")
@@ -559,10 +562,12 @@ class MemoryAuditManager:
             kwargs["lifecycle"] = "archived"
         else:
             return {"memory_id": memory_id, "status": "invalid_action"}, None
-        updated = await self.service.store.update_memory_payload(memory_id, **kwargs)
-        refreshed = await self.service.store.get_memory(memory_id) if updated else None
-        if refreshed is None:
-            return {"memory_id": memory_id, "status": "failed"}, None
+        updated = await self.service.store.update_memory_payload(
+            memory_id, manual_summary_actor="memory_audit_apply", expected_current=current, **kwargs,
+        )
+        refreshed = await self.service.store.get_memory(memory_id)
+        if not updated or refreshed is None:
+            return {"memory_id": memory_id, "status": "stale" if refreshed != current else "failed"}, None
         return {
             "memory_id": memory_id,
             "action": action,

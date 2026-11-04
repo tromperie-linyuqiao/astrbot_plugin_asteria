@@ -1,23 +1,18 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-native-workspace="memory">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>TLS 原生记忆中心</title>
-  <script>
+<script>
     (() => {
-      const key = "memory_companion_overview_layout";
-      let layout = "standard";
-      try {
-        const saved = window.localStorage.getItem(key);
-        if (saved === "standard" || saved === "cinema") layout = saved;
-      } catch (_) {
-        // WebView 隐私模式下可能禁用本地存储，保持常规总览即可。
-      }
-      document.documentElement.dataset.overviewLayout = layout;
+      const value = new URLSearchParams(location.search).get('theme');
+      document.documentElement.dataset.adminTheme = ['light','dark','black'].includes(value)
+        ? value : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     })();
   </script>
-  <link rel="stylesheet" href="./app.css?v=1.10.5-ui-v1" />
+  <script>document.documentElement.dataset.overviewLayout="standard";</script>
+  <link rel="stylesheet" href="./app.css?v=asteria-r163" />
 <style id="asteria-leaf-style">
 body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.6}
 .aw-leaf-header{max-width:1560px;margin:0 auto 22px;padding:16px 18px;border:1px solid var(--line,var(--edge,#475569));border-radius:12px;background:var(--panel,#161b22);color:var(--text,var(--ink,#e6edf3));display:flex;align-items:center;gap:18px;flex-wrap:wrap}
@@ -30,9 +25,16 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
 </style>
 </head>
 <body>
-<header id="asteria-leaf-header" class="aw-leaf-header" data-area="area-memory"><span class="aw-leaf-brand">✧ 星栖 Asteria</span><span class="aw-leaf-path">记忆中心 / 记忆放映馆</span><div class="aw-leaf-tools"><label>本页<select aria-label="定位本页分区"><option>定位本页分区</option></select></label><button type="button">返回记忆中心</button></div><p class="aw-leaf-message" role="status"></p></header>
+<header id="asteria-leaf-header" class="aw-leaf-header" data-area="area-memory"><span class="aw-leaf-brand">✧ 星栖 Asteria</span><span class="aw-leaf-path">记忆中心 / 档案与维护</span><div class="aw-leaf-tools"><label>本页<select aria-label="定位本页分区"><option>定位本页分区</option></select></label><button type="button">返回记忆中心</button></div><p class="aw-leaf-message" role="status"></p></header>
+<div class="aw-native-shell"><details id="nativeMemoryNavigation" class="aw-native-navigation" open>
+      <summary id="nativeMemoryNavigationTitle">记忆中心</summary>
+      <label class="aw-nav-search">查找功能<input id="nativeMemorySearch" type="search" placeholder="例如：检索、群聊、维护" autocomplete="off" /></label>
+      <nav aria-label="记忆中心功能"><section class="aw-nav-group"><h2>日常查看</h2><button class="aw-nav-item" data-native-view="overview" type="button"><span>记忆概览</span></button><button class="aw-nav-item" data-native-view="relations" type="button"><span>用户档案与记忆</span></button><button class="aw-nav-item" data-native-view="film" type="button"><span>群聊记忆</span></button><button class="aw-nav-item" data-native-view="review" type="button"><span>角色的个人记忆</span></button></section><section class="aw-nav-group"><h2>检索与关联</h2><button class="aw-nav-item" data-native-view="microscope" type="button"><span>检索与召回</span></button><button class="aw-nav-item" data-native-view="objects" type="button"><span>知识图谱</span></button></section><section class="aw-nav-group"><h2>管理</h2><button class="aw-nav-item" data-native-view="archive" type="button"><span>维护与配置</span></button></section></nav>
+      <p class="aw-nav-empty" hidden>没有匹配的功能，请换个关键词。</p>
+      <details class="aw-native-note"><summary>关于这份档案</summary><p>当前页面管理 TLS 原生记忆数据。管理能力沿用已迁入的 Memory Companion，来源声明和迁移兼容保留；收藏、生活资料与长期记忆各有用途。</p></details>
+    </details>
   <main id="app" class="film-app">
-    <nav id="overviewLayoutSwitch" class="overview-layout-switch" role="radiogroup" aria-label="界面模式">
+    <nav hidden id="overviewLayoutSwitch" class="overview-layout-switch" role="radiogroup" aria-label="界面模式">
       <button class="overview-layout-option" data-overview-layout="standard" type="button" role="radio" aria-checked="false" aria-controls="standardOverview workspace">
         简洁管理
       </button>
@@ -53,7 +55,7 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
     <section id="standardOverview" class="standard-overview" aria-label="常规记忆总览">
       <header class="standard-overview-head">
         <div>
-          <p class="eyebrow">Memory Companion</p>
+          <p class="eyebrow">档案 · 来源 · 连续性</p>
           <h1>记忆总览</h1>
           <p class="standard-overview-summary">当前记忆库、会话范围与常用入口</p>
         </div>
@@ -102,7 +104,7 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
             </button>
             <button class="overview-entry is-search" data-overview-view="microscope" type="button">
               <span class="overview-entry-index">05</span>
-              <span class="overview-entry-copy"><b>记忆显微镜</b><small>模拟召回 · 注入检查</small></span>
+              <span class="overview-entry-copy"><b>检索与召回</b><small>模拟召回 · 注入检查</small></span>
               <span class="overview-entry-arrow" aria-hidden="true">&rsaquo;</span>
             </button>
             <button class="overview-entry is-archive is-wide" data-overview-view="archive" type="button">
@@ -146,7 +148,7 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
     <section id="cinemaOverview" class="projection-stage" aria-label="记忆放映馆首页">
       <button class="filmstrip" style="--a:-18deg;--z:2;--off:240px"  data-view="objects"    data-tip-title="知识图谱" data-tip-sub="关系 · 线程 · 时间线"     type="button"><span class="strip-label"><b>知识图谱</b><small>关系 · 节点</small></span></button>
       <button class="filmstrip" style="--a:76deg; --z:4;--off:-200px" data-view="film"       data-tip-title="群聊记忆" data-tip-sub="群聊范围内的记忆"      type="button"><span class="strip-label"><b>群聊记忆</b><small>群聊 · 记忆</small></span></button>
-      <button class="filmstrip" style="--a:44deg; --z:7;--off:260px"  data-view="microscope" data-tip-title="记忆显微镜" data-tip-sub="模拟召回 · 检查注入"     type="button"><span class="strip-label" style="--label-edge:-260px"><b>记忆显微镜</b><small>模拟召回</small></span></button>
+      <button class="filmstrip" style="--a:44deg; --z:7;--off:260px"  data-view="microscope" data-tip-title="检索与召回" data-tip-sub="模拟召回 · 检查注入"     type="button"><span class="strip-label" style="--label-edge:-260px"><b>检索与召回</b><small>模拟召回</small></span></button>
       <button class="filmstrip" style="--a:14deg; --z:5;--off:-225px;--tx:-440px" data-view="relations" data-user-memory-filter="all" data-tip-title="用户档案与记忆" data-tip-sub="私聊 · 画像 · 偏好 · 关系" type="button"><span class="strip-label" style="--label-edge:380px"><b>用户档案与记忆</b><small>按用户统一查看</small></span></button>
       <button class="filmstrip" style="--a:162deg;--z:1;--off:215px;--tx:-260px" data-view="review"     data-tip-title="个人记忆"       data-tip-sub="Bot 日程 · 生活细化"         type="button"><span class="strip-label is-flipped"><b>个人记忆</b><small>日程 · 细化</small></span></button>
       <button class="filmstrip" style="--a:136deg;--z:3;--off:-390px" data-view="archive"    data-tip-title="维护/迁移/配置"   data-tip-sub="工具 · 迁移 · 配置"        type="button"><span class="strip-label is-flipped"><b>维护/迁移/配置</b><small>工具 · 配置</small></span></button>
@@ -170,7 +172,7 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
         <div class="workspace-tools">
           <div class="top-actions workspace-actions">
             <span id="activeTarget" class="target-pill">全部记忆</span>
-            <div class="projection-controls" role="toolbar" aria-label="放映控制">
+            <div class="projection-controls" role="toolbar" aria-label="当前页面操作">
               <button id="backHomeBtn" class="projection-control control-home hidden" type="button" title="返回总览" aria-label="返回总览">
                 <span class="control-icon" aria-hidden="true"></span>
                 <span class="control-text">总览</span>
@@ -183,7 +185,7 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
           </div>
           <div class="workspace-search">
             <input id="globalSearch" type="search" placeholder="搜索内容、证据或 ID" />
-            <button id="loadActiveBtn" type="button">重载当前帧</button>
+            <button id="loadActiveBtn" type="button">搜索 / 刷新</button>
           </div>
         </div>
       </div>
@@ -231,7 +233,7 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
 
           <section id="view-microscope" class="view">
             <div class="section-head">
-              <h3>记忆显微镜</h3>
+              <h3>检索与召回</h3>
               <p>对比全部可检索记忆与指定私聊、群聊中的实际召回结果。</p>
             </div>
             <div class="microscope-box">
@@ -305,64 +307,27 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
             </div>
             <div class="archive-grid">
               <section class="archive-section" data-archive-section="core-memory">
-                <div class="archive-section-head">
-                  <h4>核心记忆</h4>
-                  <button id="newCoreMemoryBtn" class="subtle" type="button">新建核心块</button>
-                </div>
-                <div class="core-memory-workspace">
-                  <form id="coreMemoryForm" class="context-form core-memory-form" autocomplete="off">
-                    <input name="id" type="hidden" />
-                    <input name="expected_revision" type="hidden" value="0" />
-                    <div class="core-memory-fields">
-                      <label>Label
-                        <input name="label" type="text" maxlength="80" placeholder="例如 preferred_address" required />
-                      </label>
-                      <label>类型
-                        <select name="kind">
-                          <option value="rule">规则</option>
-                          <option value="boundary">边界</option>
-                          <option value="preference">偏好</option>
-                          <option value="profile">画像</option>
-                          <option value="fact" selected>事实</option>
-                          <option value="state">稳定状态</option>
-                        </select>
-                      </label>
-                      <label>作用域
-                        <select name="scope">
-                          <option value="global">全局 / Bot</option>
-                          <option value="private">私聊用户</option>
-                          <option value="group">群聊</option>
-                        </select>
-                      </label>
-                      <label>目标 ID
-                        <input name="target_id" type="text" maxlength="160" placeholder="私聊用户或群聊 ID" />
-                      </label>
-                      <label>Bot ID
-                        <input name="bot_id" type="text" maxlength="120" placeholder="留空表示全部 Bot" />
-                      </label>
-                      <label>人格 ID
-                        <input name="persona_id" type="text" maxlength="120" placeholder="留空表示全部人格" />
-                      </label>
-                      <label>优先级
-                        <input name="priority" type="number" min="0" max="100" step="1" value="50" />
-                      </label>
-                      <label class="core-memory-enabled">启用
-                        <input name="enabled" type="checkbox" checked />
-                      </label>
-                    </div>
-                    <label>内容
-                      <textarea name="content" rows="5" maxlength="4000" required></textarea>
-                    </label>
-                    <div class="context-form-actions">
-                      <span id="coreMemoryFormState">新建核心块</span>
-                      <div class="inline-actions">
-                        <button id="cancelCoreMemoryEditBtn" class="subtle" type="button">重置</button>
-                        <button type="submit">保存核心块</button>
-                      </div>
-                    </div>
-                  </form>
-                  <div id="coreMemoryList" class="core-memory-list" aria-live="polite"></div>
-                </div>
+                <section class="core-current-owner">
+                  <h4>长期约定与核心资料</h4>
+                  <p>当前新增与维护已统一到 Asteria「长期约定」。在真实完整私聊范围中维护约定、边界、偏好、个人资料、事实和当前状况，支持停用、归档、恢复及导入导出。</p>
+                  <p>停用保留内容，归档可恢复；启用只是参与后续上下文筛选，不保证每轮引用，也不覆盖人格、本轮明确修正或权限。</p>
+                  <button id="openPersonalMaterialsBtn" type="button" data-native-personal-open>打开长期约定管理</button>
+                  <p id="coreMemoryNavigationStatus" role="status"></p>
+                  <small>跳转后请核对上方真实会话。不会把此页旧记录、全局或群聊归属自动复制到私人约定；没有已授权会话时，目标页会保留说明并禁用写入。</small>
+                </section>
+                <details id="legacyCoreArchive" class="core-history-archive">
+                  <summary>旧核心记录 · 只读查询</summary>
+                  <p>来自原 MC 历史核心记录。当前最多读取 1000 条符合原有效期、非归档、非待审核条件的记录，不是全部历史。旧启用标记只作来源信息；实际是否参与上下文仍由当前配置与权限决定。</p>
+                  <div class="core-history-filters">
+                    <label>查找旧记录<input id="legacyCoreQuery" type="search" placeholder="标题、正文、编号或目标" /></label>
+                    <label>原类型<select id="legacyCoreKind"><option value="">全部类型</option></select></label>
+                    <label>原范围<select id="legacyCoreScope"><option value="">全部范围</option></select></label>
+                    <label>旧启用标记<select id="legacyCoreEnabled"><option value="">全部标记</option><option value="yes">旧标记启用</option><option value="no">旧标记停用</option></select></label>
+                  </div>
+                  <div class="core-history-head"><p id="coreMemoryReadStatus" role="status"></p><button id="legacyCoreRefresh" type="button">重新读取旧记录</button></div>
+                  <div id="coreMemoryList" class="core-history-list" aria-live="polite"></div>
+                  <div id="coreMemoryPager" class="core-history-pages"></div>
+                </details>
               </section>
               <section class="archive-section" data-archive-section="retrieval">
                 <h4>模块配置</h4>
@@ -371,54 +336,52 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
               <section class="archive-section is-active" data-archive-section="maintenance">
                 <h4>维护 / 迁移 / 清理</h4>
                 <div class="maintenance-box">
-                  <p class="archive-note">推荐先选择运行预设并查看诊断，再执行迁移或维护。所有导入与清空操作都会先备份数据库。</p>
+                  <p class="archive-note">先确认来源与操作范围，再执行维护。可移植档案导入会备份当前记忆库；LivingMemory 导入是否备份沿当前配置，内容修复不自动创建备份。</p>
                   <div class="maintenance-tool-grid">
-                    <section class="maintenance-action">
-                      <b>1. 运行预设</b>
+                    <details class="maintenance-action aw-maintenance-task"><summary>1. 运行预设</summary>
                       <p class="archive-note">轻量模式关闭外部检索调用；标准模式平衡功能和成本；陪伴模式提高关系与连续性记忆预算。已有 Provider 选择不会被覆盖。</p>
                       <div class="inline-actions">
                         <button type="button" data-operation-preset="light">轻量</button>
                         <button type="button" data-operation-preset="standard">标准</button>
                         <button type="button" data-operation-preset="companion">陪伴</button>
                       </div>
-                    </section>
-                    <section class="maintenance-action">
-                      <b>2. 运维诊断</b>
+                    </details>
+                    <details class="maintenance-action aw-maintenance-task"><summary>2. 运维诊断</summary>
                       <p class="archive-note">查看检索路径、缓存命中率、模型 Token 与耗时，以及可能重复注入的记忆插件目录。</p>
                       <button id="operationsDiagnosticsBtn" type="button">生成诊断</button>
-                    </section>
-                    <section class="maintenance-action">
-                      <b>3. 可移植数据</b>
-                      <p class="archive-note">仅用于本插件导出的 UTF-8 JSONL，包含记忆、身份、关系、时间线与 ACL；QQChatExporter 聊天记录 JSON 请使用“历史聊天导入 / 文件导入”。</p>
-                      <input id="portableArchivePath" type="text" placeholder="导入时填写 JSONL 路径；导出无需填写" />
+                    </details>
+                    <details class="maintenance-action aw-maintenance-task"><summary>3. 可移植数据</summary>
+                      <p class="archive-note">适用于 Asteria 记忆中心导出的 UTF-8 JSONL（沿用 MemoryCompanion 格式）。包含记忆及修订、身份、关系、时间线与 ACL，不是整个 TLS 或记忆库所有表的完整备份。</p>
+                      <p class="archive-note">文件保存在运行 Asteria 的服务器，不会自动下载到手机或电脑。导入需服务器可读取的文件，最大 64 MiB；QQChatExporter 文件请进入“历史聊天导入”。</p>
+                      <details class="archive-transfer-scope"><summary>包含与不包含的资料</summary><p>v2 保留记忆的有效期、归属、状态与修订来源；不恢复活跃图谱、向量、注入日志和模型凭据。分段读取的导出也不是全库同一时刻快照。导入的同 ID 记忆发生冲突会跳过，身份、关系、时间线和 ACL 仍沿原各自写入规则，不是整库替换。</p></details>
+                      <label class="archive-transfer-label">服务器上的 JSONL 路径<input id="portableArchivePath" type="text" placeholder="例如 /app/data/…/exports/档案.jsonl；导出无需填写" /></label>
                       <div class="inline-actions">
                         <button id="portableExportBtn" type="button">导出</button>
                         <button id="portablePreviewBtn" type="button">预览</button>
                         <button id="portableImportBtn" type="button">导入</button>
                       </div>
-                    </section>
-                    <section class="maintenance-action">
-                      <b>4. LivingMemory 导入</b>
-                      <p class="archive-note">先预览可导入数量和跳过原因，再执行导入。当前策略只导入完整摘要，跳过派生碎片。</p>
-                      <input class="livingmemory-path" type="text" placeholder="LivingMemory 数据库路径，可留空自动扫描" />
+                      <div id="portableArchiveResult" class="archive-transfer-result" aria-live="polite" hidden></div>
+                    </details>
+                    <details class="maintenance-action aw-maintenance-task"><summary>4. LivingMemory 导入</summary>
+                      <p class="archive-note">先预览来源库与可导入表，跳过派生碎片。填写的服务器路径会优先检查；不可用时原扫描仍可能找到其他旧库。选择来源不会锁定文件，完成后请核对实际来源。</p>
+                      <label class="archive-transfer-label">导入来源（服务器路径）<input id="livingMemoryImportPath" class="livingmemory-path" type="text" placeholder="可留空扫描 LivingMemory 旧库" /></label>
                       <div class="inline-actions">
                         <button id="previewImportBtn" type="button">预览导入</button>
                         <button id="runImportBtn" type="button">执行导入</button>
                       </div>
-                    </section>
-                    <section class="maintenance-action">
-                      <b>5. 内容修复</b>
+                      <div id="livingMemoryResult" class="archive-transfer-result" aria-live="polite" hidden></div>
+                    </details>
+                    <details class="maintenance-action aw-maintenance-task"><summary>5. 内容修复</summary>
                       <p class="archive-note">用于修复早期导入后只剩旧库编号的记忆。建议先确认 LivingMemory 数据库路径，再执行修复。</p>
-                      <input class="livingmemory-path" type="text" placeholder="LivingMemory 数据库路径，可留空自动扫描" />
+                      <label class="archive-transfer-label">内容修复来源（服务器路径）<input id="livingMemoryRepairPath" class="livingmemory-path" type="text" placeholder="独立填写；留空按原规则扫描" /></label>
                       <button id="repairLivingMemoryBtn" type="button">修复 LivingMemory 内容</button>
-                    </section>
-                    <section class="maintenance-action">
-                      <b>6. 维护检查</b>
+                      <div id="livingMemoryRepairResult" class="archive-transfer-result" aria-live="polite" hidden></div>
+                    </details>
+                    <details class="maintenance-action aw-maintenance-task"><summary>6. 维护检查</summary>
                       <p class="archive-note">修复索引、刷新统计并整理数据库状态。适合导入、清理或配置调整后手动执行一次。</p>
                       <button id="maintenanceBtn" type="button">运行维护</button>
-                    </section>
-                    <section class="maintenance-action memory-audit-action">
-                      <b>7. 可回滚记忆审计</b>
+                    </details>
+                    <details class="maintenance-action memory-audit-action aw-maintenance-task"><summary>7. 可回滚记忆审计</summary>
                       <p class="archive-note">仅在配置中启用后可用。先生成证据约束的预览，再明确应用；已应用批次可回滚。</p>
                       <div class="memory-audit-controls">
                         <label>候选上限
@@ -433,12 +396,11 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
                         <button id="memoryAuditStatusBtn" class="subtle" type="button">读取状态</button>
                       </div>
                       <div id="memoryAuditResult" class="memory-audit-result" aria-live="polite"></div>
-                    </section>
-                    <section class="maintenance-action">
-                      <b>8. 危险清理</b>
+                    </details>
+                    <details class="maintenance-action aw-maintenance-task"><summary>8. 危险清理</summary>
                       <p class="archive-note">清空会先备份数据库，再删除记忆、权限规则、时间线、关系、身份、注入日志和导入批次。</p>
                       <button id="clearAllMemoryBtn" class="danger" type="button">清空全部记忆</button>
-                    </section>
+                    </details>
                   </div>
                 </div>
               </section>
@@ -526,6 +488,11 @@ Bot: 12-14 15:10:30
                        <span><b>历史任务</b><small>查看并修正升级前或当前版本的已完成批次，也可继续中断任务或回滚。</small></span>
                       <button id="historicalChatRecentRefreshBtn" class="subtle" type="button">刷新列表</button>
                     </div>
+                    <div class="import-batch-tools">
+                      <label>查找批次<input id="historicalChatBatchQuery" type="search" placeholder="文件、用户、Bot、会话或批次" /></label>
+                      <label>状态<select id="historicalChatBatchFilter"><option value="all">全部状态</option></select></label>
+                    </div>
+                    <p class="import-window-note">列表只读取记录；打开运行中批次会沿原流程接续中断工作。</p>
                     <div id="historicalChatRecentList" class="chat-import-recent-list">
                       <div class="empty-state">正在读取最近任务...</div>
                     </div>
@@ -571,13 +538,14 @@ Bot: 12-14 15:10:30
     </div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </main>
+  </div>
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script src="./app.js?v=1.10.5-ui-v1"></script>
+  <script src="./app.js?v=asteria-r155"></script>
 <script id="asteria-leaf-script">
 (()=>{'use strict';const bar=document.getElementById('asteria-leaf-header'),jump=bar.querySelector('select'),back=bar.querySelector('button'),message=bar.querySelector('[role=status]');let headings=[];
 function fill(){headings=[...document.querySelectorAll('h2,h3')].filter(el=>!el.closest('dialog')&&el.getClientRects().length&&el.textContent.trim());jump.replaceChildren(new Option('定位本页分区',''));headings.forEach((el,i)=>jump.add(new Option(el.textContent.trim().slice(0,70),String(i))));}
 jump.addEventListener('focus',fill);jump.addEventListener('pointerdown',fill);jump.addEventListener('change',()=>{if(jump.value==='')return;const el=headings[Number(jump.value)];if(!el)return;el.scrollIntoView({block:'start'});if(!el.hasAttribute('tabindex'))el.tabIndex=-1;el.focus({preventScroll:true});});
-back.addEventListener('click',async()=>{back.disabled=true;message.textContent='';try{const bridge=window.AstrBotPluginPage;if(!bridge)throw Error('请从 AstrBot 后台重新打开此页面。');await bridge.ready();const theme=document.documentElement.dataset.theme||new URLSearchParams(location.search).get('theme')||'dark';let result=await bridge.apiGet('page/nav',{to:'console',theme,format:'json'});if(result?.data)result=result.data;const url=new URL(result.url,location.href);if(url.origin!==location.origin||url.pathname!=='/api/plugin/page/content/astrbot_plugin_virtual_body/console/'||!url.searchParams.get('asset_token'))throw Error('返回地址未确认，请从后台进入工作台。');url.hash=bar.dataset.area;location.assign(url.href);}catch(error){message.textContent=error.message||'工作台暂时无法打开。';}finally{back.disabled=false;}});fill();})();
+back.addEventListener('click',async()=>{back.disabled=true;message.textContent='';try{const bridge=window.AstrBotPluginPage;if(!bridge)throw Error('请从 AstrBot 后台重新打开此页面。');await bridge.ready();const theme=document.documentElement.dataset.theme||new URLSearchParams(location.search).get('theme')||'dark';let result=await bridge.apiGet('page/nav',{to:'console',theme,format:'json'});if(result?.data)result=result.data;const url=new URL(result.url,location.href);if(url.origin!==location.origin||url.pathname!=='/api/plugin/page/content/astrbot_plugin_asteria/console/'||!url.searchParams.get('asset_token'))throw Error('返回地址未确认，请从后台进入工作台。');url.hash=bar.dataset.area;location.assign(url.href);}catch(error){message.textContent=error.message||'工作台暂时无法打开。';}finally{back.disabled=false;}});fill();})();
 </script>
 </body>
 </html>

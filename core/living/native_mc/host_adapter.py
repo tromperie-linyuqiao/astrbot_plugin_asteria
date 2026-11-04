@@ -49,6 +49,7 @@ class NativeMemoryCompanion(NativeMemoryCompanionHooks):
         self._calls, self._routes_registered = set(), False
         self._lifecycle_lock = asyncio.Lock()
         self._context_ready = None
+        self._last_drain_timeout = None
 
     @property
     def companion_api(self):
@@ -69,8 +70,11 @@ class NativeMemoryCompanion(NativeMemoryCompanionHooks):
                 return self.status()
             if not _strict_true(self.legacy_quiesced):
                 raise RuntimeError('former memory owner is not proven stopped and drained')
-            if not self.data_dir.is_dir() or not (self.data_dir / 'memory_companion.db').is_file():
-                raise RuntimeError('explicit existing Companion primary database required')
+            # MemoryStore creates its own schema on a fresh installation.
+            # Existing files are opened in place, never replaced or imported.
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            if (self.data_dir / 'memory_companion.db').exists() and not (self.data_dir / 'memory_companion.db').is_file():
+                raise RuntimeError('memory database path is not a regular file')
             self.phase = 'preparing'
             try:
                 service = MemoryCompanionService(context=self.context, config=self.config,
@@ -262,42 +266,106 @@ class NativeMemoryCompanion(NativeMemoryCompanionHooks):
             if (service is self.service or service_kind.__module__ != MemoryCompanionService.__module__
                     or service_kind.__name__ != MemoryCompanionService.__name__):
                 return False
+            # A different Python instance is not an independent owner when
+            # it still operates the same physical memory directory.
+            try:
+                if Path(service.data_dir).resolve() == self.data_dir:
+                    return False
+            except (OSError, TypeError, ValueError):
+                return False
             if foreign is not None and foreign is not service:
                 return False
             foreign = service
         return foreign is not None
 
     def _work(self):
+        return NativeMemoryCompanion._work_for_owners((self,))
+
+    @staticmethod
+    def _work_for_owners(adapters):
+        """One synchronous inventory for actual owners of the same store.
+
+        The snapshot never survives an await or a subsequent inspection.
+        Retained import generations use the current same-directory proof;
+        their real call/background sets are included individually.
+        """
+        if not adapters:
+            raise RuntimeError('native memory original owner required')
+        first = adapters[0]
+        directory = Path(first.data_dir).resolve()
         current = asyncio.current_task()
-        tasks = {task for task in self._calls if task is not current and not task.done()}
-        if self.service is not None:
-            tasks.update(task for task in self.service._background_tasks
-                         if task is not current and not task.done())
+        tasks = set()
+        for adapter in adapters:
+            if Path(adapter.data_dir).resolve() != directory:
+                raise RuntimeError('native memory shared inventory requires one directory')
+            tasks.update(task for task in adapter._calls if task is not current and not task.done())
+            if adapter.service is not None:
+                tasks.update(task for task in adapter.service._background_tasks
+                             if task is not current and not task.done())
         # Include current direct tool/bridge/service calls not started through
         # this adapter. This is bounded to this package, never global cleanup.
         all_tasks = asyncio.all_tasks()
         if len(all_tasks) > 4096:
             raise RuntimeError('native memory task inventory exceeded bound')
         package_path = Path(__file__).resolve().parent
+        in_package = {}
         for task in all_tasks:
             if task is current or task.done():
                 continue
-            package_codes = tuple(code for code in self._chain(task)
-                if Path(code.co_filename).resolve().is_relative_to(package_path))
-            if package_codes and not self._foreign_instance_task(task, package_codes):
+            package_codes = []
+            for code in NativeMemoryCompanion._chain(task):
+                filename = code.co_filename
+                if filename not in in_package:
+                    in_package[filename] = Path(filename).resolve().is_relative_to(package_path)
+                if in_package[filename]:
+                    package_codes.append(code)
+            if package_codes and not NativeMemoryCompanion._foreign_instance_task(first, task, package_codes):
                 tasks.add(task)
         return tasks
 
     def _stop_idle_dispatchers(self):
         if self.service is None:
             return
-        for name in ('_maintenance_dispatch_task', '_portrait_dispatch_task', '_wal_checkpoint_task'):
+        for name, method in (
+            ('_maintenance_dispatch_task', '_lifecycle_maintenance_dispatch_loop'),
+            ('_portrait_dispatch_task', '_portrait_daily_dispatch_loop'),
+            ('_wal_checkpoint_task', '_wal_checkpoint_loop'),
+        ):
             task = getattr(self.service, name, None)
-            if task is not None and not task.done() and asyncio.sleep.__code__ in set(self._chain(task)):
+            if task is None or task.done():
+                continue
+            # A provider retry can sleep deep inside business work. Only the
+            # known dispatcher's own between-run timer is safe to cancel.
+            coro = asyncio.Task.get_coro(task)
+            expected = getattr(MemoryCompanionService, method)
+            if (type(coro) is not CoroutineType or coro.cr_code is not expected.__code__
+                    or coro.cr_frame is None or coro.cr_frame.f_locals.get('self') is not self.service):
+                continue
+            awaited = coro.cr_await
+            if type(awaited) is CoroutineType and awaited.cr_code is asyncio.sleep.__code__:
                 task.cancel()
 
+    def _describe_pending(self, tasks, started):
+        """Bounded code locations only: no task names, locals, IDs or content."""
+        package = Path(__file__).resolve().parent
+        sources, unknown = set(), False
+        for task in list(tasks)[:8]:
+            codes, opaque = task_codes(task)
+            unknown |= opaque
+            for code in codes:
+                path = Path(code.co_filename).resolve()
+                if path.is_relative_to(package):
+                    sources.add(f'{path.relative_to(package).as_posix()}:{code.co_name}')
+        background = self.service._background_tasks if self.service is not None else set()
+        return dict(pending=len(tasks), hook_calls=len(tasks & self._calls),
+            background_tasks=len(tasks & background), unknown_chain=unknown,
+            sample_limited=len(tasks) > 8 or len(sources) > 12,
+            code_locations=tuple(sorted(sources)[:12]),
+            elapsed_seconds=round(asyncio.get_running_loop().time() - started, 3))
+
     async def wait_drained(self, timeout=None):
-        deadline = asyncio.get_running_loop().time() + (self.drain_timeout if timeout is None else timeout)
+        started = asyncio.get_running_loop().time()
+        deadline = started + (self.drain_timeout if timeout is None else timeout)
         while True:
             self._stop_idle_dispatchers()
             tasks = self._work()
@@ -306,7 +374,9 @@ class NativeMemoryCompanion(NativeMemoryCompanionHooks):
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 self.phase = 'drain_pending'
-                raise RuntimeError('native memory work remains; service and original stores retained')
+                self._last_drain_timeout = self._describe_pending(tasks, started)
+                raise RuntimeError('native memory work remains; service and original stores retained; '
+                    f'drain={self._last_drain_timeout}')
             await asyncio.wait(tasks, timeout=min(0.1, remaining))
         if self.capture_router is not None:
             await self.capture_router.wait_drained(timeout=max(0, deadline - asyncio.get_running_loop().time()))
@@ -334,6 +404,7 @@ class NativeMemoryCompanion(NativeMemoryCompanionHooks):
             final_context='TLS Unified owner', source_legacy_version='1.10.6',
             service_closed=getattr(service, '_closed', None),
             service_closing=getattr(service, '_closing', None),
+            last_drain_timeout=dict(self._last_drain_timeout) if self._last_drain_timeout else None,
             hook_calls=sum(task is not None and not task.done() for task in self._calls),
             background_tasks=(sum(not task.done() for task in service._background_tasks)
                               if service is not None else 0),

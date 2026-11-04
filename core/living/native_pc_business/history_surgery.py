@@ -189,7 +189,7 @@ class HistorySurgeryMixin:
             rewrites[idx] = new_text
         return rewrites, originals
 
-    async def _run_history_surgery(self, session_umo: str = "default:FriendMessage:2117919529") -> dict:
+    async def _run_history_surgery(self, session_umo: str = "") -> dict:
         """执行一次完整的历史外科手术。
 
         竞态防护：LLM重写耗时数秒，期间会话可能新增轮次。旧版直接把陈旧快照
@@ -197,6 +197,8 @@ class HistorySurgeryMixin:
         think剥离幂等重放、重写按原文匹配应用，最后用条件UPDATE（内容未变才写）
         兜底。竞态发生时放弃本次手术，下个检查窗口重试。
         """
+        if not str(session_umo or "").strip():
+            return {"status": "no_session"}
         try:
             conn = sqlite3.connect(DB_PATH, timeout=15)
             conn.execute("PRAGMA busy_timeout=10000")
@@ -312,6 +314,8 @@ class HistorySurgeryMixin:
 
     async def _maybe_run_history_hygiene(self, user: dict[str, Any]) -> None:
         """每6小时健康检查，污染>15%自动手术。"""
+        if not _single_line(user.get("umo"), 80):
+            return
         state = user.get("history_hygiene")
         if not isinstance(state, dict):
             state = {}
@@ -334,7 +338,7 @@ class HistorySurgeryMixin:
             c = conn.cursor()
             row = c.execute(
                 "SELECT content FROM conversations WHERE user_id=? ORDER BY updated_at DESC LIMIT 1",
-                (_single_line(user.get("umo"), 80) or "default:FriendMessage:2117919529",),
+                (_single_line(user.get("umo"), 80) or "",),
             ).fetchone()
             conn.close()
             if not row:
@@ -348,7 +352,7 @@ class HistorySurgeryMixin:
             if score > 0.15:  # 从20%降到15%
                 logger.info("[PrivateCompanion][surgery] 污染率%.0f%%超阈值，触发手术", score * 100)
                 result = await self._run_history_surgery(
-                    _single_line(user.get("umo"), 80) or "default:FriendMessage:2117919529"
+                    _single_line(user.get("umo"), 80) or ""
                 )
                 state["last_surgery_result"] = result
         except Exception as e:

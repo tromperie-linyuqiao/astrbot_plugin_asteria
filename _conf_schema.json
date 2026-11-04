@@ -318,12 +318,11 @@
   "living_memory_backend": {
     "description": "TLS 记忆存储",
     "type": "string",
-    "default": "legacy",
+    "default": "native",
     "_options": [
-      "legacy",
       "native"
     ],
-    "hint": "native 使用 TLS 自有数据库、检索与管理页，无需旧记忆插件。须先在测试范围验证并迁移数据；此开关不自动停用旧插件。legacy 保持现有记忆桥。"
+    "hint": "使用 Asteria 自有数据库、检索与管理页。已有 legacy 配置不会自动改写或搬迁数据，需先核对留存资料后明确选择 native。"
   },
   "living_memory_capture_enabled": {
     "description": "记录私聊原话到 TLS 记忆",
@@ -467,7 +466,7 @@
     "description": "工作台个性布局（由页面管理）",
     "type": "string",
     "default": "{}",
-    "hint": "仅保存各管理员分区、排序和主题，不改变任何业务执行权。请在星栖 Asteria 工作台整理布局。"
+    "hint": "仅保存各管理员分区、排序和主题，不改变任何业务执行权。请在德克萨斯工作台整理布局。"
   },
   "living_app_rules": {
     "description": "App互动规则（由应用与话语管理）",
@@ -500,46 +499,46 @@
     "hint": "替代现有手机音乐的事实归一化与本地资料匹配，保留原采集、设备授权和听歌累计；不新增记忆、关怀或发送权限。关闭后在下一次现有生活更新时恢复旧解析。"
   },
   "living_insight_native_enabled": {
-    "description": "TLS原生数据洞察",
+    "description": "启用洞察服务",
     "type": "bool",
     "default": false,
-    "hint": "由TLS接管洞察查询与原每日校准；先退出旧洞察执行者。"
+    "hint": "由本插件提供查询与每日校准；若存在其他活动执行者则拒绝重叠运行。"
   },
   "living_phone_native_enabled": {
-    "description": "TLS原生手机感知与聊天节奏",
+    "description": "启用设备感知与聊天节奏",
     "type": "bool",
     "default": false,
-    "hint": "复用既有PPB。完整接续状态并退出旧手机插件后启用。"
+    "hint": "使用已配置的 PPB 设备连接。无需安装旧手机插件；已有设备、音乐与节奏记录保留。"
   },
   "living_mc_context_native_enabled": {
-    "description": "TLS原生最终记忆筛选",
+    "description": "记忆服务上下文筛选",
     "type": "bool",
     "default": false,
-    "hint": "接管旧MC上下文出口，沿用原存储与归属；不是整个MC插件替代。"
+    "hint": "由本插件记忆服务使用。保留原配置键兼容已有安装，不再用于交接其他插件。"
   },
   "living_mc_explicit_native_enabled": {
-    "description": "TLS原生明确记住与承诺提取",
+    "description": "记忆服务明确记住与承诺提取",
     "type": "bool",
     "default": false,
-    "hint": "独立交接旧MC实际选中的明确记住分支；需精确来源与在途排空，不停画像和摘要。请通过受控交接接口启用，停止后先恢复该分支再恢复旧上下文。"
+    "hint": "记忆服务的兼容配置键；不再提供旧插件分支交接或恢复入口。"
   },
   "living_mc_relationship_native_enabled": {
-    "description": "TLS原生关系表达记忆",
+    "description": "记忆服务关系表达",
     "type": "bool",
     "default": false,
-    "hint": "只记录用户自己的关系表达原文，不证明对象身份或修改关系评分。通过受控交接启用；与明确记忆共用两槽围栏，两分支均停止后才可恢复旧方法。"
+    "hint": "只记录用户自己的关系表达原文，不证明对象身份或修改关系评分；不再交接其他插件。"
   },
   "living_mc_profile_native_enabled": {
-    "description": "TLS原生画像候选与审核",
+    "description": "记忆服务画像候选与审核",
     "type": "bool",
     "default": false,
-    "hint": "仅接新真实入站画像；候选证据、质量晋升、审核与单值替代在同一原生库。通过受控交接启用，不自动迁旧画像；三分支均停止后才恢复共享旧方法。"
+    "hint": "沿本插件真实入站、证据与审核规则运行；不自动迁入旧画像。"
   },
   "living_mc_summary_native_enabled": {
-    "description": "MC摘要算法原生执行权（须先在管理页检查并交接；不接管旧时间线、模型选择、存储或摘要worker）",
+    "description": "记忆服务摘要",
     "type": "bool",
     "default": false,
-    "hint": "默认关闭。请使用系统与扩展中的摘要交接入口启用或恢复；仅修改此开关不会恢复已交接的原算法实例。"
+    "hint": "随完整记忆服务运行；不再单独托管或恢复其他插件的算法实例。"
   },
   "living_pc_integration_enabled": {
     "description": "TLS原生周期便签与约定",
@@ -913,27 +912,27 @@
     }
   },
   "living_mc_full_native_enabled": {
-    "description": "TLS完整原生记忆执行者",
+    "description": "启用记忆服务",
     "type": "bool",
     "default": false,
-    "hint": "默认关闭。通过原生接管中心核验旧执行者退出与真实在途排空后启用；只改开关不等于完成交接。"
+    "hint": "默认关闭。开启后随本插件启动自身服务；无需旧插件或交接证明。若发现其他活动执行者或未结束的同库工作则阻止重叠启动。"
   },
   "living_pc_full_native_enabled": {
-    "description": "TLS完整原生角色陪伴执行者",
+    "description": "启用角色与陪伴服务",
     "type": "bool",
     "default": false,
-    "hint": "默认关闭。通过原生接管中心核验旧执行者退出与真实在途排空后启用；只改开关不等于完成交接。"
+    "hint": "默认关闭。开启后随本插件启动自身服务；无需旧插件或交接证明。若发现其他活动执行者或未结束的同库工作则阻止重叠启动。"
   },
   "living_proactive_chat_native_enabled": {
-    "description": "TLS原生独立主动聊天执行者",
+    "description": "启用主动消息服务",
     "type": "bool",
     "default": false,
-    "hint": "默认关闭。通过原生接管中心核验旧执行者退出与真实在途排空后启用；只改开关不等于完成交接。"
+    "hint": "默认关闭。开启后随本插件启动自身服务；无需旧插件或交接证明。若发现其他活动执行者或未结束的同库工作则阻止重叠启动。"
   },
   "living_mc": {
-    "description": "完整原生记忆配置",
+    "description": "记忆服务配置",
     "type": "object",
-    "hint": "由移交操作接续原配置；管理界面复用原认证，不复制或公开账号密钥。",
+    "hint": "本插件管理的记忆配置。无需旧插件安装目录；使用 AstrBot 原有管理员认证。",
     "items": {
       "appearance": {
         "description": "拓展页外观",
@@ -2241,9 +2240,9 @@
     }
   },
   "living_pc": {
-    "description": "完整原生角色陪伴配置",
+    "description": "角色与陪伴服务配置",
     "type": "object",
-    "hint": "由移交操作接续原配置；管理界面复用原认证，不复制或公开账号密钥。",
+    "hint": "本插件管理的陪伴配置，沿用原字段以保持已有资料与配置兼容。",
     "items": {
       "basic_config": {
         "description": "基础配置",
@@ -3458,7 +3457,7 @@
       "skill_growth_rate": {
         "description": "Legacy flat config: 技能成长倍率",
         "type": "float",
-        "default": 1.0,
+        "default": 1,
         "invisible": true
       },
       "skill_growth_custom_skills": {
@@ -7684,7 +7683,7 @@
               "max": 3,
               "step": 0.1
             },
-            "default": 1.0,
+            "default": 1,
             "condition": {
               "enable_skill_growth_simulation": true
             }
@@ -8373,7 +8372,7 @@
             "description": "后台关系模型分析合并间隔（秒）",
             "type": "float",
             "hint": "首轮立即分析。间隔内合并该用户的新消息，窗口结束使用最新完整输入；即时本地情绪、关系、提醒与主动发送规则不受影响。0 保留每次新输入都分析的频率，相同输入仍复用成功结果。",
-            "default": 120.0,
+            "default": 120,
             "slider": {
               "min": 0,
               "max": 3600,
@@ -8409,7 +8408,7 @@
             "default": 1.2,
             "slider": {
               "min": 0.2,
-              "max": 6.0,
+              "max": 6,
               "step": 0.1
             },
             "condition": {
@@ -12633,19 +12632,19 @@
       "balance_check_interval_minutes": {
         "description": "[auto] balance_check_interval_minutes",
         "type": "float",
-        "default": 60.0,
+        "default": 60,
         "invisible": true
       },
       "balance_critical_percent_threshold": {
         "description": "[auto] balance_critical_percent_threshold",
         "type": "float",
-        "default": 5.0,
+        "default": 5,
         "invisible": true
       },
       "balance_critical_threshold": {
         "description": "[auto] balance_critical_threshold",
         "type": "float",
-        "default": 3.0,
+        "default": 3,
         "invisible": true
       },
       "balance_currency_label": {
@@ -12669,25 +12668,25 @@
       "balance_low_percent_threshold": {
         "description": "[auto] balance_low_percent_threshold",
         "type": "float",
-        "default": 15.0,
+        "default": 15,
         "invisible": true
       },
       "balance_low_threshold": {
         "description": "[auto] balance_low_threshold",
         "type": "float",
-        "default": 10.0,
+        "default": 10,
         "invisible": true
       },
       "balance_message_cooldown_hours": {
         "description": "[auto] balance_message_cooldown_hours",
         "type": "float",
-        "default": 24.0,
+        "default": 24,
         "invisible": true
       },
       "balance_request_timeout_seconds": {
         "description": "[auto] balance_request_timeout_seconds",
         "type": "float",
-        "default": 10.0,
+        "default": 10,
         "invisible": true
       },
       "balance_total_json_path": {
@@ -12705,7 +12704,7 @@
       "balance_value_divisor": {
         "description": "[auto] balance_value_divisor",
         "type": "float",
-        "default": 1.0,
+        "default": 1,
         "invisible": true
       },
       "daily_diary_creativity": {
@@ -12939,7 +12938,7 @@
       "relationship_analysis_refresh_seconds": {
         "description": "Legacy flat config: 后台关系模型分析合并间隔（秒）",
         "type": "float",
-        "default": 120.0,
+        "default": 120,
         "invisible": true
       },
       "companion_optimization": {
@@ -13723,7 +13722,7 @@
     }
   },
   "living_pc_binding_state": {
-    "description": "原生角色便签绑定接续状态",
+    "description": "便签身份记录（系统维护）",
     "type": "object",
     "hint": "由受控移交保存原真实来源与原便签绑定；不得手工填写为授权。",
     "items": {
@@ -13816,13 +13815,12 @@
       "label": {
         "description": "服务显示名称",
         "type": "string",
-        "default": "云端语音服务"
+        "default": "渊站 · 语音"
       },
       "base_url": {
         "description": "Fish 兼容 HTTPS 地址",
         "type": "string",
-        "default": "",
-        "hint": "填写自己的 Fish 兼容 HTTPS /v1 地址；仅在明确启用后使用。"
+        "default": "https://api.syuan.org/v1"
       },
       "api_key": {
         "description": "语音组专用 API Key（仅保存在服务端）",
@@ -13833,12 +13831,14 @@
       "model": {
         "description": "默认 TTS 模型",
         "type": "string",
-        "default": ""
+        "default": "s2.1-pro"
       },
       "models": {
         "description": "允许选择的 TTS 模型",
         "type": "list",
-        "default": [],
+        "default": [
+          "s2.1-pro"
+        ],
         "hint": "填写当前语音 Key 实际可用的模型 ID；不自动切换分组或重试。"
       }
     }

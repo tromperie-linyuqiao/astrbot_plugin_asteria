@@ -100,8 +100,8 @@
       "source_kind": "migrated_legacy"
     },
     "creative.py": {
-      "sha256": "a18fc18643d3fe332d53dd17f878de7da0a1fc273425c32b2ee3369457c92d4f",
-      "bytes": 99944,
+      "sha256": "5447de018d3f6eb0c8bdf253b7aa1a45967ea3fd32a649fbc729b6225a7ad480",
+      "bytes": 100390,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/creative.py",
       "original_sha256": "5f8bcdd4c1a59f458b594561a1600376849ef12335aefdd994938bf5fdd15b78",
       "source_kind": "migrated_legacy"
@@ -163,8 +163,8 @@
       "source_kind": "migrated_legacy"
     },
     "history_surgery.py": {
-      "sha256": "5fd701be841ef4a5a9703b8c280562d84cebe79b29236f701348a14764fdfa73",
-      "bytes": 15227,
+      "sha256": "0d4f7c1227e86bc6125f1a294c88d5c6a897d14823ba5c567c5c077c4557e265",
+      "bytes": 15291,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/history_surgery.py",
       "original_sha256": "5fd701be841ef4a5a9703b8c280562d84cebe79b29236f701348a14764fdfa73",
       "source_kind": "migrated_legacy"
@@ -184,15 +184,15 @@
       "source_kind": "migrated_legacy"
     },
     "intimacy_life.py": {
-      "sha256": "57c47dd22cad6f94d06c2fd8423c5cba18cb1e84a15541dfd068e7ab538cd7ac",
-      "bytes": 34170,
+      "sha256": "7960b487123ffdc021dcacb51d5f28a803644066d82c336d67d80c6763b6a1a2",
+      "bytes": 34207,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/intimacy_life.py",
       "original_sha256": "57c47dd22cad6f94d06c2fd8423c5cba18cb1e84a15541dfd068e7ab538cd7ac",
       "source_kind": "migrated_legacy"
     },
     "life_enhancer.py": {
-      "sha256": "4397be7510607049ca0ca56b3f7e929147dde5a40af7a7260ca1a4d2d45ff546",
-      "bytes": 13997,
+      "sha256": "b8440e22c3d54f58993ca101ab29cf059da248f2af400b12cd57a251a58986df",
+      "bytes": 14131,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/life_enhancer.py",
       "original_sha256": "4397be7510607049ca0ca56b3f7e929147dde5a40af7a7260ca1a4d2d45ff546",
       "source_kind": "migrated_legacy"
@@ -247,8 +247,8 @@
       "source_kind": "migrated_legacy"
     },
     "page_api_books.py": {
-      "sha256": "3591275ae9d507740729883e74416c5161a15c9cf1843d0ae20432c9d51d9e8c",
-      "bytes": 58229,
+      "sha256": "0fc8b49d2f483cb91127933aff2c3d2251ee5874617de0ae1ccb9f0f3548e4cf",
+      "bytes": 59788,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/page_api_books.py",
       "original_sha256": "3591275ae9d507740729883e74416c5161a15c9cf1843d0ae20432c9d51d9e8c",
       "source_kind": "migrated_legacy"
@@ -289,8 +289,8 @@
       "source_kind": "migrated_legacy"
     },
     "page_api_summary.py": {
-      "sha256": "b21fda50465ee7315abc244b936952bd7d1ee8a2e96159026571f8fb5c581ec7",
-      "bytes": 515778,
+      "sha256": "294eec324d503b65b92120c0f73f8a45eee20f2196592769165247a8debf69a3",
+      "bytes": 516721,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/page_api_summary.py",
       "original_sha256": "b21fda50465ee7315abc244b936952bd7d1ee8a2e96159026571f8fb5c581ec7",
       "source_kind": "migrated_legacy"
@@ -345,8 +345,8 @@
       "source_kind": "migrated_legacy"
     },
     "presence_snapshot.py": {
-      "sha256": "bc195c366d87e36cee1682cbda816499bc2b944f12655cb3dd67c6864a8897c6",
-      "bytes": 10385,
+      "sha256": "4136664db362d4a7237c24d9866ee702eb5fd6eeed2e88333bdf9fa9894d4f72",
+      "bytes": 10308,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/presence_snapshot.py",
       "original_sha256": "bc195c366d87e36cee1682cbda816499bc2b944f12655cb3dd67c6864a8897c6",
       "source_kind": "migrated_legacy"
@@ -555,14 +555,14 @@
     },
     "native_runtime_bindings.py": {
       "reference": "new TLS native adapter",
-      "sha256": "d443e98fb37acf2ecd5224458559628e0d72763d13289e44c19b2241314b1b26",
-      "bytes": 2689,
+      "sha256": "9a472d67a9c26a60dbd82f54092431648b83f4721a6c36ec5ba03686c9845da5",
+      "bytes": 2751,
       "source_kind": "generated_tls"
     },
     "tls_memo_tool_adapter.py": {
-      "sha256": "ea8a834be8efa7cd01b5cb71ee52da73a7f61823f75b6cf50e8d936477a9a09d",
+      "sha256": "417a98ac11532b62361f996810e6f408574f1e89cda2c27c1a7a841418ae193f",
       "original_sha256": "ea8a834be8efa7cd01b5cb71ee52da73a7f61823f75b6cf50e8d936477a9a09d",
-      "bytes": 7148,
+      "bytes": 7237,
       "source_kind": "migrated_legacy",
       "reference": ".runtime/pc_memo_router_overlay_r33_r1/tls_memo_tool_adapter.py"
     }

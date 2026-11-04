@@ -1,6 +1,6 @@
-const HTTP_API = "/astrbot_plugin_virtual_body/page/pc";
+const HTTP_API = "/astrbot_plugin_asteria/page/pc";
 const PAGE_ENDPOINT_PREFIX = "page/pc";
-const PAGE_PLUGIN_NAME = "astrbot_plugin_virtual_body";
+const PAGE_PLUGIN_NAME = "astrbot_plugin_asteria";
 const TRANSPARENT_IMAGE = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 let cachedPageBridge = null;
 let cachedPageEndpointStyle = "";
@@ -16,6 +16,7 @@ const state = {
   availableProviders: [],
   tokenStats: null,
   tokenStatsPartial: false,
+  tokenResetState: null,
   bookshelfUnlocked: null,
   bookshelfAccessToken: "",
   selectedBook: null,
@@ -27,6 +28,8 @@ const state = {
   memoFilter: "active",
   memoEditorId: "",
   selectedUserId: "",
+  userDetailSerial: 0,
+  userDetailSection: "profile",
   learningSection: "expressions",
   expressionWorkspaceView: "library",
   selectedExpressionReviewRuleId: "",
@@ -48,6 +51,8 @@ const state = {
   },
   expressionScopeOpen: false,
   selectedGroupId: "",
+  groupDetailSerial: 0,
+  groupDetailSection: "status",
   featureDraft: {},
   selectedFeatureKey: "",
   imageApiEndpointDraft: null,
@@ -83,6 +88,11 @@ const state = {
   providerTimeoutDraft: {},
   providerFallbackDraft: {},
   proactiveCandidateFilter: "all",
+  proactiveRecordView: "tasks",
+  proactiveRecordQuery: "",
+  proactiveRecordStatus: "all",
+  proactiveRecordSource: "all",
+  proactiveRecordPage: 0,
   imageCacheItems: [],
   imageCacheTotal: 0,
   imageCacheScopes: [],
@@ -91,16 +101,23 @@ const state = {
   imageCacheLoaded: false,
   selectedImageCacheKey: "",
   troubleshootingFilter: "all",
+  troubleshootingTestAttempts: {},
   troubleshootingCategory: "all",
   tokenSource: "companion",
   tokenView: "today",
   tokenDate: "",
+  worldbookObservationUnconfirmed: null,
   worldbookLivingMemory: {},
   worldbookLivingMemoryRequestSeq: 0,
   roleplayPersonaDraft: null,
   experimentalSubpage: "",
   configImportPackage: null,
   configImportPreview: null,
+  configImportFileName: "",
+  configImportReadSerial: 0,
+  configImportPreviewSerial: 0,
+  configImportPreviewBusy: false,
+  configMigrationResult: null,
   configBackups: [],
   configLastChecks: [],
   activeTab: "dashboard",
@@ -389,9 +406,10 @@ function syncProviderConfigModeControls() {
   const hint = document.getElementById("providerConfigModeHint");
   if (hint) {
     hint.textContent = quick
-      ? "快速配置只显示 4 个场景模型；细分任务会按运行态自动套用这些入口。"
-      : "精准配置显示各任务单独 Provider；快速入口不会参与本模式保存。";
+      ? "快速配置编辑 4 个场景入口；保存时会按原规则覆盖相应细分任务，两套配置一起更新。"
+      : "精准配置编辑各任务的分配；保存沿原规则同步快速入口，不受搜索筛选限制。";
   }
+  renderProviderSaveNotice();
 }
 
 function setProviderConfigMode(mode, { render = true } = {}) {
@@ -3893,7 +3911,7 @@ async function openTLSNativeWorkspace(entry) {
     if (result && result.data && !result.url) result = result.data;
     if (!result || typeof result.url !== "string") throw Error("未能取得 TLS 管理入口。");
     const url = new URL(result.url, window.location.href);
-    const paths = ["/api/plugin/page/content/astrbot_plugin_virtual_body/console/", "/tls/page/console/"];
+    const paths = ["/api/plugin/page/content/astrbot_plugin_asteria/console/", "/tls/page/console/"];
     if (url.origin !== window.location.origin || !paths.includes(url.pathname) || url.username || url.password) {
       throw Error("管理入口地址不匹配，请从 AstrBot 后台重新打开。");
     }
@@ -3937,7 +3955,7 @@ function selectedConfigExportSections() {
     .filter((input) => input.checked)
     .map((input) => input.dataset.exportSection)
     .filter(Boolean);
-  return sections.length ? sections : ["basic", "relations", "food_skills"];
+  return sections;
 }
 
 function allowConfigChecksumMismatch() {
@@ -3982,15 +4000,15 @@ function renderConfigBackups() {
     const sections = Array.isArray(item.included_sections) && item.included_sections.length
       ? item.included_sections.map(migrationSectionLabel).join("、")
       : "旧备份";
-    const checksum = item.checksum_ok ? "校验通过" : "未校验";
+    const checksum = item.error ? `读取失败：${item.error}` : (item.checksum_ok ? "校验通过" : "未取得有效校验");
     return `
       <div class="migration-backup-item">
         <div>
           <b>${escapeHtml(item.name || item.id)}</b>
           <span>${escapeHtml(formatBackupTime(item.exported_at || item.mtime))} · ${escapeHtml(item.version || "未知版本")} · ${escapeHtml(checksum)}</span>
-          <small>${escapeHtml(sections)}</small>
+          <small>${escapeHtml(sections)} · ${Number(item.size || 0).toLocaleString()} 字节</small>
         </div>
-        <button type="button" data-config-restore="${escapeHtml(item.id)}">恢复</button>
+        <button type="button" data-config-restore="${escapeHtml(item.id)}" ${configMigrationLocked() ? "disabled" : ""}>恢复</button>
       </div>
     `;
   }).join("");
@@ -4027,10 +4045,11 @@ function renderConfigMigrationPreview() {
     $("#applyConfigImportBtn").disabled = true;
     return;
   }
-  $("#previewConfigImportBtn").disabled = false;
-  $("#applyConfigImportBtn").disabled = !preview;
+  $("#previewConfigImportBtn").disabled = state.configImportPreviewBusy;
+  $("#applyConfigImportBtn").disabled = !preview || configMigrationLocked();
+  const fileLine = `<p class="migration-note">当前文件：${escapeHtml(state.configImportFileName || "未命名文件")}</p>`;
   if (!preview) {
-    box.innerHTML = "已选择备份/快照文件，先点“预览导入”看看会改动哪些内容。";
+    box.innerHTML = `${fileLine}<p>${state.configImportPreviewBusy ? "正在预览当前文件…" : "已选择备份/快照文件，先点“预览导入”看看会改动哪些内容。"}</p>`;
     return;
   }
   const sections = Array.isArray(preview.sections) ? preview.sections : [];
@@ -4073,6 +4092,7 @@ function renderConfigMigrationPreview() {
     ? `<p class="migration-warn">已忽略 ${preview.ignored.length} 个未知字段：${escapeHtml(preview.ignored.slice(0, 8).join("、"))}</p>`
     : "";
   box.innerHTML = `
+    ${fileLine}
     <div class="migration-preview-top">
       <b>备份版本 ${escapeHtml(preview.version || "未知")}</b>
       <span>${escapeHtml(formatBackupTime(preview.exported_at))}</span>
@@ -4092,43 +4112,140 @@ function renderConfigMigrationPreview() {
 }
 
 async function handleConfigExport() {
+  const sections = selectedConfigExportSections();
+  if (!sections.length) {
+    showToast("请至少选择一项导出内容", "error");
+    return;
+  }
   const params = new URLSearchParams();
-  params.set("sections", selectedConfigExportSections().join(","));
-  const data = await fetchJson(`/config/export?${params.toString()}`);
-  const date = new Date().toISOString().slice(0, 10);
-  downloadJson(`private-companion-config-${date}.json`, data);
-  showToast("配置备份已导出");
+  params.set("sections", sections.join(","));
+  const button = $("#exportConfigBtn");
+  if (button.disabled) return;
+  setActionBusy(button, true);
+  try {
+    const data = await fetchJson(`/config/export?${params.toString()}`);
+    const date = new Date().toISOString().slice(0, 10);
+    downloadJson(`private-companion-config-${date}.json`, data);
+    showToast(`已交给浏览器下载：${sections.map(migrationSectionLabel).join("、")}`);
+  } catch (error) {
+    showToast(`导出失败：${error.message}`, "error");
+  } finally {
+    setActionBusy(button, false);
+  }
 }
 
 async function readConfigImportFile(file) {
-  const text = await file.text();
-  let data = null;
-  try {
-    data = JSON.parse(text.replace(/^\uFEFF/, ""));
-  } catch (error) {
-    throw new Error("备份文件不是有效 JSON");
-  }
-  state.configImportPackage = unwrapConfigPackagePayload(data);
+  const serial = ++state.configImportReadSerial;
+  ++state.configImportPreviewSerial;
+  state.configImportPreviewBusy = false;
+  state.configImportFileName = file.name;
+  state.configImportPackage = null;
   state.configImportPreview = null;
   renderConfigMigrationPreview();
-  showToast("备份/快照文件已读取，请先预览");
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text.replace(/^\uFEFF/, ""));
+    if (serial !== state.configImportReadSerial) return;
+    state.configImportPackage = unwrapConfigPackagePayload(data);
+    renderConfigMigrationPreview();
+    showToast("备份/快照文件已读取，请先预览");
+  } catch (error) {
+    if (serial !== state.configImportReadSerial) return;
+    showToast(`读取失败：${error instanceof SyntaxError ? "备份文件不是有效 JSON" : error.message}`, "error");
+  }
 }
 
 async function previewConfigImport() {
-  if (!state.configImportPackage) {
+  if (state.configImportPreviewBusy) return;
+  const source = state.configImportPackage;
+  if (!source) {
     showToast("请先选择备份文件", "error");
     return;
   }
-  const result = await postJson("/config/import/preview", {
-    package: state.configImportPackage,
-    allow_checksum_mismatch: allowConfigChecksumMismatch(),
-  });
-  state.configImportPreview = result;
+  const serial = ++state.configImportPreviewSerial;
+  const allowMismatch = allowConfigChecksumMismatch();
+  state.configImportPreviewBusy = true;
+  state.configImportPreview = null;
   renderConfigMigrationPreview();
-  showToast("预览完成");
+  const current = () => serial === state.configImportPreviewSerial && source === state.configImportPackage && allowMismatch === allowConfigChecksumMismatch();
+  try {
+    const result = await postJson("/config/import/preview", { package: source, allow_checksum_mismatch: allowMismatch });
+    if (!current()) return;
+    if (!result || !Array.isArray(result.sections) || !Number.isInteger(result.config_count)) throw new Error("预览返回不完整，请核对文件后重新预览");
+    state.configImportPreview = result;
+    showToast("预览完成，尚未写入");
+  } catch (error) {
+    if (current()) showToast(`预览失败：${error.message}`, "error");
+  } finally {
+    if (current()) {
+      state.configImportPreviewBusy = false;
+      renderConfigMigrationPreview();
+    }
+  }
+}
+
+function configMigrationLocked() {
+  return ["pending", "unknown"].includes(state.configMigrationResult?.status);
+}
+
+function renderConfigMigrationResult() {
+  const box = $("#configMigrationResult");
+  if (!box) return;
+  const item = state.configMigrationResult;
+  box.hidden = !item;
+  if (!item) return;
+  const name = item.action === "restore" ? "恢复" : "导入";
+  const titles = { pending: `${name}已提交，等待返回`, confirmed: `${name}接口已返回`, partial: `${name}部分完成：配置持久化失败`, unknown: `${name}结果未确认` };
+  const result = item.response;
+  box.innerHTML = `<article data-transfer-state="${escapeHtml(item.status)}">
+    <h3>${escapeHtml(titles[item.status])}</h3>
+    <p>本次来源：${escapeHtml(item.source)}</p>
+    ${result ? `<dl><dt>导入前备份</dt><dd>${escapeHtml(result.backup_path)}</dd>
+      <dt>配置保存</dt><dd>${result.config_saved ? "配置写入器返回成功" : "持久化失败；运行态或资料仍可能已经更新，不是整体未执行"}</dd>
+      <dt>配置变更</dt><dd>${result.changed_config_count} 项</dd>
+      <dt>方式 / 冲突</dt><dd>${result.mode === "replace" ? "覆盖所含资料段" : "合并"} / ${escapeHtml({use_backup:"使用备份",keep_current:"保留当前",fill_empty:"只补空字段"}[result.conflict])}</dd></dl>
+      <p>接口返回的资料段：${result.applied_sections.length ? result.applied_sections.map(section => `${escapeHtml(section.label || section.key)} ${section.count} 条`).join("；") : "无资料段"}。</p>
+      <p class="migration-note">上述数量是本次返回的资料段数量，不是全库总数。配置与资料分别保存，这份返回不证明全部资料已经落盘。其他分区保留当前输入，需主动刷新后核对当前值。</p>` : ""}
+    ${item.status === "unknown" ? `<p class="migration-warn">${escapeHtml(item.error || "返回信息不完整或与本次操作不符")}。原请求可能已产生修改，本页已阻止再次导入和恢复。请先核对服务器配置、资料及备份；重新预览或看到相同值，不能证明上次操作已经完成。</p>` : ""}
+    <p class="migration-note">本页结果不持久保存，刷新或离开后会消失；不会撤销已经开始的操作。</p>
+  </article>`;
+  renderConfigMigrationPreview();
+  renderConfigBackups();
+}
+
+async function executeConfigMigration(action, source, payload) {
+  if (configMigrationLocked()) return;
+  state.configMigrationResult = {status:"pending",action,source};
+  renderConfigMigrationResult();
+  try {
+    const result = await postJson(action === "restore" ? "/config/restore" : "/config/import/apply", payload);
+    const mode = action === "restore" ? "replace" : payload.mode;
+    const conflict = action === "restore" ? "use_backup" : payload.conflict;
+    const count = value => Number.isInteger(value) && value >= 0;
+    if (!result || typeof result.config_saved !== "boolean" || typeof result.backup_path !== "string" || !result.backup_path.trim()
+      || !count(result.changed_config_count) || result.mode !== mode || result.conflict !== conflict
+      || !Array.isArray(result.applied_sections) || !result.applied_sections.every(section => typeof section?.key === "string" && section.key && count(section.count))
+      || !Array.isArray(result.migration_backups) || !Array.isArray(result.post_import_checks)
+      || (action === "restore" && result.restored_from !== payload.id)) throw new Error("返回信息不完整或与本次操作不符");
+    state.configMigrationResult = {status:result.config_saved ? "confirmed" : "partial",action,source,response:result};
+    state.configBackups = result.migration_backups;
+    state.configLastChecks = result.post_import_checks;
+    // Any completed write invalidates the earlier comparison, including another file's preview.
+    state.configImportPreview = null;
+    ++state.configImportPreviewSerial;
+    state.configImportPreviewBusy = false;
+    renderConfigImportChecks();
+    showToast(result.config_saved ? `${action === "restore" ? "恢复" : "导入"}接口已返回，请查看本次结果` : "部分完成：配置持久化失败，请查看资料段与备份位置", result.config_saved ? "success" : "error");
+  } catch (error) {
+    state.configMigrationResult = {status:"unknown",action,source,error:error.message};
+    showToast("结果未确认，请先核对；本页不会重复提交", "error");
+  } finally {
+    renderConfigMigrationResult();
+  }
 }
 
 async function applyConfigImport() {
+  if (configMigrationLocked()) return;
   if (!state.configImportPackage || !state.configImportPreview) {
     showToast("请先预览备份内容", "error");
     return;
@@ -4151,43 +4268,26 @@ async function applyConfigImport() {
     ? `${message}\n\n注意：这份备份校验失败，只建议在确认它只是被手动脱敏/删改敏感字段时继续。`
     : message;
   if (!window.confirm(finalMessage)) return;
-  const result = await postJson("/config/import/apply", {
+  await executeConfigMigration("import", state.configImportFileName || "所选文件", {
     package: state.configImportPackage,
     mode,
     conflict,
     allow_checksum_mismatch: allowConfigChecksumMismatch(),
   });
-  state.configImportPreview = null;
-  renderConfigMigrationPreview();
-  if (result) {
-    const requestSeq = ++loadAllRequestSeq;
-    state.overview = result;
-    state.configBackups = result.migration_backups || state.configBackups;
-    state.configLastChecks = result.post_import_checks || [];
-    state.lazyLoaded.userGroupLists = false;
-    state.userGroupListPromise = null;
-    renderAll();
-    void loadUserGroupLists(requestSeq, { force: true });
-  }
-  showToast("配置已导入，已自动备份导入前状态");
 }
 
 async function restoreConfigBackup(id) {
+  if (configMigrationLocked()) return;
   const backupId = String(id || "").trim();
   if (!backupId) return;
   if (!window.confirm(`将从自动备份恢复：${backupId}\n恢复前也会再次备份当前状态。继续吗？`)) return;
-  const result = await postJson("/config/restore", { id: backupId });
-  if (result) {
-    const requestSeq = ++loadAllRequestSeq;
-    state.overview = result;
-    state.configBackups = result.migration_backups || state.configBackups;
-    state.configLastChecks = result.post_import_checks || [];
-    state.lazyLoaded.userGroupLists = false;
-    state.userGroupListPromise = null;
-    renderAll();
-    void loadUserGroupLists(requestSeq, { force: true });
-  }
-  showToast("已从备份恢复");
+  await executeConfigMigration("restore", backupId, { id: backupId });
+}
+
+function imageCacheActionResult(message, error = false) {
+  const result = $("#imageCacheActionResult");
+  if (result) { result.textContent = message; result.dataset.error = String(error); }
+  showToast(message, error ? "error" : undefined);
 }
 
 async function loadImageCache() {
@@ -4196,6 +4296,8 @@ async function loadImageCache() {
   if (state.imageCacheFilter) params.set("q", state.imageCacheFilter);
   if (state.imageCacheScope && state.imageCacheScope !== "all") params.set("scope", state.imageCacheScope);
   const data = await fetchJson(`/image_cache/list?${params.toString()}`);
+  const result = $("#imageCacheActionResult");
+  if (result) { result.textContent = ""; result.dataset.error = "false"; }
   invalidateImageCachePreviews();
   state.imageCacheItems = Array.isArray(data.items) ? data.items : [];
   state.imageCacheTotal = Number(data.total || 0);
@@ -4288,10 +4390,16 @@ function normalizePageTheme(raw) {
   return allowed.includes(text) ? text : "classic";
 }
 
-function applyPageTheme() {
+function applyPageTheme({ explicit = false } = {}) {
   const theme = normalizePageTheme(state.pageTheme);
   document.documentElement.dataset.theme = theme;
   try { localStorage.setItem("pc_theme", theme); } catch (e) {}
+  if (explicit) {
+    const url = new URL(location.href);
+    url.searchParams.delete("theme");
+    history.replaceState(history.state, "", url);
+  }
+  if (!new URLSearchParams(location.search).has("theme")) document.documentElement.dataset.adminTheme = "custom";
 }
 
 function renderAppearanceSettings() {
@@ -4511,6 +4619,11 @@ function scheduleExperimentalRuntimeRefresh(force = false) {
 async function loadTokenStats(force = false) {
   if (state.lazyLoaded.tokenStats && !force && !state.tokenStatsPartial) return state.tokenStats;
   const tokenStats = await fetchJson("/token/stats");
+  applyTokenStatsSnapshot(tokenStats);
+  return state.tokenStats;
+}
+
+function applyTokenStatsSnapshot(tokenStats) {
   state.tokenStats = tokenStats || null;
   state.tokenStatsPartial = false;
   state.lazyLoaded.tokenStats = true;
@@ -8673,7 +8786,7 @@ function renderTroubleshooting() {
   renderTroubleshootingSuppressedWarnings(data);
   if (categoriesEl) categoriesEl.innerHTML = troubleshootingCategoryPickerMarkup(category);
   $("#troubleshootingChecksTitle")?.replaceChildren(document.createTextNode(`${categoryInfo.label}：需要处理的信号`));
-  $("#troubleshootingChainTitle")?.replaceChildren(document.createTextNode(`${categoryInfo.label}：链路与运行状态`));
+  $("#troubleshootingChainTitle")?.replaceChildren(document.createTextNode(`${categoryInfo.label}：留存结果与运行入口`));
   $("#troubleshootingEventsTitle")?.replaceChildren(document.createTextNode(`${categoryInfo.label}：最近问题`));
   summaryEl.innerHTML = `
     <section class="troubleshooting-head-card ${escapeHtml(level)}">
@@ -8737,6 +8850,7 @@ function renderTroubleshooting() {
     ? troubleshootingPromptInjectionMarkup(data.prompt_injections || {})
     : `<div class="empty small">${escapeHtml(categoryInfo.label)}问题通常不需要查看提示词注入记录。</div>`;
   if (faqEl) faqEl.innerHTML = troubleshootingFaqMarkup(data, category);
+  syncTroubleshootingTestButtons();
   const showSqlite = ["all", "reply"].includes(category);
   const showDebounce = ["all", "reply", "proactive"].includes(category);
   const sqliteCard = sqliteEl?.closest(".diagnostic-runtime-card");
@@ -9034,6 +9148,33 @@ function troubleshootingFaqMarkup(data = {}, category = "all") {
   `).join("");
 }
 
+function troubleshootingTestResult(type) {
+  const results = state.troubleshooting?.chain_tests || {};
+  return results[type] || (type === "image_generation_text2img" ? results.image_generation : null)
+    || (type === "model_diagnostics" ? results.skill_similarity : null) || {};
+}
+
+function troubleshootingTestPresentation(result) {
+  const issues = (Array.isArray(result.steps) ? result.steps : []).filter(step => ["warn", "error"].includes(step?.status));
+  if (result.pending === true) return {status: "info", label: "已预约，等待执行；不代表已发送", issues};
+  if (result.ok === false || result.error) return {status: "error", label: "记录有失败", issues};
+  if (issues.length) return {status: "warn", label: "部分步骤未完成", issues};
+  if (result.ok === true) return {status: "ok", label: "检查返回完成", issues};
+  return {status: "info", label: "尚无完整结果", issues};
+}
+
+function syncTroubleshootingTestButtons() {
+  document.querySelectorAll("[data-troubleshooting-test]").forEach(button => {
+    const type = button.dataset.troubleshootingTest;
+    const attempt = state.troubleshootingTestAttempts[type];
+    const blocked = attempt && ["running", "unknown"].includes(attempt.status);
+    button.disabled = Boolean(blocked || troubleshootingTestResult(type).pending);
+    button.title = attempt?.status === "running" ? "本页正在等待这项操作的结果"
+      : blocked ? "本次结果未确认，先核对记录和实际结果；本页不会再次提交"
+      : button.disabled ? "已预约的测试尚未完成" : "";
+  });
+}
+
 function troubleshootingChainTestMarkup(results, recentPhotoGenerations = [], screenCompanion = {}, qzone = {}, tts = {}, category = "all") {
   const tests = [
     {
@@ -9041,7 +9182,7 @@ function troubleshootingChainTestMarkup(results, recentPhotoGenerations = [], sc
       type: "image_generation_text2img",
       workflowKind: "text2img",
       title: "文生图",
-      text: "实际调用普通文生图链路并检查返回文件",
+      text: "真实调用普通文生图链路，生成图片文件并记录结果；此入口不负责发送图片。",
       button: "测试文生图",
     },
     {
@@ -9049,21 +9190,21 @@ function troubleshootingChainTestMarkup(results, recentPhotoGenerations = [], sc
       type: "image_generation_selfie",
       workflowKind: "selfie",
       title: "自拍/参考图",
-      text: "实际调用自拍/人像链路；开启参考图一致性且有参考图时会测试参考图输入",
+      text: "真实调用自拍/人像生成并留存图片文件；开启一致性且有参考图时使用参考图。此入口不负责发送图片。",
       button: "测试自拍",
     },
     {
       category: "voice",
       type: "tts_generation",
       title: "TTS 生成",
-      text: "实际调用当前会话 TTS provider 并检查音频文件",
+      text: "实际调用服务端选定私聊会话的真实 TTS，生成音频文件并记录结果；此入口不负责发送语音。优先已启用的主人会话，否则取首个可用会话。",
       button: "测试 TTS 生成",
     },
     ...(screenCompanion?.available ? [{
       category: "image_recognition",
       type: "screen_peek",
       title: "窥屏",
-      text: "实际调用 screen_companion 识屏入口，确认屏幕观察链路可用",
+      text: "实际调用已连接的识屏入口，读取屏幕并取得观察摘要；可能使用识别模型，结果会留存。",
       button: "测试窥屏",
     }] : []),
     {
@@ -9079,14 +9220,14 @@ function troubleshootingChainTestMarkup(results, recentPhotoGenerations = [], sc
       category: "proactive",
       type: "proactive_message",
       title: "主动消息",
-      text: "预约 1 分钟后的临时主动私聊，检查生成、复核、发送和历史归档",
+      text: "预约约 1 分钟后的临时主动私聊，会走真实生成、复核、发送与归档。默认优先已启用的主人，否则首个有私聊会话的对象；返回预约不代表实际已发送。",
       button: "测试主动消息",
     },
     {
       category: "reply",
       type: "model_diagnostics",
       title: "模型数据排障",
-      text: "检查技能、群黑话、关系网、长期画像和表达学习里的模型理解杂音；只给建议，不自动修改",
+      text: "先检查技能、群黑话、关系网、长期画像与表达学习的本地候选；有候选时请求模型复核并留存建议。不会按建议自动改写这些资料；没有候选时不会调用模型。",
       button: "运行模型排障",
     },
   ];
@@ -9096,12 +9237,13 @@ function troubleshootingChainTestMarkup(results, recentPhotoGenerations = [], sc
       || (test.type === "image_generation_text2img" ? results?.image_generation : null)
       || (test.type === "model_diagnostics" ? results?.skill_similarity : null)
       || {};
-    const ok = Boolean(result.ok);
-    const pending = Boolean(result.pending);
     const hasResult = Boolean(result.ran_at || result.ran_at_text || result.error || result.detail);
-    const status = hasResult ? (pending ? "info" : ok ? "ok" : "error") : "info";
+    const presentation = troubleshootingTestPresentation(result);
+    const attempt = state.troubleshootingTestAttempts[test.type];
+    const status = attempt?.status === "unknown" ? "warn" : hasResult ? presentation.status : "info";
     const meta = [
       result.backend || result.provider || "",
+      result.umo ? `目标会话 ${result.umo}` : "",
       result.image_model ? `模型 ${result.image_model}` : "",
       result.workflow_kind ? `类型 ${result.workflow_kind}` : "",
       result.used_reference ? "已带参考图" : "",
@@ -9116,16 +9258,21 @@ function troubleshootingChainTestMarkup(results, recentPhotoGenerations = [], sc
     const previewMarkup = troubleshootingChainPreviewMarkup(test.type, result);
     const detailText = troubleshootingChainDetailText(test, result, hasResult);
     return `
-      <section class="troubleshooting-chain-test ${escapeHtml(status)}">
+      <section class="troubleshooting-chain-test aw-chain-card ${escapeHtml(status)}">
         <div>
-          <b>${escapeHtml(test.title)}</b>
-          <p>${escapeHtml(detailText)}</p>
+          <header><b>${escapeHtml(test.title)}</b><span class="aw-chain-status">${hasResult ? escapeHtml(presentation.label) : "尚无留存结果"}</span></header>
+          ${attempt && attempt.status !== "returned" ? `<div class="aw-chain-notice" role="status">${attempt.status === "running" ? "正在等待本次结果；切换分类不会重新提交。" : `本次结果未确认：${escapeHtml(attempt.error)}。服务端可能已开始执行；下面的留存记录不能证明本次完成，本页不会再次提交。刷新仍会执行原诊断及恢复逻辑，不会重发测试。`}</div>` : ""}
+          ${hasResult ? `<small class="aw-chain-origin">${attempt?.result === result ? "本页收到的执行返回；不证明结果已持久保存" : "服务端每类最近一次留存结果"}；不代表当前全部链路正常${attempt?.status === "unknown" ? "，也未关联到本次未确认请求" : ""}。</small><p>${escapeHtml(detailText)}</p>` : ""}
+          ${presentation.issues.length ? `<div class="aw-chain-issues">${presentation.issues.map(step => `<p>${escapeHtml(step.name || "步骤")}：${escapeHtml(step.detail || step.status)}</p>`).join("")}</div>` : ""}
           ${meta ? `<small>${escapeHtml(meta)}</small>` : ""}
           ${result.path ? `<small class="path">${escapeHtml(result.path)}</small>` : ""}
           ${previewMarkup}
           ${stepsMarkup}
+          <details class="aw-chain-run" data-chain-run="${escapeHtml(test.type)}">
+            <summary>运行范围与操作</summary><p>${escapeHtml(test.text)}</p>
+            <button type="button" data-troubleshooting-test="${escapeHtml(test.type)}" ${test.workflowKind ? `data-troubleshooting-workflow-kind="${escapeHtml(test.workflowKind)}"` : ""}>${escapeHtml(test.button)}</button>
+          </details>
         </div>
-        <button type="button" data-troubleshooting-test="${escapeHtml(test.type)}" ${test.workflowKind ? `data-troubleshooting-workflow-kind="${escapeHtml(test.workflowKind)}"` : ""}>${escapeHtml(test.button)}</button>
       </section>
     `;
   }).join("");
@@ -9625,10 +9772,12 @@ function hydrateImageCachePreviews() {
     imageCachePreviewObserver = new IntersectionObserver((entries, observer) => {
       for (const entry of entries) if (entry.isIntersecting) {
         observer.unobserve(entry.target);
-        void hydrateImageCachePreview(entry.target);
+        const image = entry.target.querySelector("img[data-image-cache-preview-key]");
+        if (image) void hydrateImageCachePreview(image);
       }
     });
-    images.forEach(image => imageCachePreviewObserver.observe(image));
+    // Hidden images have no box to intersect. Observe their visible thumbnail slot.
+    images.forEach(image => imageCachePreviewObserver.observe(image.parentElement));
   } else {
     // Old engines still show the selected record; do not eagerly fetch a
     // 300-record list just to replace the browser's lazy-image behavior.
@@ -9980,6 +10129,7 @@ function renderTokens() {
   renderTokenToolbar(stats, source.dateRows || []);
   renderTokenSourceVisibility(source);
   renderTokenBalanceStatus(stats.balance || {});
+  renderTokenResetNotice();
   const showHourlyTrend = state.tokenView === "total" && (source.hours || []).length > 0;
   const hourlyPanel = $("#tokenHourlyPanel");
   if (hourlyPanel) hourlyPanel.hidden = !showHourlyTrend;
@@ -10004,7 +10154,7 @@ function renderTokens() {
     softEnabled: Boolean(budget.soft_enabled),
     softActive: Boolean(budget.soft_active),
     deferredCalls: Number(budget.deferred_calls || 0),
-    proactiveMessages: exemptUsed,
+    exemptUsed,
   })}`;
 
   renderTokenChart("#tokenProviderChart", source.providers || [], `暂无${source.shortLabel} Provider 消耗数据`, (item) => item.key || "default");
@@ -10021,7 +10171,7 @@ function renderTokens() {
       && taskChartRows.some((item) => String(item?.key || "").trim() === "other");
     taskChartHint.hidden = !hasUnclassifiedCalls;
     taskChartHint.textContent = hasUnclassifiedCalls
-      ? "“未分类模型调用”只保留没有有效任务标识的旧版记录或异常链路；当前内置调用已逐项标注。历史 Token 无法反推用途，清空统计后会重新按新分类累计。"
+      ? "“未分类模型调用”只保留没有有效任务标识的旧版记录或异常链路；当前内置调用已逐项标注。历史 Token 无法反推用途；新调用沿当前任务标识累计，无需为分类清空原记录。"
       : "";
   }
   if (showHourlyTrend) {
@@ -10303,8 +10453,11 @@ function tokenSummaryBoard({
   softEnabled,
   softActive,
   deferredCalls,
-  proactiveMessages,
+  exemptUsed,
 }) {
+  if (source?.available === false) {
+    return `<section class="token-summary-board"><article class="token-primary-card"><span>${escapeHtml(source.title)}</span><b>统计不可用</b><small>${escapeHtml(source.unavailableReason || "当前记忆统计来源未连接")}</small><small>没有读取到用量，不能按0次调用或0 Token判断。</small></article><div class="token-metric-grid">${(comparison || []).map((item) => tokenMetricCard(item.label, item.value == null ? "未接入" : formatNumber(item.value))).join("")}</div></section>`;
+  }
   const avgTokens = Math.round(Number(totals.avg_tokens || 0));
   const avgLatency = Math.round(Number(totals.avg_latency_ms || 0));
   const isCompanion = source?.source === "companion";
@@ -10316,7 +10469,7 @@ function tokenSummaryBoard({
   const softPercent = softEnabled && softLimit > 0 ? Math.min(100, Math.round((softUsed / Math.max(1, softLimit)) * 100)) : 0;
   const scopeNote = isCompanion && scope.isToday
     ? (dailyLimit > 0 ? `硬限额 ${formatCompactNumber(dailyLimit)} · 剩 ${formatCompactNumber(remainingValue)}` : "今日不限额")
-    : `${scope.mode === "total" ? "全部历史" : "选定日期"} · ${formatNumber(calls)} 次调用`;
+    : `${scope.mode === "total" ? "当前留存累计" : "选定日期"} · ${formatNumber(calls)} 次调用`;
   const hasKnownCacheStats = totalTokens > 0 && estimatedRatio < 1;
   return `
     <section class="token-summary-board">
@@ -10346,7 +10499,7 @@ function tokenSummaryBoard({
       </article>
       <div class="token-metric-grid">
         ${(comparison || []).map((item) => tokenMetricCard(item.label, item.value == null ? "未接入" : formatNumber(item.value))).join("")}
-        ${isCompanion ? tokenMetricCard("主动消息", formatCompactNumber(proactiveMessages)) : ""}
+        ${isCompanion ? tokenMetricCard("今日免计限额 Token", formatCompactNumber(exemptUsed)) : ""}
         ${hasKnownCacheStats ? tokenMetricCard("缓存命中", `${formatCompactNumber(cachedTokens || cacheReadTokens)} · ${Math.round(cachedRatio * 100)}%`) : ""}
         ${cacheReadTokens > 0 || cacheWriteTokens > 0 ? tokenMetricCard("缓存读 / 写", `${formatCompactNumber(cacheReadTokens)} / ${formatCompactNumber(cacheWriteTokens)}`) : ""}
         ${tokenMetricCard("调用次数", formatNumber(calls))}
@@ -11375,16 +11528,18 @@ function renderLearning() {
   switchLearningSection(state.learningSection);
 }
 
-function renderUsers() {
+function renderUsers(refreshDetail = true) {
   const keyword = ($("#userFilter").value || "").trim().toLowerCase();
   const rows = state.users.filter((user) => {
-    const text = `${user.user_id} ${user.nickname} ${user.umo}`.toLowerCase();
-    return !keyword || text.includes(keyword);
+    const text = `${user.user_id} ${user.nickname} ${user.display_name || ""} ${user.umo} ${(user.alias_user_ids || []).join(" ")}`.toLowerCase();
+    const status = $("#userStatusFilter").value;
+    return (!keyword || text.includes(keyword)) && (status === "all" || Boolean(user.enabled) === (status === "enabled"));
   });
+  $("#userListCoverage").textContent = `本次载入 ${state.users.length} 个对象 · 符合筛选 ${rows.length} 个。列表最多返回 300 个近期对象。`;
   $("#userRows").innerHTML = rows.length
     ? rows.map((user) => `
       <tr data-user-id="${escapeHtml(user.user_id)}" class="${user.user_id === state.selectedUserId ? "is-selected" : ""}">
-        <td class="user-cell identity"><strong title="${escapeHtml(user.display_name || user.nickname || user.user_id)}">${escapeHtml(user.display_name || user.nickname || user.user_id)}</strong>${user.is_qq_user ? "" : ` <span class="badge off">非 QQ</span>`}${Array.isArray(user.alias_user_ids) && user.alias_user_ids.length ? ` <span class="badge ok" title="${escapeHtml(user.alias_user_ids.join("\\n"))}">已合并 ${escapeHtml(user.alias_user_ids.length)} 个身份</span>` : ""}<br><span class="user-id-line"><span class="muted mono" title="${escapeHtml(user.user_id)}">${escapeHtml(user.user_id)}</span><button type="button" class="copy-id-btn" data-copy-user-id="${escapeHtml(user.user_id)}">复制</button></span></td>
+        <td class="user-cell identity"><button type="button" class="aw-user-open" title="查看对象资料">${escapeHtml(user.display_name || user.nickname || user.user_id)}</button>${user.is_qq_user ? "" : ` <span class="badge off">非 QQ</span>`}${Array.isArray(user.alias_user_ids) && user.alias_user_ids.length ? ` <span class="badge ok" title="${escapeHtml(user.alias_user_ids.join("\\n"))}">已合并 ${escapeHtml(user.alias_user_ids.length)} 个身份</span>` : ""}<br><span class="user-id-line"><span class="muted mono" title="${escapeHtml(user.user_id)}">${escapeHtml(user.user_id)}</span><button type="button" class="copy-id-btn" data-copy-user-id="${escapeHtml(user.user_id)}">复制</button></span></td>
         <td class="user-cell relation"><span class="badge ${user.enabled ? "" : "off"}">${escapeHtml(user.enabled ? "启用" : "停用")}</span> <span class="badge">${escapeHtml(user.relationship_role_label || "次要用户")}</span> <span class="muted">${escapeHtml(user.relationship_stage || "未分层")}</span><br><span>分数 ${escapeHtml(user.relationship_score)}</span></td>
         <td class="user-cell compact">入站 ${escapeHtml(user.inbound_count)} · 回复 ${escapeHtml(user.reply_count)}<br><span class="muted">记忆 ${escapeHtml(user.memory_items)} 条</span></td>
         <td class="user-cell proactive"><span>今日 ${escapeHtml(user.sent_today)} · 总计 ${escapeHtml(user.proactive_sent_count)}</span><br><span class="muted truncate" title="${escapeHtml(user.next_proactive || "")}">${escapeHtml(user.next_proactive)}</span></td>
@@ -11410,39 +11565,50 @@ function renderUsers() {
       await copyTextToClipboard(button.dataset.copyUserId || "", "已复制用户 ID");
     });
   });
-  document.querySelectorAll("[data-user-id]").forEach((row) => {
+  document.querySelectorAll("#userRows tr[data-user-id]").forEach((row) => {
     row.addEventListener("click", async () => {
+      if (state.selectedUserId !== row.dataset.userId) state.userDetailSection = "profile";
       state.selectedUserId = row.dataset.userId;
-      renderUsers();
+      renderUsers(false);
       await renderUserDetail(true);
     });
   });
-  renderUserDetail();
+  if (refreshDetail) void renderUserDetail();
 }
 
 async function renderUserDetail(forceFetch = false) {
-  const box = $("#userDetail");
-  if (!state.selectedUserId) {
-    box.innerHTML = "";
-    return;
-  }
-  let detail = state.users.find((user) => user.user_id === state.selectedUserId);
+  const box = $("#userDetail"), id = String(state.selectedUserId || "");
+  if (!forceFetch && box.dataset.detailUserId === id && box.querySelector('#userEditForm')?.dataset.dirty === "true") return;
+  const serial = ++state.userDetailSerial;
+  const current = () => serial === state.userDetailSerial && String(state.selectedUserId || "") === id;
+  box.dataset.detailUserId = id;
+  if (!id) {box.innerHTML = '<p class="muted">选择一个对象查看资料与互动记录。</p>'; return;}
+  box.innerHTML = `<p class="muted" role="status">正在读取 ${escapeHtml(id)} 的资料…</p>`;
+  let detail = state.users.find(user => String(user.user_id) === id);
   if (forceFetch || !detail?.formatted) {
     try {
-      detail = await fetchJson(`/user?user_id=${encodeURIComponent(state.selectedUserId)}`);
+      detail = await fetchJson(`/user?user_id=${encodeURIComponent(id)}`);
+      if (!current()) return;
+      if (String(detail?.user_id || "") !== id) throw new Error("返回对象不匹配，请重新读取");
     } catch (error) {
-      box.innerHTML = `<p class="muted">详情读取失败：${escapeHtml(error.message)}</p>`;
+      if (!current()) return;
+      box.innerHTML = `<p class="muted" role="alert">详情读取失败：${escapeHtml(error.message)}</p><button type="button" data-user-retry>重新读取</button>`;
+      box.querySelector('[data-user-retry]').addEventListener('click', () => {if (current()) void renderUserDetail(true);});
       return;
     }
   }
+  if (!current()) return;
   box.innerHTML = `
-    <div class="toolbar">
-      <button data-user-action="toggle">${escapeHtml(detail.enabled ? "停用私聊陪伴" : "启用私聊陪伴")}</button>
-      <button data-user-action="reset_daily">重置今日额度</button>
-      <button data-user-action="clear_schedule">清空主动计划</button>
-      <button data-user-action="clear_emotion_state">重置情绪状态</button>
-      <button data-user-action="delete" class="danger">删除私聊用户</button>
+    <header class="aw-user-heading"><div><h3>${escapeHtml(detail.display_name || detail.nickname || id)}</h3><p>对象 ${escapeHtml(id)} · ${escapeHtml(detail.relationship_role_label || "次要用户")}</p></div>
+      <span class="badge ${detail.enabled ? "ok" : "off"}">${detail.enabled ? "陪伴已启用" : "陪伴已停用"}</span></header>
+    <div class="aw-user-tabs" role="group" aria-label="对象资料分区">
+      <button type="button" data-user-section="profile">资料与偏好</button>
+      <button type="button" data-user-section="records">互动与关系</button>
+      <button type="button" data-user-section="maintenance">维护操作</button>
     </div>
+    <section class="aw-user-section" data-user-panel="profile">
+      <details class="aw-user-editor"><summary>编辑称呼、语气与主动额度</summary>
+      <p class="muted">-1 沿用默认额度，0 不生成主动内容；实际额度仍受全局规则约束。主要用户包含原管理权限，请按真实关系设置。</p>
     <form id="userEditForm" class="inline-form">
       <label>称呼 <input name="nickname" value="${escapeHtml(detail.nickname || "")}" placeholder="例如 昵称 / 名字" /></label>
       <label>语气 <input name="style" value="${escapeHtml(detail.style || "")}" placeholder="温柔 / 活泼 / 工作" /></label>
@@ -11455,6 +11621,8 @@ async function renderUserDetail(forceFetch = false) {
       <label>每日主动 <input name="proactive_daily_limit" type="number" min="-1" max="30" step="1" value="${escapeHtml(detail.proactive_daily_limit ?? -1)}" /></label>
       <button type="submit">保存</button>
     </form>
+      <p class="aw-user-draft" role="status">修改后点击保存。关闭页面或换到其他对象会丢弃未保存内容。</p></details>
+      <div class="toolbar"><button type="button" data-user-action="toggle">${detail.enabled ? "停用私聊陪伴" : "启用私聊陪伴"}</button></div>
     <div class="visual-strip">
       ${scoreGauge("关系分", detail.relationship_score || 0, -20, 40)}
       ${scoreGauge("今日主动", detail.sent_today || 0, 0, proactiveGaugeMax(detail.sent_today, detail.effective_daily_limit, detail.effective_daily_limit_unlimited, state.overview?.private?.max_daily_messages || 8))}
@@ -11462,8 +11630,11 @@ async function renderUserDetail(forceFetch = false) {
       ${miniStat("未完话头", Array.isArray(detail.open_loops) ? activeOpenLoopItems(detail.open_loops).length : (detail.open_loop_count || 0))}
       ${miniStat("习惯", detail.habit_count || detail.behavior_habits?.items?.length || 0)}
     </div>
-    <div class="detail-grid">
       ${detailBlock("关系和主动", detail.formatted?.relationship || "", [["角色", detail.relationship_role_label || ""], ["有效主动上限", `${detail.effective_daily_limit_text || formatProactiveLimit(detail.effective_daily_limit, detail.effective_daily_limit_unlimited)} / 天`], ["下次主动", detail.formatted?.next_proactive || detail.next_proactive], ["动作偏好", detail.formatted?.action_affinity || ""]])}
+    </section>
+    <section class="aw-user-section" data-user-panel="records" hidden>
+      <p class="muted">以下为陪伴模块当前返回的关系、近期对话与整理片段，不是全部聊天历史或完整长期记忆。</p>
+    <div class="detail-grid">
       ${renderPrivateBehaviorHabits(detail)}
       ${emotionGateBlock(detail)}
       ${userWorldbookBlock(detail.worldbook_member)}
@@ -11473,7 +11644,30 @@ async function renderUserDetail(forceFetch = false) {
     <div class="private-dialogue-section">
       ${renderPrivateDialogueEpisodes(detail)}
     </div>
+    </section>
+    <section class="aw-user-section" data-user-panel="maintenance" hidden>
+      <h3>当前对象的维护操作</h3>
+      <p>重置今日额度会重置该对象的当日计数；清空计划处理本模块的待执行计划，不能撤回已经开始或发送的消息。</p>
+      <p>重置情绪只清理原扮演状态。删除对象还会处理原目标名单、身份与发送映射、表达学习范围；不会替你清空其他系统的数据。</p>
+    <div class="toolbar">
+      <button data-user-action="reset_daily">重置今日额度</button>
+      <button data-user-action="clear_schedule">清空主动计划</button>
+      <button data-user-action="clear_emotion_state">重置情绪状态</button>
+      <button data-user-action="delete" class="danger">删除私聊用户</button>
+    </div>
+    </section>
   `;
+  const showSection = name => {
+    state.userDetailSection = ["profile", "records", "maintenance"].includes(name) ? name : "profile";
+    box.querySelectorAll('[data-user-panel]').forEach(panel => {panel.hidden = panel.dataset.userPanel !== state.userDetailSection;});
+    box.querySelectorAll('[data-user-section]').forEach(button => {button.setAttribute('aria-pressed', String(button.dataset.userSection === state.userDetailSection));});
+  };
+  box.querySelectorAll('[data-user-section]').forEach(button => button.addEventListener('click', () => showSection(button.dataset.userSection)));
+  showSection(state.userDetailSection);
+  box.querySelector('#userEditForm').addEventListener('input', event => {
+    event.currentTarget.dataset.dirty = "true";
+    box.querySelector('.aw-user-draft').textContent = "有未保存修改；切换分区或筛选列表会保留当前输入。";
+  });
   bindUserActions(detail);
 }
 
@@ -12497,9 +12691,7 @@ function bindExpressionLibraryActions(library, root) {
           rule_family_id: button.dataset.expressionRuleFamilyId || "",
           sample_index: Number(button.dataset.expressionSampleIndex || -1),
         }),
-        action === "approve" ? "已保留观察素材" : (
-          action === "approve_rule" ? "已通过表达规则" : (action === "approve_rule_group" ? "已通过并启用整个规则组" : "")
-        ),
+        "",
         button,
         { reload: false },
       );
@@ -12545,14 +12737,14 @@ function bindUserActions(detail) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const selectedRole = form.get("relationship_role");
-    await runAction(() => postJson("/user/update", {
+    const updated = await runAction(() => postJson("/user/update", {
       user_id: detail.user_id,
       nickname: form.get("nickname"),
       style: form.get("style"),
       relationship_role: selectedRole,
       proactive_daily_limit: Number(form.get("proactive_daily_limit") || -1),
     }), "已保存私聊对象", event.submitter);
-    await refreshSelectedUserDetail();
+    if (updated) await refreshSelectedUserDetail();
   });
   document.querySelectorAll("[data-user-action]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -12568,10 +12760,10 @@ function bindUserActions(detail) {
       if (action === "delete") {
         if (!requireSecondClick(button, `user-delete:${detail.user_id}`, "再次点击删除该私聊用户、目标名单和相关映射", "再次点击删除")) return;
         await runAction(async () => {
-          await postJson("/user/delete", body);
-          state.selectedUserId = "";
-          await loadAll();
-        }, "已删除私聊用户", button);
+          const result = await postJson("/user/delete", body);
+          if (state.selectedUserId === detail.user_id) state.selectedUserId = "";
+          return result;
+        }, "", button);
         return;
       }
       await runAction(() => postJson("/user/update", body), "已更新私聊对象", button);
@@ -12604,23 +12796,26 @@ function bindUserActions(detail) {
   });
 }
 
-function renderGroups() {
+function renderGroups(refreshDetail = true) {
   const keyword = ($("#groupFilter").value || "").trim().toLowerCase();
   const rows = state.groups.filter((group) => {
     const haystack = [
       group.group_id,
       group.name,
       group.group_name,
+      group.display_name,
       group.atmosphere?.mood,
       group.atmosphere?.last_summary,
     ].join(" ").toLowerCase();
-    return !keyword || haystack.includes(keyword);
+    const status = $("#groupStatusFilter").value;
+    return (!keyword || haystack.includes(keyword)) && (status === "all" ||
+      (status === "blocked" ? group.allowed_by_mode === false : Boolean(group.enabled) === (status === "enabled")));
   });
-  if (!rows.length) {
-    state.selectedGroupId = "";
-  } else if (!rows.some((group) => String(group.group_id) === String(state.selectedGroupId))) {
-    state.selectedGroupId = rows[0].group_id;
+  if (!state.groups.some(group => String(group.group_id) === String(state.selectedGroupId))) {
+    state.selectedGroupId = state.groups[0]?.group_id || "";
   }
+  const outside = state.selectedGroupId && !rows.some(group => String(group.group_id) === String(state.selectedGroupId));
+  $("#groupListCoverage").textContent = `本次载入 ${state.groups.length} 个群，符合筛选 ${rows.length} 个。最多返回300个近期群聊。${outside ? "当前详情保留在筛选外。" : ""}`;
   const count = $("#groupListCount");
   if (count) {
     count.textContent = `${rows.length}/${state.groups.length} 个群`;
@@ -12633,7 +12828,7 @@ function renderGroups() {
             <b>${escapeHtml(groupDisplayName(group))}</b>
             <small>${escapeHtml(groupIdText(group))}</small>
           </span>
-          <span class="badge ${group.enabled ? "" : "off"}">${escapeHtml(group.enabled ? "观测中" : "停用")}</span>
+          <span class="badge ${group.enabled ? "" : "off"}">${escapeHtml(group.enabled ? "本群已启用" : "本群已停用")}</span>
         </header>
         <p class="group-card-summary">${escapeHtml(group.atmosphere?.last_summary || group.atmosphere?.mood || "暂无群聊氛围摘要")}</p>
         <div class="group-card-metrics">
@@ -12650,14 +12845,15 @@ function renderGroups() {
       </button>
     `).join("")
     : `<div class="empty small">暂无群聊观测数据</div>`;
-  document.querySelectorAll("[data-group-id]").forEach((row) => {
+  document.querySelectorAll("#groupRows [data-group-id]").forEach((row) => {
     row.addEventListener("click", async () => {
+      if (String(state.selectedGroupId) !== row.dataset.groupId) state.groupDetailSection = "status";
       state.selectedGroupId = row.dataset.groupId;
-      renderGroups();
+      renderGroups(false);
       await renderGroupDetail(true);
     });
   });
-  renderGroupDetail();
+  if (refreshDetail) void renderGroupDetail();
 }
 
 function groupDisplayName(group) {
@@ -12689,59 +12885,85 @@ function groupWakeupCardLine(group) {
 }
 
 async function renderGroupDetail(forceFetch = false) {
-  const box = $("#groupDetail");
-  if (!state.selectedGroupId) {
-    box.innerHTML = `<div class="empty">选择左侧群聊后查看话题线、关系网和插话状态</div>`;
-    return;
-  }
-  let detail = state.groups.find((group) => String(group.group_id) === String(state.selectedGroupId));
+  const box = $("#groupDetail"), id = String(state.selectedGroupId || "");
+  const serial = ++state.groupDetailSerial;
+  const current = () => serial === state.groupDetailSerial && String(state.selectedGroupId || "") === id;
+  box.dataset.detailGroupId = id;
+  if (!id) {box.innerHTML = '<p class="muted">选择一个群，查看参与状态、记录与维护入口。</p>'; return;}
+  box.innerHTML = `<p role="status" class="muted">正在读取群 ${escapeHtml(id)}…</p>`;
+  let detail = state.groups.find(group => String(group.group_id) === id);
   if (forceFetch || !detail?.formatted) {
     try {
-      detail = await fetchJson(`/group?group_id=${encodeURIComponent(state.selectedGroupId)}`);
+      detail = await fetchJson(`/group?group_id=${encodeURIComponent(id)}`);
+      if (!current()) return;
+      if (String(detail?.group_id || "") !== id) throw new Error("返回群不匹配，请重新读取");
     } catch (error) {
-      box.innerHTML = `<p class="muted">详情读取失败：${escapeHtml(error.message)}</p>`;
+      if (!current()) return;
+      box.innerHTML = `<p role="alert" class="muted">详情读取失败：${escapeHtml(error.message)}</p><button type="button" data-group-retry>重新读取</button>`;
+      box.querySelector('[data-group-retry]').addEventListener('click', () => {if (current()) void renderGroupDetail(true);});
       return;
     }
   }
-  const groupName = groupDisplayName(detail);
+  if (!current()) return;
+  const globalGroup = state.overview?.group || {};
+  const globalLabel = globalGroup.enabled === true ? "已开启" : globalGroup.enabled === false ? "已关闭" : "未读取";
   box.innerHTML = `
-    <div class="group-detail-hero">
-      <div class="group-detail-title">
-        <span class="eyebrow">群聊详情</span>
-        <h2>${escapeHtml(groupName)}</h2>
-        <div class="group-detail-status">
-          <span>${escapeHtml(groupIdText(detail))}</span>
-          <span class="${detail.enabled ? "ok-text" : "warn-text"}">${escapeHtml(detail.enabled ? "观测中" : "已停用")}</span>
-          <span class="${detail.allowed_by_mode ? "ok-text" : "warn-text"}">${escapeHtml(detail.allowed_by_mode ? "名单允许" : "名单拦截")}</span>
-          <span>最近 ${escapeHtml(detail.last_seen || "暂无")}</span>
-        </div>
+    <header class="group-detail-hero">
+      <div class="group-detail-title"><span class="eyebrow">当前群聊</span><h2>${escapeHtml(groupDisplayName(detail))}</h2>
+        <div class="group-detail-status"><span>${escapeHtml(groupIdText(detail))}</span><span>最近 ${escapeHtml(detail.last_seen || "暂无")}</span></div>
       </div>
-      <div class="group-detail-actions">
-        <button data-group-action="toggle">${escapeHtml(detail.enabled ? "停用" : "启用")}</button>
-        <button data-group-action="reset_interjection">重置插话</button>
-        <button data-group-action="clear_observation" class="danger">清空观测</button>
-        <button data-group-action="delete" class="danger">删除群聊</button>
+    </header>
+    <div class="aw-group-tabs" role="group" aria-label="群聊资料分区">
+      <button type="button" data-group-section="status">参与状态</button><button type="button" data-group-section="records">群聊记录</button>
+      <button type="button" data-group-section="slang">黑话维护</button><button type="button" data-group-section="maintenance">管理操作</button>
+    </div>
+    <section class="aw-group-section" data-group-panel="status">
+      <div class="aw-group-gates">
+        <article><small>群陪伴总开关</small><b>${globalLabel}</b></article>
+        <article><small>本群设置</small><b>${detail.enabled ? "已启用" : "已停用"}</b></article>
+        <article><small>当前名单</small><b>${detail.allowed_by_mode ? "允许" : "拦截"}</b></article>
       </div>
-    </div>
-    <div class="visual-strip group-visual-strip">
-      ${miniStat("消息", detail.message_count || 0)}
-      ${miniStat("群友", detail.member_count || Object.keys(detail.members || {}).length)}
-      ${miniStat("已识别", detail.recognized_member_count || 0)}
-      ${miniStat("黑话", detail.slang_count || (detail.slang_terms || []).length)}
-      ${miniStat("话题", detail.topic_count || (detail.topic_threads || []).length)}
-    </div>
-    <div class="detail-grid group-detail-grid">
-      ${groupDetailPanel("群状态", groupStateOverview(detail), { wide: true, className: "group-state-panel" })}
-      ${groupDetailPanel("黑话检视", groupSlangManagerView(detail.slang_items || []), { wide: true, className: "group-slang-panel", collapsed: true, meta: `${(detail.slang_items || []).length || 0} 条` })}
-      ${groupDetailPanel("活跃群友", groupActiveMembersView(detail.members || {}), { className: "group-compact-panel" })}
-      ${groupDetailPanel("插话反馈", groupInterjectionFeedbackView(detail), { className: "group-compact-panel" })}
-      ${groupDetailPanel("消息活跃", groupMessageActivityView(detail.recent_messages || []), { wide: true, className: "group-message-panel" })}
-      ${groupDetailPanel("群聊片段", groupEpisodesView(detail.group_episodes || []), { wide: true, collapsed: true, meta: `${(detail.group_episodes || []).length || 0} 条` })}
-      ${groupDetailPanel("唤醒记录", groupWakeupPanel(detail), { wide: true, collapsed: true, meta: `${detail.wakeup_log_count || (detail.group_wakeup_logs || []).length || 0} 条` })}
-      ${groupDetailPanel("话题线", groupTopicThreadsView(detail.topic_threads || []), { wide: true, collapsed: true, meta: `${(detail.topic_threads || []).length || 0} 条` })}
-      ${groupDetailPanel("关系网", relationshipGraphView(detail.relationship_edges || {}, detail.members || {}), { wide: true, collapsed: true, meta: `${Object.keys(detail.relationship_edges || {}).length} 条关系` })}
-    </div>
-  `;
+      <p>以上是当前配置状态，启用本群仍须满足总开关、名单和原有唤醒/频率规则；不表示已经发送消息。</p>
+      <div class="aw-group-actions"><button type="button" data-group-action="toggle">${detail.enabled ? "停用本群" : "启用本群"}</button><button type="button" data-group-access>管理群聊名单</button></div>
+      <div class="detail-grid group-detail-grid">
+        ${groupDetailPanel("近期氛围", groupStateOverview(detail), {wide:true,className:"group-state-panel"})}
+        ${groupDetailPanel("插话反馈", groupInterjectionFeedbackView(detail), {wide:true})}
+      </div>
+    </section>
+    <section class="aw-group-section" data-group-panel="records" hidden>
+      <p>当前返回的近期观测和整理资料；消息最多30条、片段最多12条，不是全部聊天历史。</p>
+      <div class="detail-grid group-detail-grid">
+        ${groupDetailPanel("活跃群友", groupActiveMembersView(detail.members || {}), {wide:true})}
+        ${groupDetailPanel("消息活跃", groupMessageActivityView(detail.recent_messages || []), {wide:true})}
+        ${groupDetailPanel("群聊片段", groupEpisodesView(detail.group_episodes || []), {wide:true,collapsed:true,meta:`${(detail.group_episodes || []).length} 条`})}
+        ${groupDetailPanel("唤醒记录", groupWakeupPanel(detail), {wide:true,collapsed:true,meta:`${detail.wakeup_log_count || (detail.group_wakeup_logs || []).length} 条`})}
+        ${groupDetailPanel("话题线", groupTopicThreadsView(detail.topic_threads || []), {wide:true,collapsed:true,meta:`${(detail.topic_threads || []).length} 条`})}
+        ${groupDetailPanel("关系网", relationshipGraphView(detail.relationship_edges || {}, detail.members || {}), {wide:true,collapsed:true,meta:`${Object.keys(detail.relationship_edges || {}).length} 条关系`})}
+      </div>
+    </section>
+    <section class="aw-group-section" data-group-panel="slang" hidden>
+      <p>保留本群释义、来源与证据，保存后用于本群的表达理解。分区和列表筛选保留当前输入；换群、主动刷新或关闭页面会丢弃未保存内容。</p>
+      ${groupSlangManagerView(detail.slang_items || [])}
+    </section>
+    <section class="aw-group-section" data-group-panel="maintenance" hidden>
+      <article class="aw-group-maintenance"><h3>重置插话状态</h3><p>清除本群插话时间、当日计数、最近插话及反馈。后续机会仍按原规则判断。</p><button type="button" data-group-action="reset_interjection">重置插话</button></article>
+      <article class="aw-group-maintenance"><h3>清空观测资料</h3><p>清除群友、消息、黑话、话题、片段、关系和唤醒等观测数据；保留本群启停状态，不修改群聊名单。</p><button type="button" class="danger" data-group-action="clear_observation">清空观测</button></article>
+      <article class="aw-group-maintenance"><h3>删除群聊记录</h3><p>移除群观测、白名单/黑名单ID和表达学习范围。不是退群或永久屏蔽；后续接收仍按名单和参与规则处理。</p><button type="button" class="danger" data-group-action="delete">删除群聊</button></article>
+      <p>维护操作不会撤回已发消息，也不能取消已经开始的外部调用。</p>
+    </section>`;
+  const selectSection = name => {
+    state.groupDetailSection = ['status','records','slang','maintenance'].includes(name) ? name : 'status';
+    box.querySelectorAll('[data-group-panel]').forEach(panel => panel.hidden = panel.dataset.groupPanel !== state.groupDetailSection);
+    box.querySelectorAll('[data-group-section]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.groupSection === state.groupDetailSection)));
+  };
+  box.querySelectorAll('[data-group-section]').forEach(button => button.addEventListener('click', () => selectSection(button.dataset.groupSection)));
+  box.querySelector('[data-group-access]').addEventListener('click', () => {
+    switchTab('config');
+    const form = $('#accessForm');
+    for (let element = form; element; element = element.parentElement) if (element.tagName === 'DETAILS') element.open = true;
+    form.scrollIntoView({block:'center'});form.querySelector('button[type=submit]')?.focus({preventScroll:true});
+  });
+  selectSection(state.groupDetailSection);
   bindGroupActions(detail);
 }
 
@@ -12763,8 +12985,6 @@ function groupDetailPanel(title, content, options = {}) {
 function groupStateOverview(detail) {
   const atmosphere = detail.atmosphere || {};
   const chips = [
-    ["群陪伴", detail.enabled ? "开启" : "停用", detail.enabled ? "ok" : "warn"],
-    ["名单", detail.allowed_by_mode ? "允许" : "拦截", detail.allowed_by_mode ? "ok" : "warn"],
     ["气氛", atmosphere.mood || "暂无", ""],
     ["节奏", atmosphere.heat || atmosphere.pace || "暂无", ""],
     ["最近", detail.last_seen || "暂无", ""],
@@ -13088,13 +13308,15 @@ function bindGroupActions(detail) {
       if (action === "delete") {
         if (!requireSecondClick(button, `group-delete:${detail.group_id}`, "再次点击删除该群聊记录和名单 ID", "再次点击删除")) return;
         await runAction(async () => {
-          await postJson("/group/delete", body);
-          state.selectedGroupId = "";
-          await loadAll();
-        }, "已删除群聊记录", button);
+          const result = await postJson("/group/delete", body);
+          if (String(state.selectedGroupId) === String(detail.group_id)) state.selectedGroupId = "";
+          return result;
+        }, "", button);
         return;
       }
-      await runAction(() => postJson("/group/update", body), "已更新群聊观测", button);
+      const message = action === "toggle" ? (body.enabled ? "已启用本群，仍受总开关和名单约束" : "已停用本群") :
+        action === "clear_observation" ? "已清空群观测资料" : "已重置插话状态";
+      await runAction(() => postJson("/group/update", body), message, button);
     });
   });
   document.querySelectorAll("[data-slang-add]").forEach((button) => {
@@ -13107,8 +13329,14 @@ function bindGroupActions(detail) {
         setTimeout(() => { button.textContent = "保存"; }, 1200);
         return;
       }
-      await runAction(() => postJson("/group/slang/update", payload), "已保存黑话", button);
-      await renderGroupDetail(true);
+      const serial = state.groupDetailSerial;
+      const saved = await runAction(() => postJson("/group/slang/update", payload), "已保存黑话", button, {reload:false});
+      if (saved && serial === state.groupDetailSerial && String(state.selectedGroupId) === String(detail.group_id)) {
+        const index = state.groups.findIndex(group => String(group.group_id) === String(detail.group_id));
+        if (index >= 0) state.groups[index] = {...state.groups[index], ...saved};
+        renderGroups(false);
+        await renderGroupDetail(true);
+      }
     });
   });
   document.querySelectorAll("[data-slang-save]").forEach((button) => {
@@ -13117,8 +13345,14 @@ function bindGroupActions(detail) {
       const editor = button.closest(".group-slang-editor");
       if (!row || !editor) return;
       const payload = groupSlangPayloadFromEditor(editor, detail.group_id, row.dataset.slangTerm || "");
-      await runAction(() => postJson("/group/slang/update", payload), "已保存黑话校正", button);
-      await renderGroupDetail(true);
+      const serial = state.groupDetailSerial;
+      const saved = await runAction(() => postJson("/group/slang/update", payload), "已保存黑话校正", button, {reload:false});
+      if (saved && serial === state.groupDetailSerial && String(state.selectedGroupId) === String(detail.group_id)) {
+        const index = state.groups.findIndex(group => String(group.group_id) === String(detail.group_id));
+        if (index >= 0) state.groups[index] = {...state.groups[index], ...saved};
+        renderGroups(false);
+        await renderGroupDetail(true);
+      }
     });
   });
   document.querySelectorAll("[data-slang-delete]").forEach((button) => {
@@ -13127,8 +13361,14 @@ function bindGroupActions(detail) {
       const term = row?.dataset?.slangTerm || "";
       if (!term) return;
       if (!requireSecondClick(button, `group-slang-delete:${detail.group_id}:${term}`, "再次点击删除这条黑话", "再次点击删除")) return;
-      await runAction(() => postJson("/group/slang/update", { group_id: detail.group_id, term, delete: true }), "已删除黑话", button);
-      await renderGroupDetail(true);
+      const serial = state.groupDetailSerial;
+      const saved = await runAction(() => postJson("/group/slang/update", { group_id: detail.group_id, term, delete: true }), "已删除黑话", button, {reload:false});
+      if (saved && serial === state.groupDetailSerial && String(state.selectedGroupId) === String(detail.group_id)) {
+        const index = state.groups.findIndex(group => String(group.group_id) === String(detail.group_id));
+        if (index >= 0) state.groups[index] = {...state.groups[index], ...saved};
+        renderGroups(false);
+        await renderGroupDetail(true);
+      }
     });
   });
 }
@@ -13138,7 +13378,11 @@ function renderWorldbook() {
   const members = Array.isArray(worldbook.members) ? worldbook.members : [];
   const groups = Array.isArray(worldbook.groups) ? worldbook.groups : [];
   const keyword = ($("#worldbookMemberFilter")?.value || "").trim().toLowerCase();
+  const observationFilter = $("#worldbookObservationFilter")?.value || "all";
   const filteredMembers = members.filter((item) => {
+    const pending = Array.isArray(item.pending_observations) ? item.pending_observations : [];
+    if (observationFilter === "pending" && !(item.pending_observation_count > 0)) return false;
+    if (["historical", "group", "other"].includes(observationFilter) && !pending.some(obs => worldbookObservationSource(obs).kind === observationFilter)) return false;
     const haystack = [
       item.user_id,
       item.name,
@@ -13163,8 +13407,8 @@ function renderWorldbook() {
 
   $("#worldbookSummary").innerHTML = [
     worldbookStat("可用身份", worldbook.enabled_member_count || 0, `${worldbook.member_count || 0} 个节点已登记`),
-    worldbookStat("待确认", worldbook.pending_observation_total || 0, worldbook.pending_observation_total ? "优先审核，确认后才写入记忆" : "当前没有待审核观察"),
-    worldbookStat("群上下文", worldbook.group_count || 0, "用于群聊身份与关系判断"),
+    worldbookStat("待确认", worldbook.pending_observation_total || 0, worldbook.pending_observation_total ? "确认后写入对应关系节点" : "当前没有待审核观察"),
+    worldbookStat("群资料", worldbook.group_count || 0, "原群聊身份与关系资料"),
     worldbookStat("匹配策略", worldbook.enabled ? "QQ 精确" : "未启用", worldbook.match_aliases ? "称呼辅助已开启" : "仅按身份键确认"),
   ].join("");
   const clearPendingButton = $("#worldbookClearPendingBtn");
@@ -13256,7 +13500,7 @@ function worldbookMemberCard(item) {
         ${genderText ? `<span>性别：${escapeHtml(genderText)}</span>` : ""}
         ${externalIds.length ? `<span>${escapeHtml(externalIds.length)} 个外部身份</span>` : ""}
         <span>${escapeHtml((item.important_memories || []).length)} 条记忆</span>
-        ${pending.length ? `<span>${escapeHtml(pending.length)} 条待确认观察</span>` : ""}
+        ${item.pending_observation_count ? `<span>${escapeHtml(item.pending_observation_count)} 条待确认观察</span>` : ""}
         ${sourceEntries.length ? `<span>${escapeHtml(sourceEntries.slice(0, 2).join(" / "))}</span>` : ""}
       </div>
       ${previewItems.length ? `
@@ -13269,6 +13513,7 @@ function worldbookMemberCard(item) {
       <div data-worldbook-living-memory-panel="${escapeHtml(item.user_id || "")}">
         ${worldbookLivingMemoryPanel(item.user_id || "")}
       </div>
+      ${pending.length ? `<details class="worldbook-observation-review"><summary>待确认观察 · 已展示 ${pending.length} / ${escapeHtml(item.pending_observation_count ?? pending.length)}</summary><p>先阅读来源，再确认或忽略。忽略只移除此条待确认记录；确认后的记忆保留来源信息。收起不改变记录。</p><div class="worldbook-memory-list">${pending.map(obs => worldbookPendingObservationCard(item.user_id || "", obs)).join("")}</div></details>` : ""}
       <details class="worldbook-editor" id="${escapeHtml(detailId)}">
         <summary>编辑关系节点</summary>
         <div class="worldbook-chip-row">
@@ -13305,7 +13550,6 @@ function worldbookMemberCard(item) {
           </label>
         `}
         <div class="worldbook-memory-list">
-          ${pending.length ? pending.map((obs) => worldbookPendingObservationCard(item.user_id || "", obs)).join("") : ""}
           ${memories.length ? memories.map((memory, index) => worldbookMemoryCard(item.user_id || "", memory, index)).join("") : `<div class="empty small">暂无重要记忆</div>`}
         </div>
         <div class="worldbook-editor-actions">
@@ -13317,20 +13561,71 @@ function worldbookMemberCard(item) {
   `;
 }
 
+function worldbookObservationSource(obs) {
+  if (obs.source === "memory_companion_historical_chat") return {kind:"historical", label:"历史聊天导入"};
+  if (obs.source === "group_observation") return {kind:"group", label:"群聊观察"};
+  return {kind:"other", label:obs.source ? `其他来源 · ${obs.source}` : "来源未标明"};
+}
+
+function worldbookObservationEvidence(obs) {
+  const ids = Array.isArray(obs.source_event_ids) ? obs.source_event_ids : [];
+  const rows = [["来源",worldbookObservationSource(obs).label], ["导入批次",obs.import_batch_id],
+    ["来源消息标识",ids.join(" / ")], ["群号",obs.group_id], ["原观察时间",obs.observed_at], ["依据",obs.evidence]];
+  return `<details class="aw-worldbook-evidence"><summary>查看来源与依据</summary><dl>${rows.filter(([,value])=>value).map(([label,value])=>`<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl><p>这里只展示原记录已保存的来源；缺失字段不推断，也不代表已核验全部原聊天。</p></details>`;
+}
+
 function worldbookPendingObservationCard(userId, obs) {
-  return `
-    <section class="worldbook-memory-card pending">
-      <div>
-        <b>${escapeHtml(obs.title || "待确认观察")}</b>
-        <p>${escapeHtml(obs.content || obs.evidence || "")}</p>
-        <span>${escapeHtml(obs.group_id ? `群 ${obs.group_id}` : "群聊观察")} · ${escapeHtml(obs.created_at || "")}${obs.count > 1 ? ` · ${escapeHtml(obs.count)} 次` : ""}</span>
-      </div>
-      <div class="actions compact">
-        <button type="button" data-worldbook-observation-accept="${escapeHtml(userId)}" data-observation-id="${escapeHtml(obs.id || "")}">确认</button>
-        <button type="button" class="danger-outline" data-worldbook-observation-reject="${escapeHtml(userId)}" data-observation-id="${escapeHtml(obs.id || "")}">忽略</button>
-      </div>
-    </section>
-  `;
+  return `<section class="worldbook-memory-card pending"><div>
+    <span>${escapeHtml(worldbookObservationSource(obs).label)} · ${escapeHtml(obs.created_at || "")}${obs.count > 1 ? ` · ${escapeHtml(obs.count)} 次` : ""}</span>
+    <b>${escapeHtml(obs.title || "待确认观察")}</b><p>${escapeHtml(obs.content || obs.evidence || "")}</p>
+    ${worldbookObservationEvidence(obs)}</div><div class="actions compact">
+    <button type="button" data-worldbook-observation-accept="${escapeHtml(userId)}" data-observation-id="${escapeHtml(obs.id || "")}">确认到节点</button>
+    <button type="button" class="danger-outline" data-worldbook-observation-reject="${escapeHtml(userId)}" data-observation-id="${escapeHtml(obs.id || "")}">忽略此条</button></div></section>`;
+}
+
+function worldbookObservationNotice(message, unconfirmed = null) {
+  state.worldbookObservationUnconfirmed = unconfirmed;
+  const notice = $("#worldbookObservationNotice");
+  notice.hidden = !message;
+  notice.querySelector("span").textContent = message;
+  $("#worldbookObservationCheckBtn").hidden = !unconfirmed;
+}
+
+async function reviewWorldbookObservation(button, userId, observationId, accepting) {
+  setActionBusy(button, true);
+  showToast("正在提交观察维护", "info");
+  const pending = {userId, observationId};
+  try {
+    const result = await postJson("/worldbook/member/update", {user_id:userId,
+      [accepting ? "accept_pending_observation_id" : "reject_pending_observation_id"]:observationId});
+    const receipt = result?.observation_result;
+    if (!receipt || receipt.id !== observationId || receipt.user_id !== userId || !["accepted","rejected","missing"].includes(receipt.status)
+        || (receipt.status !== "missing" && receipt.status !== (accepting ? "accepted" : "rejected"))) {
+      worldbookObservationNotice("本次结果未确认，请先核对当前记录；不会自动重复提交。", pending);
+      showToast("观察维护结果未确认", "warning");return;
+    }
+    worldbookObservationNotice("");
+    if (result.worldbook && state.overview) {state.overview.worldbook=result.worldbook;renderWorldbook();}
+    showToast(result.message || (receipt.status === "missing" ? "观察已不在待确认列表；本次未修改" : "已完成观察维护"), receipt.status === "missing" ? "warning" : "success");
+  } catch (error) {
+    worldbookObservationNotice(`本次结果未确认：${error?.message || error}。先核对当前记录，不会自动重复提交。`, pending);
+    showToast("观察维护未确认，请核对记录", "warning");
+  } finally {setActionBusy(button, false);}
+}
+
+async function checkWorldbookObservation() {
+  const pending=state.worldbookObservationUnconfirmed;if(!pending)return;
+  const button=$("#worldbookObservationCheckBtn");setActionBusy(button,true);
+  try {
+    const overview=await fetchJson("/overview");
+    if (!overview?.worldbook || !Array.isArray(overview.worldbook.members)) throw new Error("未返回关系记录");
+    if (state.worldbookObservationUnconfirmed !== pending) return;
+    state.overview.worldbook=overview.worldbook;renderWorldbook();
+    const member=overview.worldbook.members.find(item=>String(item.user_id)===pending.userId);
+    const present=member?.pending_observations?.some(obs=>obs.id===pending.observationId);
+    worldbookObservationNotice(present ? "该观察仍在当前待确认窗口中；先核对原操作状态，再决定是否手动操作。" : "当前窗口未见该观察；可能已被处理或不在返回范围内，不能据此认定确认成功。",pending);
+  } catch(error) {if(state.worldbookObservationUnconfirmed===pending)worldbookObservationNotice(`核对失败：${error?.message||error}。原操作结果仍未确认，不自动重试。`,pending);}
+  finally {setActionBusy(button,false);}
 }
 
 function worldbookMemberPreviewItems(item, memories = []) {
@@ -13355,6 +13650,7 @@ function worldbookMemoryCard(userId, memory, index) {
         <b>${escapeHtml(memory.title || "重要记忆")}</b>
         <p>${escapeHtml(memory.content || "")}</p>
         <span>${escapeHtml(memory.privacy || "internal")} · 权重 ${escapeHtml(memory.weight ?? 50)}${memory.source ? ` · ${escapeHtml(memory.source)}` : ""}</span>
+        ${worldbookObservationEvidence(memory)}
       </div>
       <div class="actions compact">
         <button type="button" data-worldbook-memory-toggle="${escapeHtml(userId)}" data-memory-index="${escapeHtml(index)}">
@@ -13581,10 +13877,7 @@ async function handleWorldbookMemberAction(button) {
     const userId = accepting ? button.dataset.worldbookObservationAccept : button.dataset.worldbookObservationReject;
     const observationId = button.dataset.observationId || "";
     if (!userId || !observationId) return;
-    await runAction(() => postJson("/worldbook/member/update", {
-      user_id: userId,
-      [accepting ? "accept_pending_observation_id" : "reject_pending_observation_id"]: observationId,
-    }), accepting ? "已写入重要记忆" : "已忽略待确认观察", button);
+    await reviewWorldbookObservation(button, userId, observationId, accepting);
     return;
   }
   if (button.dataset.worldbookDelete !== undefined) {
@@ -14077,35 +14370,148 @@ function bindFoodMenuFeatureActions() {
   syncFoodMenuSelectionUi();
 }
 
+const skillOperations = new Map();
+
+function skillWindowText(growth) {
+  return `最近返回 ${(growth.items || []).length} 项 / 记录总数 ${growth.skill_count ?? 0} 项；最多返回 120 项，每项最近 4 条成长记录。${growth.enabled ? "成长已开启" : "成长未开启，原记录保留"}。${growth.schedule_influence && growth.enabled ? "日程参考开启" : "日程参考未开启"}；被动提示${growth.passive_injection && growth.enabled ? "开启" : "未开启"}。`;
+}
+
+function filterSkillRecords() {
+  const query = String($("#skillSearch")?.value || "").trim().toLocaleLowerCase();
+  const status = $("#skillFilter")?.value || "all";
+  let visible = 0;
+  $("#skillGrowthPanel")?.querySelectorAll("[data-skill-record]").forEach((card) => {
+    const match = (!query || String(card.dataset.skillSearch || "").includes(query))
+      && (status === "all" || (status === "hidden" && card.dataset.skillHidden === "true")
+        || (status === "frozen" && card.dataset.skillFrozen === "true")
+        || (status === "normal" && card.dataset.skillHidden !== "true" && card.dataset.skillFrozen !== "true"));
+    card.hidden = !match;
+    if (match) visible++;
+  });
+  $("#skillGrowthPanel")?.querySelectorAll(".skill-category-group").forEach((group) => {
+    group.hidden = !Array.from(group.querySelectorAll("[data-skill-record]")).some((card) => !card.hidden);
+  });
+  if ($("#skillFilterCount")) $("#skillFilterCount").textContent = `本页匹配 ${visible} 项；只查找已返回的名称、分类、关键词和别名。筛选保留本页输入。`;
+}
+
 function renderSkillGrowth() {
   const growth = state.overview?.skill_growth || {};
   const items = Array.isArray(growth.items) ? growth.items : [];
   const panel = $("#skillGrowthPanel");
-  const summary = $("#skillGrowthSummary");
   if (!panel) return;
-  if (!growth.enabled) {
-    if (summary) summary.textContent = "未开启";
-    panel.innerHTML = `<div class="empty small">技能成长未开启</div>`;
-    return;
-  }
-  if (!items.length) {
-    if (summary) summary.textContent = "暂无记录";
-    panel.innerHTML = `<div class="empty small">暂无技能记录</div>`;
-    return;
-  }
-  if (summary) summary.textContent = `${growth.skill_count || items.length} 项${growth.frozen_count ? ` · ${growth.frozen_count} 项冻结` : ""}`;
+  if ($("#skillGrowthSummary")) $("#skillGrowthSummary").textContent = `${growth.skill_count ?? items.length} 项 · ${growth.enabled ? "成长开启" : "成长未开启"}`;
   panel.innerHTML = `
-    <div class="skill-growth-head">
-      ${growth.hidden_count ? `<span>隐藏 ${escapeHtml(growth.hidden_count)}</span>` : ""}
-      ${growth.frozen_count ? `<span>冻结 ${escapeHtml(growth.frozen_count)}</span>` : ""}
-      <span>成长倍率 ${escapeHtml(growth.rate || 1)}</span>
-      <span>${growth.schedule_influence ? `影响日程 ${escapeHtml(formatPercent(growth.schedule_influence_strength))}` : "不影响日程"}</span>
-    </div>
-    <div class="skill-category-list">
-      ${renderSkillCategoryGroups(items)}
-    </div>
-  `;
-  bindSkillGrowthActions();
+    <p id="skillWindowInfo" class="skill-window-info">${escapeHtml(skillWindowText(growth))}</p>
+    <div class="skill-growth-head"><span>成长倍率 ${escapeHtml(growth.rate || 1)}</span><span>隐藏 ${escapeHtml(growth.hidden_count || 0)} 项</span><span>冻结 ${escapeHtml(growth.frozen_count || 0)} 项</span></div>
+    <div class="skill-filters"><label>查找记录 <input id="skillSearch" type="search" placeholder="名称、分类、关键词或别名" /></label><label>状态 <select id="skillFilter"><option value="all">全部状态</option><option value="normal">未隐藏、未冻结</option><option value="hidden">已隐藏</option><option value="frozen">已冻结</option></select></label></div>
+    <p id="skillFilterCount" class="skill-window-info"></p>
+    <div class="skill-category-list">${items.length ? renderSkillCategoryGroups(items) : '<div class="empty small">暂无返回的技能记录</div>'}</div>`;
+  $("#skillSearch")?.addEventListener("input", filterSkillRecords);
+  $("#skillFilter")?.addEventListener("change", filterSkillRecords);
+  bindSkillGrowthActions();filterSkillRecords();
+  skillOperations.forEach((_value, key) => renderSkillOperation(key));
+}
+
+function skillResultMarkup(op) {
+  if (!op) return "";
+  const details = op.record ? `<details><summary>本次返回的记录</summary><dl>${[
+    ["标识", op.record.id], ["名称 / 分类", `${op.record.name} / ${op.record.category}`],
+    ["等级 / 经验", `${op.record.level_title} / ${op.record.exp}`],
+    ["关键词", (op.record.keywords || []).join("、")], ["别名", (op.record.aliases || []).join("、")],
+    ["隐藏 / 冻结", `${op.record.hidden ? "隐藏" : "未隐藏"} / ${op.record.frozen ? "冻结" : "未冻结"}`]
+  ].map(([k,v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v || "未记录")}</dd>`).join("")}</dl></details>` : "";
+  return `<p>${escapeHtml(op.message)}</p>${details}`;
+}
+
+function renderSkillOperation(key) {
+  const op = skillOperations.get(key);
+  const container = key === "$add" ? $("#skillAddForm") : skillField(key, "save")?.closest(".skill-editor");
+  if (!container || !op) return;
+  const box = container.querySelector(".skill-operation-result");
+  if (box) { box.innerHTML = skillResultMarkup(op); box.dataset.status = op.status; }
+  container.querySelectorAll(key === "$add" ? '[type="submit"]' : '[data-skill-save], [data-skill-delete]').forEach((button) => {
+    button.disabled = ["pending", "unknown", "removed"].includes(op.status);
+  });
+}
+
+function refreshSkillGroupLabels() {
+  const growth = state.overview?.skill_growth || {};
+  $("#skillGrowthPanel")?.querySelectorAll(".skill-category-group").forEach((group) => {
+    const cards = Array.from(group.querySelectorAll("[data-skill-record]"));
+    if (!cards.length) {group.remove();return;}
+    const current = cards.filter((card) => card.dataset.skillRemoved !== "true").map((card) => (growth.items || []).find((x) => x.id === card.dataset.skillRecord)).filter(Boolean);
+    const label = group.querySelector(":scope>summary small");
+    if (label) label.textContent = `${current.length} 项当前返回记录${cards.some((x) => x.dataset.skillRemoved === "true") ? " · 含本页移除结果" : ""}`;
+  });
+  const head = $("#skillGrowthPanel .skill-growth-head");
+  if (head) head.innerHTML = `<span>成长倍率 ${escapeHtml(growth.rate || 1)}</span><span>隐藏 ${escapeHtml(growth.hidden_count || 0)} 项</span><span>冻结 ${escapeHtml(growth.frozen_count || 0)} 项</span>`;
+}
+
+function acceptSkillSnapshot(growth, record, deletedId = "") {
+  state.overview.skill_growth = growth;
+  if ($("#skillWindowInfo")) $("#skillWindowInfo").textContent = skillWindowText(growth);
+  if ($("#skillGrowthSummary")) $("#skillGrowthSummary").textContent = `${growth.skill_count} 项 · ${growth.enabled ? "成长开启" : "成长未开启"}`;
+  const count = $("#learningTabSkills b");if (count) count.textContent = String(growth.skill_count);
+  if (record) {
+    let card = skillField(record.id, "save")?.closest(".skill-card");
+    const template = document.createElement("template");template.innerHTML = renderSkillCard(record);
+    const fresh = template.content.firstElementChild;
+    if (card) {
+      [".skill-card-toggle header", ".skill-level-line", ".skill-meter", ".skill-reading"].forEach((selector) => {
+        const a = card.querySelector(selector), b = fresh.querySelector(selector);if (a && b) a.replaceWith(b);
+      });
+      for (const name of ["skillSearch", "skillHidden", "skillFrozen"]) card.dataset[name] = fresh.dataset[name];
+      card.classList.toggle("is-hidden-skill", Boolean(record.hidden));card.classList.toggle("is-frozen-skill", Boolean(record.frozen));
+      const category = record.category || "能力";
+      if (card.closest("[data-skill-category-name]")?.dataset.skillCategoryName !== category) {
+        const list = $("#skillGrowthPanel .skill-category-list");
+        let group = Array.from(list.querySelectorAll("[data-skill-category-name]")).find((x) => x.dataset.skillCategoryName === category);
+        if (!group) {
+          const shell = document.createElement("template");shell.innerHTML = renderSkillCategoryGroups([record]);group = shell.content.firstElementChild;
+          group.querySelector(".skill-growth-grid").replaceChildren();list.append(group);
+        }
+        group.open = true;group.querySelector(".skill-growth-grid").append(card);
+      }
+    } else {
+      const list = $("#skillGrowthPanel .skill-category-list");
+      const group = Array.from(list?.querySelectorAll("[data-skill-category-name]") || []).find((x) => x.dataset.skillCategoryName === (record.category || "能力"));
+      if (group) group.querySelector(".skill-growth-grid").append(fresh);
+      else { list?.querySelector(".empty")?.remove();list?.insertAdjacentHTML("beforeend", renderSkillCategoryGroups([record])); }
+      bindSkillGrowthActions();
+    }
+  }
+  if (deletedId) {
+    const card = skillField(deletedId, "save")?.closest(".skill-card");
+    if (card) {card.dataset.skillRemoved = "true";const label = card.querySelector(".skill-level-line");if (label) label.textContent = "本次返回：此记录已移除；下方保留本页输入与结果。";}
+  }
+  refreshSkillGroupLabels();filterSkillRecords();
+}
+
+async function saveSkillRecord(payload, container, button, adding = false) {
+  const key = adding ? "$add" : payload.id;
+  if (["pending", "unknown", "removed"].includes(skillOperations.get(key)?.status)) return;
+  const initialForm = adding ? JSON.stringify(Array.from(new FormData(container).entries())) : "";
+  const op = {status:"pending", message:"正在提交这条记录…"};skillOperations.set(key, op);renderSkillOperation(key);
+  showToast(op.message);
+  try {
+    const result = await postJson("/skill/update", payload);
+    const growth = result?.skill_growth;
+    if (!growth || !Array.isArray(growth.items) || typeof growth.enabled !== "boolean" || !Number.isFinite(growth.skill_count)
+      || (payload.delete && typeof result.changed !== "boolean")) throw new Error("返回记录或删除结果不完整");
+    const normalizedName = String(payload.name || "").trim().replace(/\s+/g, " ").slice(0, 32);
+    const record = payload.delete ? null : growth.items.find((item) => payload.id ? item.id === payload.id : item.name === normalizedName);
+    if (!payload.delete && (!record || typeof record.id !== "string" || !Number.isFinite(record.exp) || !Number.isFinite(record.level)
+      || typeof record.hidden !== "boolean" || typeof record.frozen !== "boolean" || !Array.isArray(record.keywords) || !Array.isArray(record.aliases))) throw new Error("当前返回窗口未提供可核对的目标记录");
+    op.status = payload.delete ? "removed" : "accepted";op.record = record;
+    op.message = payload.delete ? (result.changed ? "服务已接受删除；仅移除此技能记录。" : "目标记录已不存在，本次没有删除记录。") : "服务已接受更新；下面是本次返回值。当前输入保留，未再次提交。";
+    op.message += " 后台沿原机制延后保存，此回执不证明已落盘。";
+    acceptSkillSnapshot(growth, record, payload.delete ? payload.id : "");
+    if (adding && container.isConnected && JSON.stringify(Array.from(new FormData(container).entries())) === initialForm) container.reset();
+    showToast(payload.delete && !result.changed ? "目标已不存在，本次没有删除记录" : payload.delete ? "服务已接受删除" : "服务已接受更新");
+  } catch (error) {
+    op.status = "unknown";op.message = `结果未确认：${error.message}。本页输入保留，未自动重试；请先核对记录再操作。刷新后相同内容也不能证明此次操作已落盘。`;
+    showToast("技能操作结果未确认，输入已保留", "error");
+  } finally { renderSkillOperation(key); }
 }
 
 function renderPersonalGoals() {
@@ -14158,7 +14564,7 @@ function renderSkillCategoryGroups(items) {
     const hiddenCount = groupItems.filter((item) => item.hidden).length;
     const frozenCount = groupItems.filter((item) => item.frozen).length;
     return `
-      <details class="skill-category-group ${escapeHtml(categorySlug(category))}">
+      <details class="skill-category-group ${escapeHtml(categorySlug(category))}" data-skill-category-name="${escapeHtml(category)}">
         <summary>
           <span>${escapeHtml(category)}</span>
           <small>${escapeHtml(groupItems.length)} 项｜最好 ${escapeHtml(maxItem?.level_title || "能力状态")}｜训练 ${escapeHtml(totalTraining)} 次${hiddenCount ? `｜隐藏 ${escapeHtml(hiddenCount)}` : ""}${frozenCount ? `｜冻结 ${escapeHtml(frozenCount)}` : ""}</small>
@@ -14178,7 +14584,7 @@ function renderSkillCard(item) {
     item.frozen ? "已冻结" : "",
   ].filter(Boolean);
   return `
-    <article class="skill-card is-collapsed ${item.hidden ? "is-hidden-skill" : ""} ${item.frozen ? "is-frozen-skill" : ""}">
+    <article class="skill-card is-collapsed ${item.hidden ? "is-hidden-skill" : ""} ${item.frozen ? "is-frozen-skill" : ""}" data-skill-record="${escapeHtml(item.id || "")}" data-skill-search="${escapeHtml([item.name, item.category, ...(item.keywords || []), ...(item.aliases || [])].join(" ").toLocaleLowerCase())}" data-skill-hidden="${Boolean(item.hidden)}" data-skill-frozen="${Boolean(item.frozen)}">
       <button type="button" class="skill-card-toggle" data-skill-toggle aria-expanded="false">
         <header>
           <div>
@@ -14194,7 +14600,7 @@ function renderSkillCard(item) {
       </div>
       <div class="skill-meter"><i style="width:${escapeHtml(item.progress || 0)}%"></i></div>
       <div class="skill-card-body">
-        <p>${escapeHtml(item.description || "")}</p>
+        <div class="skill-reading"><p>${escapeHtml(item.description || "")}</p>
         <div class="skill-meta">
           <span>训练 ${escapeHtml(item.training_count || 0)} 次</span>
           <span>最近 ${escapeHtml(item.last_trained || "未训练")}</span>
@@ -14206,8 +14612,8 @@ function renderSkillCard(item) {
             `).join("")}
           </div>
         ` : ""}
-        <details class="skill-editor">
-          <summary>管理</summary>
+        </div><details class="skill-editor">
+          <summary>编辑这条记录</summary><p class="skill-editor-note">等级由经验确定；选等级只补足经验下限。已有记录填 0 会保留原经验。冻结后仍可作为角色提示与日程参考，隐藏则退出这些参考及自动成长。</p>
           <div class="skill-editor-grid">
             <label>名称 <input data-skill-name="${escapeHtml(item.id || "")}" value="${escapeHtml(item.name || "")}" maxlength="32" /></label>
             <label>分类 <input data-skill-category="${escapeHtml(item.id || "")}" value="${escapeHtml(item.category || "")}" maxlength="20" /></label>
@@ -14216,12 +14622,13 @@ function renderSkillCard(item) {
                 ${[1, 2, 3, 4, 5, 6].map((level) => `<option value="${level}" ${Number(item.level || 1) === level ? "selected" : ""}>${escapeHtml(skillLevelLabel(level))}</option>`).join("")}
               </select>
             </label>
-            <label>经验 <input data-skill-exp="${escapeHtml(item.id || "")}" type="number" min="0" step="1" value="${escapeHtml(item.exp || 0)}" /></label>
+            <label>经验 <input data-skill-exp="${escapeHtml(item.id || "")}" type="number" min="0" step="0.01" value="${escapeHtml(item.exp || 0)}" /></label>
             <label class="wide-field">关键词 <input data-skill-keywords="${escapeHtml(item.id || "")}" value="${escapeHtml((item.keywords || []).join(", "))}" maxlength="180" /></label>
             <label class="wide-field">合并别名 <input data-skill-aliases="${escapeHtml(item.id || "")}" value="${escapeHtml((item.aliases || []).join(", "))}" maxlength="180" placeholder="同义叫法会合并到这项技能" /></label>
             <label class="check-field"><input data-skill-hidden="${escapeHtml(item.id || "")}" type="checkbox" ${item.hidden ? "checked" : ""} /> 隐藏：不参与日程、注入和自动成长</label>
             <label class="check-field"><input data-skill-frozen="${escapeHtml(item.id || "")}" type="checkbox" ${item.frozen ? "checked" : ""} /> 冻结成长：保留能力状态，但不再自动加经验</label>
           </div>
+          <div class="skill-operation-result" role="status" aria-live="polite"></div>
           <div class="skill-editor-actions">
             <button type="button" data-skill-save="${escapeHtml(item.id || "")}">保存技能</button>
             <button type="button" class="danger-outline" data-skill-delete="${escapeHtml(item.id || "")}">删除</button>
@@ -14252,7 +14659,8 @@ function skillField(id, field) {
 }
 
 function bindSkillGrowthActions() {
-  document.querySelectorAll("[data-skill-toggle]").forEach((button) => {
+  document.querySelectorAll("[data-skill-toggle]:not([data-skill-bound])").forEach((button) => {
+    button.dataset.skillBound = "true";
     button.addEventListener("click", () => {
       const card = button.closest(".skill-card");
       if (!card) return;
@@ -14260,7 +14668,8 @@ function bindSkillGrowthActions() {
       button.setAttribute("aria-expanded", String(!collapsed));
     });
   });
-  document.querySelectorAll("[data-skill-level]").forEach((select) => {
+  document.querySelectorAll("[data-skill-level]:not([data-skill-bound])").forEach((select) => {
+    select.dataset.skillBound = "true";
     select.addEventListener("change", () => {
       const id = select.dataset.skillLevel || "";
       const expInput = skillField(id, "exp");
@@ -14269,10 +14678,11 @@ function bindSkillGrowthActions() {
       }
     });
   });
-  document.querySelectorAll("[data-skill-save]").forEach((button) => {
+  document.querySelectorAll("[data-skill-save]:not([data-skill-bound])").forEach((button) => {
+    button.dataset.skillBound = "true";
     button.addEventListener("click", async () => {
       const id = button.dataset.skillSave || "";
-      await runAction(() => postJson("/skill/update", {
+      await saveSkillRecord({
         id,
         name: skillField(id, "name")?.value || "",
         category: skillField(id, "category")?.value || "",
@@ -14282,14 +14692,15 @@ function bindSkillGrowthActions() {
         aliases: skillField(id, "aliases")?.value || "",
         hidden: Boolean(skillField(id, "hidden")?.checked),
         frozen: Boolean(skillField(id, "frozen")?.checked),
-      }), "已保存技能", button);
+      }, button.closest(".skill-editor"), button);
     });
   });
-  document.querySelectorAll("[data-skill-delete]").forEach((button) => {
+  document.querySelectorAll("[data-skill-delete]:not([data-skill-bound])").forEach((button) => {
+    button.dataset.skillBound = "true";
     button.addEventListener("click", async () => {
       const id = button.dataset.skillDelete || "";
       if (!requireSecondClick(button, `skill:${id}`, "再次点击删除技能", "再次点击删除")) return;
-      await runAction(() => postJson("/skill/update", { id, delete: true }), "已删除技能", button);
+      await saveSkillRecord({ id, delete: true }, button.closest(".skill-editor"), button);
     });
   });
 }
@@ -14301,14 +14712,15 @@ function renderLifeHero(daily, life) {
   $("#lifeEnergy").textContent = energyText || "--";
   $("#lifeEnergy").title = daily.energy === undefined || daily.energy === "" ? "" : `心理能量 ${formatNumber(energy)}/100`;
   $("#lifeEnergyBar").style.width = `${pct}%`;
-  $("#lifeEnergyBar").title = daily.energy === undefined || daily.energy === "" ? "" : `心理能量 ${formatNumber(energy)}/100`;
-  $("#lifeMood").textContent = normalizeRoleplayStateText(daily.mood_bias || "平稳");
+  $("#lifeEnergyBar").title = $("#lifeEnergy").title;
+  $("#lifeSnapshotMeta").textContent = daily.date ? `状态记录日期：${daily.date}` : "状态记录日期：未记录";
+  $("#lifeMood").textContent = normalizeRoleplayStateText(daily.mood_bias) || "未记录情绪";
   $("#lifeNote").textContent = daily.note || daily.sleep || "暂无额外备注";
-  $("#lifeLocation").textContent = normalizeLocationText(daily.location);
-  $("#lifeWeather").textContent = daily.weather || "暂无天气";
+  $("#lifeLocation").textContent = daily.location ? normalizeLocationText(daily.location) : "未记录位置";
+  $("#lifeWeather").textContent = daily.weather || "未记录天气";
   const current = life.current_plan || {};
   $("#lifeCurrentActivity").textContent = current.activity || "暂无当前日程";
-  $("#lifeCurrentSeed").textContent = [current.end ? `${current.time}-${current.end}` : current.time, scheduleLifecycleLabel(current.lifecycle), current.mood, current.message_seed].filter(Boolean).join(" · ") || "暂无细化";
+  $("#lifeCurrentSeed").textContent = [current.end ? `${current.time}-${current.end}` : current.time, scheduleLifecycleLabel(current.lifecycle), current.mood, current.message_seed].filter(Boolean).join(" · ") || "暂无细节";
 }
 
 function roleplayEnergyLabel(value) {
@@ -14352,16 +14764,18 @@ function normalizeDailyStateForDisplay(daily) {
 }
 
 function renderDreamCard(dream) {
+  const hasRecord = [dream.date, dream.generated_at, dream.label, dream.content, dream.dream_type, dream.afterglow]
+    .some((value) => String(value || "").trim());
   const meta = [
-    dream.dream_type || "碎片梦",
+    dream.dream_type || (hasRecord ? "类型未记录" : ""),
     dream.mood ? `情绪 ${dream.mood}` : "",
     dream.duration_hours ? `${dream.duration_hours} 小时` : "",
     dream.generated_at || dream.date || "",
   ].filter(Boolean).join(" · ");
-  $("#dreamMeta").textContent = meta || "暂无梦境记录";
+  $("#dreamMeta").textContent = hasRecord ? meta : "暂无梦境记录";
   const delta = Number(dream.energy_delta || 0);
-  const deltaText = delta > 0 ? `能量 +${delta}` : delta < 0 ? `能量 ${delta}` : "能量平稳";
-  $("#dreamAfterglow").textContent = dream.afterglow || dream.label || deltaText;
+  const deltaText = delta > 0 ? `精力 +${delta}` : delta < 0 ? `精力 ${delta}` : "精力变化 0";
+  $("#dreamAfterglow").textContent = hasRecord ? (dream.afterglow || dream.label || deltaText) : "未记录余韵";
   $("#dreamContent").textContent = dream.content || dream.label || "暂无梦境内容";
   const factors = Array.isArray(dream.factors) ? dream.factors : [];
   $("#dreamFactors").innerHTML = factors.length
@@ -14396,15 +14810,13 @@ function renderDiaryCards(diaries) {
         ? item.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")
         : `<span>未标记</span>`;
       return `
-        <section class="diary-card">
-          <div>
-            <b>${escapeHtml(item.date || "未记录日期")}</b>
-            <small>${escapeHtml(item.generated_at || "")}</small>
-          </div>
-          ${item.summary ? `<h4>${escapeHtml(item.summary)}</h4>` : ""}
+        <details class="diary-card">
+          <summary><b>${escapeHtml(item.date || "未记录日期")}</b><span>${escapeHtml(item.summary || "展开阅读留存文字")}</span></summary>
+          <small>记录时间：${escapeHtml(item.generated_at || "未记录")}</small>
           <p>${escapeHtml(item.body || item.summary || "暂无日记正文")}</p>
           <div class="diary-tags">${tags}</div>
-        </section>
+          ${item.share_seed ? `<details class="life-share-seed"><summary>留存分享线索 · 未代表已发送</summary><blockquote>${escapeHtml(item.share_seed)}</blockquote></details>` : ""}
+        </details>
       `;
     }).join("")
     : `<div class="empty small">暂无日记</div>`;
@@ -14415,12 +14827,12 @@ function renderDreamFragments(fragments) {
     $("#dreamFragments").innerHTML = `<div class="empty small">暂无梦境碎片</div>`;
     return;
   }
-  const max = Math.max(1, ...fragments.map((item) => Number(item.weight || 1)));
   $("#dreamFragments").innerHTML = fragments.map((item) => {
-    const weight = Number(item.weight || 1);
-    const size = 12 + Math.round((weight / max) * 8);
-    const title = [item.source, item.created_at, weight ? `权重 ${weight.toFixed(1)}` : ""].filter(Boolean).join(" · ");
-    return `<span class="fragment-chip" style="font-size:${size}px" title="${escapeHtml(title)}">${escapeHtml(item.text || "")}</span>`;
+    const weight = Number(item.weight);
+    return `<details class="life-fragment"><summary>${escapeHtml(item.text || "未记录文字")}</summary>
+      <dl><dt>原来源</dt><dd>${escapeHtml(item.source || "未记录来源")}</dd>
+      <dt>记录时间</dt><dd>${escapeHtml(item.created_at || "未记录时间")}</dd>
+      <dt>原权重</dt><dd>${Number.isFinite(weight) ? escapeHtml(weight.toFixed(1)) : "未记录"}</dd></dl></details>`;
   }).join("");
 }
 
@@ -14790,6 +15202,78 @@ function renderBookCoverInner(book, kindLabel, title, progress = "") {
   `;
 }
 
+
+// Page-local receipts only. A read is not proof that an unknown write completed.
+const creativeOperations = new Map();
+function creativeOperationKey(id, kind) { return `${id}:${kind}`; }
+function creativeResultMarkup(id, kind) {
+  const key = creativeOperationKey(id, kind), item = creativeOperations.get(key);
+  if (!item) return "";
+  return `<p role="status">${escapeHtml(item.message)}</p>
+    ${item.readback !== undefined ? `<details><summary>当前读取的内容（不改本页输入）</summary><pre>${escapeHtml(JSON.stringify(item.readback, null, 2))}</pre></details>` : ""}
+    ${!item.busy ? `<button type="button" data-creative-readback="${escapeHtml(key)}">仅重新读取当前记录</button>` : ""}`;
+}
+function creativeOperationAttrs(id, kind) {
+  const item = creativeOperations.get(creativeOperationKey(id, kind));
+  return item && (item.busy || item.unknown) ? " disabled" : "";
+}
+function creativeOperationView(key) {
+  const item = creativeOperations.get(key); if (!item) return;
+  document.querySelectorAll('[data-creative-operation]').forEach(el => {
+    if (el.dataset.creativeOperation !== key) return;
+    const result = el.querySelector('.creative-save-result');
+    if (result) result.innerHTML = creativeResultMarkup(item.id, item.kind);
+    const submit = el.querySelector('button[type="submit"], [data-creative-reanalyze], [data-creative-rebuild-memory]');
+    if (submit) submit.disabled = Boolean(item.busy || item.unknown);
+  });
+}
+async function readCreativeOperation(key) {
+  const item = creativeOperations.get(key); if (!item || item.busy) return;
+  try {
+    const detail = await fetchJson(`/creative/project?id=${encodeURIComponent(item.id)}`);
+    if (!detail || detail.id !== item.id || !Array.isArray(detail.chunks)) throw new Error("作品回读不完整或对象不一致");
+    if (item.kind.startsWith('chunk:')) item.readback = detail.chunks.find(c => Number(c.index) === Number(item.kind.slice(6))) || {missing:true};
+    else if (item.kind === 'outline') item.readback = detail.outline;
+    else if (item.kind === 'characters') item.readback = detail.characters;
+    else if (item.kind === 'rebuild') item.readback = detail.creative_memory_pool;
+    else if (item.kind === 'reanalyze') item.readback = detail.quality_reviews;
+    else item.readback = Object.fromEntries(['title','work_type','tone','point_of_view','target_chars','premise','next_hint'].map(k => [k, detail[k]]));
+    const books = allBookshelfBooks();
+    books.filter(b => b.kind === 'creative' && b.id === item.id).forEach(b => Object.assign(b, detail, {project_loaded:true,project_error:""}));
+    if (state.selectedBook?.kind === 'creative' && state.selectedBook.id === item.id) Object.assign(state.selectedBook, detail, {project_loaded:true,project_error:""});
+    item.message = item.unknown ? "本次结果未确认；已读取当前记录，同值不能证明先前操作完成。没有重复提交。" : `${item.confirmed}；当前记录已读取，本页输入保留。`;
+  } catch (error) {
+    item.message = `${item.unknown ? "本次结果未确认" : item.confirmed}；后续读取失败：${error.message}。本页输入保留。`;
+  }
+  creativeOperationView(key);
+}
+async function saveCreativeOperation(kind, path, payload, label) {
+  const id = String(payload.id || ""), key = creativeOperationKey(id, kind), old = creativeOperations.get(key);
+  if (old?.busy || old?.unknown) { creativeOperationView(key); return; }
+  const item = {id,kind,busy:true,unknown:false,message:"正在提交；后续输入将保留，请勿重复操作。"};
+  creativeOperations.set(key,item);creativeOperationView(key);
+  try {
+    const result = await postJson(path, payload);
+    if (!result || result.project_id !== id || (kind === 'basic' && typeof result.changed !== 'boolean')
+        || (kind.startsWith('chunk:') && result.chunk_index !== payload.chunk_index)
+        || (kind === 'rebuild' && (result.success !== true || !Number.isInteger(result.memory_count) || result.memory_count < 0))
+        || (kind === 'reanalyze' && (!result.review || typeof result.review !== 'object'))) throw new Error("操作回执不完整或对象不一致");
+    item.confirmed = kind === 'rebuild' ? `已重建本作品内部资料，返回 ${result.memory_count} 条` : kind === 'reanalyze' ? "已返回本次分析；结果仍需阅读" : `已保存${label}${kind === 'basic' && !result.changed ? '（未改变字段）' : ''}`;
+    item.busy=false;item.message=item.confirmed;creativeOperationView(key);
+    await readCreativeOperation(key);
+  } catch(error) {
+    item.busy=false;item.unknown=true;item.message=`本次结果未确认：${error.message}。保留本页输入，请先读取当前记录；本页不重复提交。`;
+    creativeOperationView(key);
+  }
+}
+function creativeFold(name, title, content, open=false) {
+  return `<details class="creative-workspace-section" data-creative-section="${name}"${open ? ' open' : ''}><summary>${title}</summary><div class="creative-section-body">${content}</div></details>`;
+}
+function creativeQualityScore(review, name) {
+  const value = review?.[`${name}_score`] ?? review?.scores?.[name];
+  return typeof value === 'number' && Number.isFinite(value) ? `${value}/10` : '未记录';
+}
+
 function renderCreativeStoryBible(book) {
   const sb = book.story_bible && typeof book.story_bible === "object" ? book.story_bible : {};
   const list = (items) => Array.isArray(items) && items.length
@@ -14820,12 +15304,12 @@ function renderCreativeOutlineEditor(book) {
         <h3>大纲</h3>
         <span>${rows.length} 条</span>
       </div>
-      <form data-creative-outline-form data-project-id="${escapeHtml(book.id || "")}">
-        <textarea name="outline" rows="10" placeholder="一行一条大纲">${escapeHtml(rows.join("\n"))}</textarea>
+      <form data-creative-outline-form data-project-id="${escapeHtml(book.id || "")}" data-creative-operation="${escapeHtml(creativeOperationKey(book.id, "outline"))}">
+        <textarea name="outline" rows="10" placeholder="一行一条大纲；原规则最多 30 条、每条 100 字">${escapeHtml(rows.join("\n"))}</textarea>
         <div class="creative-form-actions">
-          <button type="submit">保存大纲</button>
+          <button type="submit"${creativeOperationAttrs(book.id, "outline")}>保存大纲</button>
         </div>
-      </form>
+      <div class="creative-save-result">${creativeResultMarkup(book.id, "outline")}</div></form>
     </section>
   `;
 }
@@ -14838,12 +15322,12 @@ function renderCreativeCharactersEditor(book) {
         <h3>角色</h3>
         <span>${chars.length} 个</span>
       </div>
-      <form data-creative-characters-form data-project-id="${escapeHtml(book.id || "")}">
+      <form data-creative-characters-form data-project-id="${escapeHtml(book.id || "")}" data-creative-operation="${escapeHtml(creativeOperationKey(book.id, "characters"))}">
         <textarea name="characters" rows="12" placeholder='[{"name":"角色名","role":"身份","description":"描述"}]'>${escapeHtml(JSON.stringify(chars, null, 2))}</textarea>
         <div class="creative-form-actions">
-          <button type="submit">保存角色</button>
+          <button type="submit"${creativeOperationAttrs(book.id, "characters")}>保存角色</button>
         </div>
-      </form>
+      <div class="creative-save-result">${creativeResultMarkup(book.id, "characters")}</div></form>
     </section>
   `;
 }
@@ -14851,21 +15335,18 @@ function renderCreativeCharactersEditor(book) {
 function renderCreativeQualityPanel(book) {
   const reviews = Array.isArray(book.quality_reviews) ? book.quality_reviews : [];
   const latest = reviews[reviews.length - 1] || {};
-  const score = (name) => Number(latest?.[`${name}_score`] ?? latest?.scores?.[name] ?? 0) || 0;
+  const score = (name) => creativeQualityScore(latest, name);
   const issues = Array.isArray(latest.issues) ? latest.issues : [];
   return `
     <section class="creative-manager-card">
       <div class="creative-card-head">
         <h3>质量分析</h3>
-        <div class="creative-inline-actions">
-          <button type="button" data-creative-reanalyze="${escapeHtml(book.id || "")}">重新分析</button>
-          <button type="button" data-creative-rebuild-memory="${escapeHtml(book.id || "")}">重建记忆</button>
-        </div>
+
       </div>
       <div class="creative-meta-grid quality">
-        <div><b>人格一致</b><span>${escapeHtml(score("persona"))}/10</span></div>
-        <div><b>推进度</b><span>${escapeHtml(score("progress"))}/10</span></div>
-        <div><b>重复度</b><span>${escapeHtml(score("repetition"))}/10</span></div>
+        <div><b>人格一致</b><span>${escapeHtml(score("persona"))}</span></div>
+        <div><b>推进度</b><span>${escapeHtml(score("progress"))}</span></div>
+        <div><b>重复度</b><span>${escapeHtml(score("repetition"))}</span></div>
       </div>
       ${issues.length ? `<ul class="creative-issues">${issues.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : `<div class="empty small">暂无分析结果</div>`}
     </section>
@@ -14874,28 +15355,14 @@ function renderCreativeQualityPanel(book) {
 
 function renderCreativeChunkEditors(book) {
   const chunks = Array.isArray(book.chunks) ? book.chunks : [];
-  if (!chunks.length) {
-    return `<section class="creative-manager-card"><h3>正文片段</h3><div class="empty small">暂无正文片段</div></section>`;
-  }
-  return `
-    <section class="creative-manager-card">
-      <h3>正文片段</h3>
-      <div class="creative-chunk-editor-list">
-        ${chunks.map((chunk) => `
-          <form class="creative-chunk-editor" data-creative-chunk-form data-project-id="${escapeHtml(book.id || "")}" data-chunk-index="${escapeHtml(chunk.index)}">
-            <header>
-              <b>片段 ${escapeHtml(Number(chunk.index) + 1)}</b>
-              <span>${escapeHtml(chunk.chars || String((chunk.text || "").length))} 字${chunk.manually_edited ? " · 已手改" : ""}</span>
-            </header>
-            <textarea name="text" rows="8">${escapeHtml(chunk.text || "")}</textarea>
-            <div class="creative-form-actions">
-              <button type="submit">保存本段</button>
-            </div>
-          </form>
-        `).join("")}
-      </div>
-    </section>
-  `;
+  return `<p>保留正文换行；每段保存最多 5000 字，超限会拒绝，不自动截断。已有长段仍可完整阅读。</p>
+    ${chunks.length ? chunks.map(chunk => `<details class="creative-workspace-chunk" data-creative-chunk="${escapeHtml(chunk.index)}">
+      <summary>片段 ${Number(chunk.index)+1} · ${Array.from(String(chunk.text || '')).length} 字${chunk.manually_edited ? ' · 已手改' : ''}</summary>
+      <form class="creative-chunk-editor" data-creative-chunk-form data-project-id="${escapeHtml(book.id)}" data-chunk-index="${escapeHtml(chunk.index)}" data-creative-operation="${escapeHtml(creativeOperationKey(book.id, 'chunk:'+chunk.index))}">
+        <textarea name="text" rows="10">${escapeHtml(chunk.text || '')}</textarea>
+        <button type="submit"${creativeOperationAttrs(book.id, 'chunk:'+chunk.index)}>保存本段</button>
+        <div class="creative-save-result">${creativeResultMarkup(book.id, 'chunk:'+chunk.index)}</div>
+      </form></details>`).join('') : '<div class="empty small">暂无正文片段</div>'}`;
 }
 
 function renderCreativeManager(book, kindLabel, displayTitle, displayIntro) {
@@ -14919,9 +15386,9 @@ function renderCreativeManager(book, kindLabel, displayTitle, displayIntro) {
           <span>${escapeHtml(kindLabel)}</span>
           <button type="button" data-book-close>收回书柜</button>
         </div>
-        <h2>${escapeHtml(book.title || displayTitle || "未命名")}</h2>
+        <h2>${escapeHtml(book.title || displayTitle || "未命名")}</h2><p class="creative-workspace-note">各分区单独保存。收起保留本页输入；保存回读不覆盖继续输入的内容。切换作品、返回预览、刷新或离页不保留未保存输入。原创作来源与访问范围保持。</p><div class="creative-form-actions"><button type="button" data-book-read>阅读全文</button></div>
         <p>${escapeHtml(book.premise || displayIntro || "这本作品还没有简介。")}</p>
-        <form class="inline-form creative-project-basic-form" data-creative-project-form data-project-id="${escapeHtml(book.id || "")}">
+        ${creativeFold("basic", "资料与写作偏好", `<form class="inline-form creative-project-basic-form" data-creative-project-form data-project-id="${escapeHtml(book.id || "")}" data-creative-operation="${escapeHtml(creativeOperationKey(book.id, "basic"))}">
           <label>标题 <input name="title" value="${escapeHtml(book.title || "")}" /></label>
           <label>类型 <input name="work_type" value="${escapeHtml(book.work_type || "")}" /></label>
           <label>气质 <input name="tone" value="${escapeHtml(book.tone || "")}" /></label>
@@ -14930,19 +15397,25 @@ function renderCreativeManager(book, kindLabel, displayTitle, displayIntro) {
           <label class="wide">核心设定 <textarea name="premise" rows="3">${escapeHtml(book.premise || "")}</textarea></label>
           <label class="wide">下一步提示 <textarea name="next_hint" rows="2">${escapeHtml(book.next_hint || "")}</textarea></label>
           <div class="creative-form-actions wide">
-            <button type="submit">保存作品信息</button>
+            <button type="submit"${creativeOperationAttrs(book.id, "basic")}>保存作品信息</button>
             <button type="button" class="read-button" data-book-read>进入阅读页</button>
           </div>
-        </form>
+        <div class="creative-save-result">${creativeResultMarkup(book.id, "basic")}</div></form>`, true)}
         <div class="creative-form-actions">
           <button type="button" class="danger-outline" data-creative-exit-edit>返回预览</button>
-          <button type="button" class="danger-outline" data-book-delete data-book-kind="creative" data-book-id="${escapeHtml(book.id || "")}" data-book-title="${escapeHtml(book.title || displayTitle || "")}">删除作品</button>
+
         </div>
-        ${renderCreativeStoryBible(book)}
-        ${renderCreativeOutlineEditor(book)}
-        ${renderCreativeCharactersEditor(book)}
-        ${renderCreativeQualityPanel(book)}
-        ${renderCreativeChunkEditors(book)}
+        ${creativeFold("story", "故事档案与来源", renderCreativeStoryBible(book) + `<dl class="creative-source"><div><dt>来源</dt><dd>${escapeHtml(book.source || "未记录")}</dd></div><div><dt>来源说明</dt><dd>${escapeHtml(book.source_text || "未记录")}</dd></div><div><dt>最近人工修订</dt><dd>${escapeHtml(book.last_manual_edit_summary || "未记录")}</dd></div></dl><details><summary>已有修订与内部资料（接口窗口）</summary><pre>${escapeHtml(JSON.stringify({revision_notes:book.revision_notes,manual_edits:book.manual_edits,creative_memory_pool:book.creative_memory_pool}, null, 2))}</pre></details>`)}
+        ${creativeFold("outline", "大纲编辑", renderCreativeOutlineEditor(book))}
+        ${creativeFold("characters", "人物编辑", renderCreativeCharactersEditor(book))}
+        ${creativeFold("quality", "留存质量分析", renderCreativeQualityPanel(book))}
+        ${creativeFold("chunks", `正文片段 · ${(book.chunks || []).length}`, renderCreativeChunkEditors(book))}
+        ${creativeFold("maintenance", "分析、重建与删除", `<p>重新分析会调用模型，检查最新非空片段并保存分析记录；不会自动改正文。单次分析不代表全书质量。</p>
+          <div data-creative-operation="${escapeHtml(creativeOperationKey(book.id, 'reanalyze'))}"><button type="button" data-creative-reanalyze="${escapeHtml(book.id)}"${creativeOperationAttrs(book.id, 'reanalyze')}>重新分析</button><div class="creative-save-result">${creativeResultMarkup(book.id, 'reanalyze')}</div></div>
+          <p>重建会替换本作品内部的创作资料池，依据近期片段、大纲、人物及人工修订重建；不调用模型，不清理聊天记忆。原窗口最多取 12 段正文、12 条大纲、10 个人物及最近 10 条修订。</p>
+          <div data-creative-operation="${escapeHtml(creativeOperationKey(book.id, 'rebuild'))}"><button type="button" data-creative-rebuild-memory="${escapeHtml(book.id)}"${creativeOperationAttrs(book.id, 'rebuild')}>重建作品内部资料</button><div class="creative-save-result">${creativeResultMarkup(book.id, 'rebuild')}</div></div>
+          <p>删除会移除作品记录及其中的正文、设定、分析和内部资料；本入口不删除独立封面文件。保留原二次点击确认，不能撤销已开始的操作。</p>
+          <button type="button" class="danger-outline" data-book-delete data-book-kind="creative" data-book-id="${escapeHtml(book.id)}" data-book-title="${escapeHtml(book.title)}">删除作品</button>`)}
       </div>
     </article>
   `;
@@ -14961,7 +15434,7 @@ function renderCreativeBookPreview(book, kindLabel, displayTitle, displayIntro, 
   const reviews = Array.isArray(book.quality_reviews) ? book.quality_reviews : [];
   const latestReview = reviews[reviews.length - 1] || {};
   const latestSnippet = Array.isArray(book.chunks) && book.chunks.length ? book.chunks[book.chunks.length - 1].text || "" : displayContent || "";
-  const score = (name) => Number(latestReview?.[`${name}_score`] ?? latestReview?.scores?.[name] ?? 0) || 0;
+  const score = (name) => creativeQualityScore(latestReview, name);
   return `
     <article class="book-preview subpage creative creative-preview-card">
       <div class="book-preview-cover ${book.cover_src ? "has-cover-image" : ""}">
@@ -15003,9 +15476,9 @@ function renderCreativeBookPreview(book, kindLabel, displayTitle, displayIntro, 
         <section class="creative-manager-card">
           <h3>最近质量分析</h3>
           <div class="creative-meta-grid quality">
-            <div><b>人格一致</b><span>${escapeHtml(score("persona"))}/10</span></div>
-            <div><b>推进度</b><span>${escapeHtml(score("progress"))}/10</span></div>
-            <div><b>重复度</b><span>${escapeHtml(score("repetition"))}/10</span></div>
+            <div><b>人格一致</b><span>${escapeHtml(score("persona"))}</span></div>
+            <div><b>推进度</b><span>${escapeHtml(score("progress"))}</span></div>
+            <div><b>重复度</b><span>${escapeHtml(score("repetition"))}</span></div>
           </div>
         </section>
         <section class="creative-manager-card">
@@ -15720,7 +16193,7 @@ function splitCreativeChunks(book, fallbackContent) {
   const chunks = Array.isArray(book?.chunks) ? book.chunks : [];
   const rows = chunks
     .map((chunk, index) => ({
-      index: Number(chunk.index || index + 1),
+      index: Number.isInteger(Number(chunk.index)) && Number(chunk.index) >= 0 ? Number(chunk.index) + 1 : index + 1,
       text: String(chunk.text || "").trim(),
       created: String(chunk.created || "").trim(),
     }))
@@ -15989,123 +16462,115 @@ function proactiveModelJudgeMeta(item) {
 
 function renderProactiveCandidates() {
   const data = state.overview?.proactive_candidates || {};
-  const users = data.users || [];
-  const selectedFilter = validProactiveCandidateFilter(data, state.proactiveCandidateFilter);
-  state.proactiveCandidateFilter = selectedFilter;
-  const allItems = data.items || [];
-  const items = selectedFilter === "all"
-    ? allItems
-    : allItems.filter((item) => String(item.user_id || "") === selectedFilter);
-  const counts = selectedFilter === "all" ? (data.counts || {}) : countProactiveCandidateItems(items, "status");
-  const sourceCounts = selectedFilter === "all" ? (data.source_counts || {}) : countProactiveCandidateItems(items, "source");
-  const sourceLabels = data.source_labels || {};
-  const totalAttempts = selectedFilter === "all" ? (data.total || 0) : sumObjectValues(counts);
-  const totalRecords = selectedFilter === "all" ? (data.record_total || data.visible_total || allItems.length || 0) : items.length;
-  const pendingTotal = selectedFilter === "all"
-    ? (data.pending_total || 0)
-    : sumProactivePendingCandidateItems(items);
-  const taskData = state.overview?.proactive_tasks || {};
-  const runtime = taskData.runtime || {};
+  const tasks = state.overview?.proactive_tasks || {};
+  const counts = data.counts || {};
+  const runtime = tasks.runtime || {};
   $("#proactiveSummary").innerHTML = [
-    proactiveSummaryCard("候选记录", totalRecords, `${formatNumber(totalAttempts)} 次合并触发`),
-    proactiveSummaryCard("待发送候选", pendingTotal, "不含已拦截/失败记录"),
-    proactiveSummaryCard("已进入计划", counts.accepted || 0, "当前或历史接受候选"),
-    proactiveSummaryCard("已发送", counts.sent || 0, "实际发出的主动"),
-    proactiveSummaryCard("被拦截", counts.blocked || 0, "同类拦截已合并计数"),
-    proactiveSummaryCard("执行审计", taskData.audit_total || 0, `${Object.keys(taskData.audit_status_counts || {}).length || 0} 类结果`),
-    proactiveSummaryCard("循环状态", runtime.healthy ? "正常" : "待确认", runtime.last_tick_started_ts ? `最近 ${runtime.last_tick_started}` : "尚无心跳"),
+    proactiveSummaryCard("已登记任务", tasks.total ?? 0, "计划不代表已经发送"),
+    proactiveSummaryCard("候选触发", data.total ?? 0, `${data.record_total ?? 0} 条原始记录，可能合并显示`),
+    proactiveSummaryCard("候选发送记录", counts.sent ?? 0, "不代表客户端已接收或已读"),
+    proactiveSummaryCard("执行记录", tasks.audit_total ?? 0, "发送、延后与失败分别记录"),
+    proactiveSummaryCard("运行观察", runtime.healthy ? "近期有记录" : "待确认", runtime.last_tick_started || "尚无心跳"),
   ].join("");
-  $("#proactiveSourceChart").innerHTML = donutChart(sourceCounts, {
-    emptyText: "暂无来源数据",
-    labelFormatter: (label) => sourceLabels[label] || proactiveCandidateSourceLabel(label),
-    maxSegments: 6,
-    mergeBelowPercent: 0.035,
-    otherLabel: "其他来源",
+  $("#proactiveSourceChart").innerHTML = donutChart(data.source_counts || {}, {
+    emptyText: "暂无来源数据", labelFormatter: label => data.source_labels?.[label] || proactiveCandidateSourceLabel(label),
+    maxSegments: 6, mergeBelowPercent: 0.035, otherLabel: "其他来源",
   });
-  $("#proactiveStatusChart").innerHTML = donutChart(counts || {}, {
-    emptyText: "暂无状态数据",
-    labelFormatter: (label) => proactiveStatusLabel(label),
-  });
+  $("#proactiveStatusChart").innerHTML = donutChart(counts, {emptyText: "暂无状态数据", labelFormatter: proactiveStatusLabel});
   renderProactiveTasks();
-  renderProactiveCandidateFilters(users, selectedFilter, data.record_total || allItems.length, totalAttempts, items.length);
-  if (!items.length) {
-    $("#proactiveCandidateList").innerHTML = `<div class="empty small">暂无符合筛选的主动候选</div>`;
-    return;
-  }
-  $("#proactiveCandidateList").innerHTML = items.map((item) => {
-    const status = proactiveStatusLabel(item.status);
-    const repeat = Number(item.repeat_count || 1);
-    const userLabel = item.user_label || item.user_id || "-";
-    const roleLabel = item.user_role_label || (item.user_role === "owner" ? "主要用户" : "次要用户");
-    const sourceLabel = item.source_label || proactiveCandidateSourceLabel(item.source);
-    const semanticMeta = proactiveSemanticMeta(item);
-    return `
-      <section class="proactive-candidate ${escapeHtml(item.status || "unknown")}">
-        <div class="proactive-candidate-head">
-          <div>
-            <b>${escapeHtml(item.topic || item.reason_label || item.reason || "未命名候选")}</b>
-            <span>${escapeHtml(userLabel)} · ${escapeHtml(roleLabel)} · ${escapeHtml(sourceLabel)} · ${escapeHtml(item.reason_label || item.reason || "-")} · ${escapeHtml(item.action || "message")}</span>
-          </div>
-          <div class="toolbar">
-            <span class="badge">${escapeHtml(repeat > 1 ? `${status} x${repeat}` : status)}</span>
-            <button type="button" class="danger-outline" data-proactive-candidate-delete="${escapeHtml(item.id || "")}" data-proactive-user-id="${escapeHtml(item.user_id || "")}">删除</button>
-            <button type="button" class="danger-outline" data-proactive-candidate-prune="${escapeHtml(item.user_id || "")}" data-proactive-prune-keep="160">删一点</button>
-          </div>
-        </div>
-        <p>${escapeHtml(item.motive || "暂无动机记录")}</p>
-        <div class="proactive-meta">
-          ${semanticMeta.map((value) => `<span class="proactive-semantic-chip">${escapeHtml(value)}</span>`).join("")}
-          <span>用户：${escapeHtml(userLabel)}</span>
-          <span>ID：${escapeHtml(item.user_id || "-")}</span>
-          <span>计划：${escapeHtml(item.scheduled || "-")}</span>
-          <span>创建：${escapeHtml(item.created || "-")}</span>
-          ${repeat > 1 ? `<span>最近：${escapeHtml(item.last_seen || "-")}</span>` : ""}
-          <span>评分：${escapeHtml(item.score || 0)}</span>
-          ${item.reason_detail ? `<span>为什么：${escapeHtml(item.reason_detail)}</span>` : ""}
-          ${item.note ? `<span>${escapeHtml(item.note)}</span>` : ""}
-        </div>
-      </section>
-    `;
-  }).join("");
 }
 
 function renderProactiveTasks() {
-  const root = $("#proactiveTaskList");
-  if (!root) return;
   const data = state.overview?.proactive_tasks || {};
-  const items = Array.isArray(data.items) ? data.items : [];
-  const auditItems = Array.isArray(data.audit_items) ? data.audit_items : [];
-  const runtimeHtml = proactiveRuntimeHtml(data.runtime || {});
-  const priorityTasks = items.filter((item) => ["due", "overdue"].includes(item.status || ""));
-  const compactTasks = [...priorityTasks, ...items.filter((item) => !priorityTasks.includes(item))].slice(0, 6);
-  const hiddenTasks = items.filter((item) => !compactTasks.includes(item));
-  const taskHtml = items.length ? `
-      <div class="proactive-task-compact-note">
-        <span>默认显示 ${escapeHtml(compactTasks.length)} / ${escapeHtml(items.length)} 条，优先展示到点和过期任务。</span>
-      </div>
-      ${compactTasks.map((item) => proactiveTaskMarkup(item)).join("")}
-      ${hiddenTasks.length ? `
-        <details class="proactive-task-more">
-          <summary>展开其余 ${escapeHtml(hiddenTasks.length)} 条已登记任务</summary>
-          <div class="proactive-task-more-list">
-            ${hiddenTasks.map((item) => proactiveTaskMarkup(item)).join("")}
-          </div>
-        </details>
-      ` : ""}
-    ` : `
-      <div class="proactive-task-empty">
-        <b>当前没有已登记的主动任务</b>
-        <span>如果 Bot 只是说“我等一下提醒你”，但这里没有记录，就说明没有真正进入插件主动调度。</span>
-      </div>
-    `;
-  root.innerHTML = `
-    ${runtimeHtml}
-    ${proactiveUserStateHtml(Array.isArray(data.user_states) ? data.user_states : [])}
-    <div class="proactive-task-section-title">已登记任务</div>
-    ${taskHtml}
-    <div class="proactive-task-section-title">最近执行审计</div>
-    ${proactiveAuditHtml(auditItems)}
-  `;
+  $("#proactiveRuntimeDetails").innerHTML = proactiveRuntimeHtml(data.runtime || {})
+    + proactiveUserStateHtml(Array.isArray(data.user_states) ? data.user_states : []);
+  renderProactiveRecords();
+}
+
+function proactiveRecordRows(view) {
+  const data = state.overview || {};
+  const rows = view === "candidates" ? data.proactive_candidates?.items
+    : view === "audit" ? data.proactive_tasks?.audit_items : data.proactive_tasks?.items;
+  return Array.isArray(rows) ? rows.filter(row => row && typeof row === "object") : [];
+}
+
+function proactiveRecordLabel(view, row, kind) {
+  if (kind === "status") return (view === "candidates" ? proactiveStatusLabel : view === "audit" ? proactiveAuditStatusLabel : proactiveTaskStatusLabel)(row.status);
+  return view === "tasks" ? proactiveTaskSourceLabel(row.source, row.has_timer_event)
+    : row.source_label || proactiveCandidateSourceLabel(row.source);
+}
+
+function renderProactiveRecords() {
+  const view = state.proactiveRecordView;
+  const rows = proactiveRecordRows(view);
+  const users = new Map();
+  for (const type of ["tasks", "candidates", "audit"]) for (const row of proactiveRecordRows(type)) {
+    if (row.user_id) users.set(String(row.user_id), row.user_label || row.user_id);
+  }
+  for (const row of state.overview?.proactive_candidates?.users || []) {
+    if (row.user_id) users.set(String(row.user_id), row.label || row.user_id);
+  }
+  const fill = (selector, values, selected, label) => {
+    const value = selected === "all" || values.has(selected) ? selected : "all";
+    $(selector).innerHTML = `<option value="all">${label}</option>` + [...values].map(([key, text]) =>
+      `<option value="${escapeHtml(key)}">${escapeHtml(text)}</option>`).join("");
+    $(selector).value = value;
+    return value;
+  };
+  state.proactiveCandidateFilter = fill("#proactiveRecordUser", users, state.proactiveCandidateFilter, "全部用户");
+  state.proactiveRecordStatus = fill("#proactiveRecordStatus", new Map(rows.map(row => [String(row.status || "unknown"), proactiveRecordLabel(view, row, "status")])), state.proactiveRecordStatus, "全部状态");
+  state.proactiveRecordSource = fill("#proactiveRecordSource", new Map(rows.map(row => [String(row.source || "unknown"), proactiveRecordLabel(view, row, "source")])), state.proactiveRecordSource, "全部来源");
+  const query = state.proactiveRecordQuery.trim().toLocaleLowerCase();
+  const filtered = rows.filter(row => {
+    if (state.proactiveCandidateFilter !== "all" && String(row.user_id || "") !== state.proactiveCandidateFilter) return false;
+    if (state.proactiveRecordStatus !== "all" && String(row.status || "unknown") !== state.proactiveRecordStatus) return false;
+    if (state.proactiveRecordSource !== "all" && String(row.source || "unknown") !== state.proactiveRecordSource) return false;
+    const text = [row.id, row.user_id, row.user_label, row.topic, row.motive, row.reason, row.reason_label,
+      row.reason_detail, row.note, row.text_preview, row.final_text_preview, row.original_text_preview,
+      row.job_id, row.planned_candidate_id, proactiveRecordLabel(view, row, "status"), proactiveRecordLabel(view, row, "source")].join(" ").toLocaleLowerCase();
+    return !query || text.includes(query);
+  });
+  if (view === "tasks") filtered.sort((a, b) => Number(["due", "overdue"].includes(b.status)) - Number(["due", "overdue"].includes(a.status)));
+  const size = 12, pages = Math.max(1, Math.ceil(filtered.length / size));
+  state.proactiveRecordPage = Math.max(0, Math.min(state.proactiveRecordPage, pages - 1));
+  const page = filtered.slice(state.proactiveRecordPage * size, (state.proactiveRecordPage + 1) * size);
+  const roots = {tasks: "#proactiveTaskList", candidates: "#proactiveCandidateList", audit: "#proactiveAuditList"};
+  for (const [type, selector] of Object.entries(roots)) {
+    $(selector).hidden = type !== view;
+    if (type !== view) $(selector).innerHTML = "";
+  }
+  const empty = rows.length ? "没有符合当前筛选的记录。可清除筛选查看本次返回资料。" : "本次未返回这类记录。没有记录不能推断消息已发送。";
+  $(roots[view]).innerHTML = !page.length ? `<div class="empty small">${empty}</div>`
+    : view === "tasks" ? page.map(proactiveTaskMarkup).join("")
+    : view === "audit" ? proactiveAuditHtml(page) : page.map(proactiveCandidateMarkup).join("");
+  $("#proactiveRecordCoverage").textContent = `本次载入 ${rows.length} 条 · 符合筛选 ${filtered.length} 条 · 第 ${state.proactiveRecordPage + 1} / ${pages} 页。仅筛选服务端返回的近期窗口，不代表全部历史。`;
+  $("#proactiveRecordPrevious").disabled = state.proactiveRecordPage === 0;
+  $("#proactiveRecordNext").disabled = state.proactiveRecordPage + 1 >= pages;
+  document.querySelectorAll('[data-proactive-view]').forEach(button => {
+    const type = button.dataset.proactiveView;
+    button.setAttribute("aria-pressed", String(type === view));
+    button.querySelector('span').textContent = proactiveRecordRows(type).length;
+  });
+}
+
+function proactiveCandidateMarkup(item) {
+  const status = proactiveStatusLabel(item.status), repeat = Number(item.repeat_count || 1);
+  const user = item.user_label || item.user_id || "-";
+  const source = item.source_label || proactiveCandidateSourceLabel(item.source);
+  const meta = [`用户：${user}`, `ID：${item.user_id || "-"}`, `计划：${item.scheduled || "-"}`,
+    `创建：${item.created || "-"}`, `最近：${item.last_seen || "-"}`, `评分：${item.score || 0}`,
+    item.reason_detail, item.note, ...proactiveSemanticMeta(item)].filter(Boolean);
+  return `<details class="proactive-candidate aw-proactive-record ${escapeHtml(item.status || "unknown")}">
+    <summary><div><b>${escapeHtml(item.topic || item.reason_label || item.reason || "未命名候选")}</b>
+      <span>${escapeHtml(user)} · ${escapeHtml(source)} · ${escapeHtml(item.scheduled || item.created || "未记录时间")}</span></div>
+      <span class="badge">${escapeHtml(status)}${repeat > 1 ? ` ×${repeat}` : ""}</span></summary>
+    <div class="aw-proactive-detail"><p>${escapeHtml(item.motive || "暂无动机记录")}</p>
+      <div class="proactive-meta">${meta.map(value => `<span>${escapeHtml(value)}</span>`).join("")}</div>
+      <p class="aw-proactive-note">删除会移除该候选；若仍关联当前计划，后端还会清理关联并重新安排检查。不能撤回已开始或已发送的消息。限额整理会影响该用户的整个未发送候选池，不只当前筛选结果。</p>
+      <div class="toolbar">
+      ${item.id ? `<button type="button" class="danger-outline" data-proactive-candidate-delete="${escapeHtml(item.id)}" data-proactive-user-id="${escapeHtml(item.user_id || "")}">删除候选…</button>` : ""}
+      ${item.user_id ? `<button type="button" data-proactive-candidate-prune="${escapeHtml(item.user_id)}" data-proactive-prune-keep="160">整理该用户候选（保留上限 160）…</button>` : ""}
+      </div></div></details>`;
 }
 
 function proactiveTaskMarkup(item) {
@@ -16141,15 +16606,15 @@ function proactiveTaskMarkup(item) {
     item.silence_until_due ? "到点前静默" : "",
   ].filter(Boolean);
   return `
-    <section class="proactive-task ${escapeHtml(item.status || "scheduled")}">
-      <div class="proactive-task-head">
+    <details class="proactive-task aw-proactive-record ${escapeHtml(item.status || "scheduled")}">
+      <summary class="proactive-task-head">
         <div>
           <b>${escapeHtml(title)}</b>
-          <span>${escapeHtml(item.user_label || item.user_id || "-")} · ${escapeHtml(item.user_role_label || "-")} · ${escapeHtml(source)}</span>
+          <span>${escapeHtml(item.user_label || item.user_id || "-")} · ${escapeHtml(item.user_role_label || "-")} · ${escapeHtml(source)} · ${escapeHtml(item.scheduled || "未记录时间")}</span>
         </div>
         <span class="badge">${escapeHtml(status)}</span>
-      </div>
-      <p>${escapeHtml(item.motive || "暂无登记动机")}</p>
+      </summary>
+      <div class="aw-proactive-detail"><p>${escapeHtml(item.motive || "暂无登记动机")}</p>
       <div class="proactive-meta">
         ${semanticMeta.map((value) => `<span class="proactive-semantic-chip">${escapeHtml(value)}</span>`).join("")}
         ${windowMeta.map((value) => `<span class="proactive-window-chip">${escapeHtml(value)}</span>`).join("")}
@@ -16159,7 +16624,8 @@ function proactiveTaskMarkup(item) {
         ${meta.map((value) => `<span>${escapeHtml(value)}</span>`).join("")}
       </div>
       ${proactiveAfterglowHtml(item)}
-    </section>
+      </div>
+    </details>
   `;
 }
 
@@ -16221,11 +16687,11 @@ function proactiveRuntimeHtml(runtime) {
 }
 
 function proactiveAuditHtml(items) {
-  const visibleItems = (Array.isArray(items) ? items : []).filter((item) => item?.status !== "obsolete");
+  const visibleItems = (Array.isArray(items) ? items : []);
   if (!visibleItems.length) {
     return `<div class="proactive-task-empty"><b>暂无执行审计</b><span>主动真正进入发送链路后，会在这里留下开始、成功、失败、延后或取消记录。</span></div>`;
   }
-  return visibleItems.slice(0, 30).map((item) => {
+  return visibleItems.map((item) => {
     const status = proactiveAuditStatusLabel(item.status);
     const title = item.topic || item.reason_label || item.reason || item.note || "主动执行记录";
     const sourceLabel = item.source_label || proactiveCandidateSourceLabel(item.source);
@@ -16248,20 +16714,21 @@ function proactiveAuditHtml(items) {
       item.updated_ts ? `更新：${item.updated || "-"}` : "",
     ].filter(Boolean);
     return `
-      <section class="proactive-task audit ${escapeHtml(item.status || "unknown")}">
-        <div class="proactive-task-head">
+      <details class="proactive-task audit aw-proactive-record ${escapeHtml(item.status || "unknown")}">
+        <summary class="proactive-task-head">
           <div>
             <b>${escapeHtml(title)}</b>
-            <span>${escapeHtml(item.user_label || item.user_id || "-")} · ${escapeHtml(item.user_role_label || "-")} · ${escapeHtml(sourceLabel)}</span>
+            <span>${escapeHtml(item.user_label || item.user_id || "-")} · ${escapeHtml(item.user_role_label || "-")} · ${escapeHtml(sourceLabel)} · ${escapeHtml(item.updated || item.created || "未记录时间")}</span>
           </div>
           <span class="badge">${escapeHtml(status)}</span>
-        </div>
-        <p>${escapeHtml(item.motive || item.note || "暂无动机记录")}</p>
+        </summary>
+        <div class="aw-proactive-detail"><p>${escapeHtml(item.motive || item.note || "暂无动机记录")}</p>
         <div class="proactive-meta">
           ${semanticMeta.map((value) => `<span class="proactive-semantic-chip">${escapeHtml(value)}</span>`).join("")}
           ${meta.map((value) => `<span>${escapeHtml(value)}</span>`).join("")}
         </div>
-      </section>
+        </div>
+      </details>
     `;
   }).join("");
 }
@@ -16358,76 +16825,6 @@ function sumProactivePendingCandidateItems(items) {
 
 function sumObjectValues(data) {
   return Object.values(data || {}).reduce((sum, value) => sum + Number(value || 0), 0);
-}
-
-function renderProactiveCandidateFilters(users, selected, allTotal, selectedTotal, visibleCount) {
-  const root = $("#proactiveCandidateFilters");
-  if (!root) return;
-  const userItems = Array.isArray(users) ? users : [];
-  const selectedUser = userItems.find((user) => String(user.user_id || "") === selected);
-  const title = selected === "all"
-    ? "全部私聊用户"
-    : (selectedUser?.label || selected || "未知用户");
-  const note = selected === "all"
-    ? `${formatNumber(userItems.length)} 个用户 · ${formatNumber(visibleCount || 0)} 条记录`
-    : `${selectedUser?.role_label || "用户"} · ${formatNumber(visibleCount || 0)} 条记录`;
-  const statusSummary = selectedUser?.counts
-    ? [
-        `计划 ${formatNumber(selectedUser.counts.accepted || 0)}`,
-        `发送 ${formatNumber(selectedUser.counts.sent || 0)}`,
-        `拦截 ${formatNumber(selectedUser.counts.blocked || 0)}`,
-      ].join(" · ")
-    : `${formatNumber(selectedTotal || 0)} 次触发`;
-  const allButton = proactiveCandidateFilterButton({
-    value: "all",
-    label: "全部用户",
-    roleLabel: "汇总视图",
-    total: allTotal || 0,
-    selected: selected === "all",
-  });
-  const userButtons = userItems.map((user) => proactiveCandidateFilterButton({
-    value: user.user_id || "",
-    label: user.label || user.user_id || "未知用户",
-    roleLabel: user.role_label || "-",
-    total: user.total || 0,
-    selected: selected === String(user.user_id || ""),
-    counts: user.counts || {},
-  })).join("");
-  root.innerHTML = `
-    <div class="proactive-filter-summary">
-      <span>当前视图</span>
-      <b>${escapeHtml(title)}</b>
-      <small>${escapeHtml(note)}</small>
-      <em>${escapeHtml(statusSummary)}</em>
-    </div>
-    <div class="proactive-filter-list" role="list" aria-label="候选记录用户视图">
-      ${allButton}
-      ${userButtons || `<span class="empty small">暂无用户候选</span>`}
-    </div>
-  `;
-  root.querySelectorAll("[data-proactive-candidate-filter]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.proactiveCandidateFilter = button.dataset.proactiveCandidateFilter || "all";
-      renderProactiveCandidates();
-    });
-  });
-}
-
-function proactiveCandidateFilterButton({ value, label, roleLabel, total, selected, counts = {} }) {
-  const detail = [
-    counts.sent ? `发 ${formatNumber(counts.sent)}` : "",
-    counts.accepted ? `计 ${formatNumber(counts.accepted)}` : "",
-    counts.blocked ? `拦 ${formatNumber(counts.blocked)}` : "",
-  ].filter(Boolean).join(" · ");
-  return `
-    <button type="button" class="proactive-filter-user ${selected ? "is-active" : ""}" data-proactive-candidate-filter="${escapeHtml(value)}">
-      <span>
-        <b>${escapeHtml(label)}</b>
-        <small>${escapeHtml(roleLabel || "-")}${detail ? ` · ${escapeHtml(detail)}` : ""}</small>
-      </span>
-      <em>${escapeHtml(formatNumber(total || 0))}</em>
-    </button>
-  `;
 }
 
 function proactiveSummaryCard(label, value, note) {
@@ -16933,6 +17330,7 @@ function renderModuleSettings() {
   const newsRaw = $("#newsSourcesRaw");
   if (newsRaw) newsRaw.value = displaySettingValue("news_sources", settings.news_sources);
   fillForm("#roleplayProfileForm", formValues);
+  renderRoleplaySavedReading(settings);
   fillForm("#privateAliasForm", formValues);
   fillForm("#quickModuleForm", formValues);
   fillForm("#runtimeSettingsForm", formValues);
@@ -17338,6 +17736,7 @@ function collectFormSettings(selector) {
   const result = {};
   if (!form) return result;
   if (selector === "#roleplayProfileForm") {
+    if (roleplayMode() === "freeform") hydrateRoleplayStandardFields();
     syncRoleplayStandardFieldsToFreeform();
     syncRoleplayCoreFieldsFromPersona();
     syncRoleplayKnowledgeSelectionToInput();
@@ -17352,7 +17751,7 @@ function collectFormSettings(selector) {
 function roleplayKnowledgeSelectedSet() {
   const settings = state.overview?.settings || {};
   const hidden = document.querySelector('#roleplayProfileForm [name="roleplay_knowledge_source_ids"]');
-  const raw = hidden?.value || settings.roleplay_knowledge_source_ids || state.overview?.knowledge?.selected_ids || [];
+  const raw = hidden ? hidden.value : (settings.roleplay_knowledge_source_ids || state.overview?.knowledge?.selected_ids || []);
   const items = Array.isArray(raw) ? raw : String(raw || "").split(/\r?\n|[,，;；]/);
   return new Set(items.map((item) => String(item || "").trim()).filter(Boolean));
 }
@@ -17376,10 +17775,8 @@ function renderRoleplayKnowledgeSources() {
   const selected = roleplayKnowledgeSelectedSet();
   const badge = document.getElementById("roleplayKnowledgeCount");
   if (badge) badge.textContent = String(selected.size);
-  if (!sources.length) {
-    box.innerHTML = `<div class="empty small">暂无可选择的 AstrBot 知识库。</div>`;
-    return;
-  }
+  const returnedIds = new Set(sources.flatMap(source => [source.id, ...(source.documents || []).map(doc => doc.id)]));
+  const unreturned = [...selected].filter(id => !returnedIds.has(id));
   box.innerHTML = sources.map((source) => {
     const sourceId = String(source.id || "");
     const docs = Array.isArray(source.documents) ? source.documents : [];
@@ -17410,6 +17807,8 @@ function renderRoleplayKnowledgeSources() {
       </article>
     `;
   }).join("");
+  if (!sources.length) box.innerHTML = `<p class="section-desc">当前目录未返回可选择的知识库，不能据此认定资料已删除。</p>`;
+  if (unreturned.length) box.insertAdjacentHTML("beforeend", `<section class="roleplay-knowledge-source"><b>当前目录未返回的引用</b><p>可能暂不可读或已移除。本页保留原标识，取消勾选并保存才会移除引用；不会删除知识库资料。</p>${unreturned.map(id => `<label class="roleplay-knowledge-doc"><input type="checkbox" data-roleplay-knowledge-id="${escapeHtml(id)}" checked /><span>${escapeHtml(id)}</span></label>`).join("")}</section>`);
   box.querySelectorAll("[data-roleplay-knowledge-id]").forEach((input) => {
     input.addEventListener("change", () => {
       syncRoleplayKnowledgeSelectionToInput();
@@ -17554,7 +17953,7 @@ function setRoleplayMode(mode) {
 function bindRoleplayModeSwitch() {
   setRoleplayMode(roleplayMode());
   document.querySelectorAll(".roleplay-mode-switch [data-roleplay-mode]").forEach((button) => {
-    button.addEventListener("click", () => setRoleplayMode(button.dataset.roleplayMode));
+    button.addEventListener("click", () => switchRoleplayEditingMode(button.dataset.roleplayMode));
   });
   document.querySelectorAll("[data-roleplay-example]").forEach((button) => {
     button.addEventListener("click", () => applyRoleplayExample(button.dataset.roleplayExample));
@@ -17566,7 +17965,7 @@ function bindRoleplayModeSwitch() {
 function applyRoleplayExample(kind) {
   const example = roleplayExamples[kind];
   if (!example) return;
-  setRoleplayMode("standard");
+  switchRoleplayEditingMode("standard");
   if (kind === "persona") {
     Object.entries(example).forEach(([key, value]) => {
       const control = document.querySelector(`[data-roleplay-persona-part="${key}"]`);
@@ -17595,14 +17994,15 @@ function applyRoleplayExample(kind) {
 }
 
 async function generateRoleplayDraftFromPersona(button) {
+  const scopes = selectedRoleplayDraftScopes();
+  if (!scopes.length) return showToast("至少选择一类提取范围", "error");
   setActionBusy(button, true);
   showToast("正在读取主回复人格并提取世界知识草稿...");
   try {
-    const scopes = selectedRoleplayDraftScopes();
     const result = await postJson("/roleplay/draft_from_persona", { scopes });
     state.roleplayPersonaDraft = result || null;
     renderRoleplayPersonaDraftPanel();
-    showToast("世界知识草稿已生成，请先预览再填入");
+    showToast(result?.parse_note ? "草稿含处理说明，请核对后再填入" : "世界知识草稿已生成，请先预览再填入");
   } catch (error) {
     showToast(`生成失败：${error.message}`, "error");
   } finally {
@@ -17614,7 +18014,7 @@ function selectedRoleplayDraftScopes() {
   const scopes = Array.from(document.querySelectorAll("[data-roleplay-draft-scope]:checked"))
     .map((input) => input.dataset.roleplayDraftScope || "")
     .filter(Boolean);
-  return scopes.length ? scopes : ["persona"];
+  return scopes;
 }
 
 function renderRoleplayPersonaDraftPanel() {
@@ -17645,7 +18045,9 @@ function renderRoleplayPersonaDraftPanel() {
         <button type="button" data-roleplay-draft-close class="ghost">关闭</button>
       </div>
     </header>
-    <p>${escapeHtml(result.source_preview || "已读取主回复人格。")} </p>
+    <p class="world-draft-origin">${escapeHtml(result.parse_note || "接口返回了可解析草稿；仍需核对内容和推断。")} </p>
+    <p class="section-desc">请求来源：${escapeHtml(result.provider_id || "默认 Provider")} ${result.repair_provider_id ? ` · 修复请求：${escapeHtml(result.repair_provider_id)}` : ""}。这些标识是配置的请求来源，不是供应商执行回执；本页尚未保存。</p>
+    <details><summary>查看来源摘要</summary><p>${escapeHtml(result.source_preview || "未返回来源摘要")}</p><p class="section-desc">来源 ${escapeHtml(result.source_chars || 0)} 字；摘要不等于完整人格。</p></details>
     ${rows.length ? `
       <div class="persona-draft-grid">
         ${rows.map(([group, label, value]) => `
@@ -17693,7 +18095,7 @@ function roleplayDraftScopeLabel(scopes) {
 function applyRoleplayPersonaDraft(overwrite = false) {
   const draft = state.roleplayPersonaDraft?.draft || {};
   const scopes = new Set(Array.isArray(state.roleplayPersonaDraft?.scopes) ? state.roleplayPersonaDraft.scopes : ["persona"]);
-  setRoleplayMode("standard");
+  switchRoleplayEditingMode("standard");
   let changed = 0;
   if (scopes.has("persona")) {
     roleplayPersonaParts.forEach(([key]) => {
@@ -17827,6 +18229,7 @@ function hydrateRoleplayStandardFields() {
     const control = document.querySelector(`[data-roleplay-translation-part="${label}"]`);
     if (control) control.value = extractTranslationValue(translationText, label);
   });
+  captureRoleplayStandardBaseline();
   setRoleplayMode(roleplayMode());
 }
 
@@ -17865,19 +18268,82 @@ function composeTranslationParts() {
   return lines.join("\n");
 }
 
+// Keep original prose and untouched labelled blocks; edit only the fields the user changed.
+let roleplayStandardBaseline = {};
+function roleplayEditorGroups() {
+  const group = (name, attr, parts) => ({name, fields:parts.map(([key,label]) => ({label, aliases:roleplayLabelAliases[label] || [], control:document.querySelector(`[${attr}="${key}"]`)}))});
+  const user = group("roleplay_user_profile_prompt", "data-roleplay-user-part", roleplayVisionParts);
+  user.fields[0].control = document.querySelector('#roleplayProfileForm [name="default_nickname"]');
+  return [group("schedule_persona_prompt", "data-roleplay-persona-part", roleplayPersonaParts), group("schedule_worldview_prompt", "data-roleplay-world-part", roleplayWorldParts), user,
+    {name:"worldview_adaptation_prompt", lineOnly:true, fields:roleplayTranslationParts.map(label => ({label, aliases:[], control:document.querySelector(`[data-roleplay-translation-part="${label}"]`)}))}];
+}
+function captureRoleplayStandardBaseline() {
+  roleplayStandardBaseline = Object.fromEntries(roleplayEditorGroups().map(group => [group.name,group.fields.map(field => String(field.control?.value || ""))]));
+}
+function switchRoleplayEditingMode(mode) {
+  if (mode === roleplayMode()) return;
+  if (roleplayMode() === "standard") syncRoleplayStandardFieldsToFreeform();
+  else hydrateRoleplayStandardFields();
+  setRoleplayMode(mode);
+}
 function syncRoleplayStandardFieldsToFreeform() {
   if (roleplayMode() !== "standard") return;
-  const mappings = [
-    ["schedule_persona_prompt", composeLabeledParts("data-roleplay-persona-part", roleplayPersonaParts)],
-    ["schedule_worldview_prompt", composeLabeledParts("data-roleplay-world-part", roleplayWorldParts)],
-    ["worldview_adaptation_prompt", composeTranslationParts()],
-    ["roleplay_user_profile_prompt", composeRoleplayUserParts()],
-  ];
-  mappings.forEach(([name, value]) => {
-    const target = document.querySelector(`#roleplayProfileForm [name="${name}"]`);
-    if (target) target.value = value;
+  roleplayEditorGroups().forEach(group => {
+    const target = document.querySelector(`#roleplayProfileForm [name="${group.name}"]`);
+    if (!target || !roleplayStandardBaseline[group.name]) return;
+    const labels = group.fields.flatMap(field => [field.label,...field.aliases]);
+    const matches = (line, names) => names.some(label => new RegExp(`^\\s*${escapeRegExp(label)}\\s*[${group.lineOnly ? "=：:" : "：:"}]`).test(line));
+    group.fields.forEach((field,index) => {
+      const current = String(field.control?.value || "");
+      if (current === roleplayStandardBaseline[group.name][index]) return;
+      const value = current.trim(), lines = target.value.split("\n");
+      const start = lines.findIndex(line => matches(line,[field.label,...field.aliases]));
+      const replacement = value ? `${field.label}${group.lineOnly ? " = " : "："}${value}` : "";
+      if (start < 0) {
+        if (replacement) target.value += `${target.value && !target.value.endsWith("\n") ? "\n" : ""}${replacement}`;
+        return;
+      }
+      let end = start+1;
+      if (!group.lineOnly) while (end < lines.length && !matches(lines[end],labels)) end++;
+      lines.splice(start,end-start,...(replacement ? replacement.split("\n") : []));target.value=lines.join("\n");
+    });
   });
+  captureRoleplayStandardBaseline();
   syncRoleplayCoreFieldsFromPersona();
+}
+
+function renderRoleplaySavedReading(settings = state.overview?.settings || {}, status = "最近读取的背景资料") {
+  const box = document.getElementById("roleplaySavedReading");if (!box) return;
+  const knowledge = state.overview?.knowledge || {}, names = new Map();
+  (knowledge.sources || []).forEach(source => {names.set(source.id,source.name || source.id);(source.documents || []).forEach(doc => names.set(doc.id,doc.name || doc.id));});
+  const ids = Array.isArray(settings.roleplay_knowledge_source_ids) ? settings.roleplay_knowledge_source_ids : String(settings.roleplay_knowledge_source_ids || "").split(/\n|[,，;；]/).filter(Boolean);
+  box.innerHTML = `<article class="world-reading"><h3>${escapeHtml(status)}</h3><p class="section-desc">配置来源：当前 TLS 原生陪伴。背景资料与 AstrBot 主回复人格分开；被引用不代表每次注入或实际使用。下方编辑区是本页草稿。</p><div class="world-reading-grid">${[["角色资料","schedule_persona_prompt"],["世界背景","schedule_worldview_prompt"],["用户与关系","roleplay_user_profile_prompt"],["平台称呼转写","worldview_adaptation_prompt"],["图片识别线索","private_image_self_recognition_hint"]].map(([label,key]) => `<details><summary>${label} · ${String(settings[key] || "").length} 字</summary><p class="world-prose">${escapeHtml(settings[key] || "未填写")}</p></details>`).join("")}</div><p>适配模式：${escapeHtml(settings.worldview_adaptation_mode || "auto")} · 默认称呼：${escapeHtml(settings.default_nickname || "未填写")}</p><details><summary>引用来源 · ${ids.length} 项</summary>${ids.length ? ids.map(id => `<p>${escapeHtml(names.get(id) || "当前目录未返回")} <small>${escapeHtml(id)}</small></p>`).join("") : "未选择知识库引用"}</details></article>`;
+}
+let roleplaySavePending = false, roleplaySaveUnknown = false;
+async function saveRoleplayWorkspace(form,button) {
+  if (roleplaySavePending || roleplaySaveUnknown) return;
+  const payload = collectFormSettings("#roleplayProfileForm"), resultBox = document.getElementById("roleplaySaveResult");
+  const limits = {schedule_persona_prompt:2000,schedule_worldview_prompt:2000,roleplay_user_profile_prompt:2000,worldview_adaptation_prompt:1200,private_image_self_recognition_hint:1200};
+  for (const [key,limit] of Object.entries(limits)) if (Array.from(String(payload[key] || "").trim()).length > limit) return showToast(`内容超过原 ${limit} 字容量，请在原文填写中整理后保存；本次未提交`,"error");
+  const ids = String(payload.roleplay_knowledge_source_ids || "").split(/\n|[,，;；]/).map(v=>v.trim()).filter(Boolean);
+  if (ids.length > 80) return showToast("引用超过原 80 项容量，本次未提交", "error");
+  const fingerprint = () => JSON.stringify([...form.querySelectorAll("input,textarea,select")].map(el => [el.name,el.value,el.checked]));
+  const submittedFingerprint = fingerprint();roleplaySavePending=true;setActionBusy(button,true);
+  resultBox.innerHTML='<p data-world-result="pending">正在保存本次背景资料…</p>';
+  try {
+    const result = await postJson("/settings/update",{settings:payload}), changed=result?.changed;
+    if (!changed || typeof result.config_saved !== "boolean" || !Object.keys(payload).every(key => key === "roleplay_knowledge_source_ids" ? Array.isArray(changed[key]) && changed[key].every(id=>typeof id === "string") : typeof changed[key] === "string")) throw new Error("返回的保存字段不完整");
+    state.overview.settings = {...state.overview.settings,...changed};
+    const message = result.config_saved ? "本次背景资料已保存" : "配置未持久保存；陪伴运行态可能已改变";
+    renderRoleplaySavedReading(state.overview.settings,result.config_saved ? "本次保存返回的背景资料" : "本次返回的运行值 · 未持久保存");
+    resultBox.innerHTML=`<p data-world-result="${result.config_saved ? "saved" : "partial"}">${message}。本页输入保留；等待期间继续编辑的内容尚未提交。其他分区需主动刷新核对。</p>`;
+    if (result.config_saved && submittedFingerprint === fingerprint()) markModuleFormClean(form);
+    showToast(message,result.config_saved ? undefined : "error");
+  } catch(error) {
+    roleplaySaveUnknown=true;
+    resultBox.innerHTML=`<p data-world-result="unknown">本次结果未确认：${escapeHtml(error.message)}。输入保留，本页不再次提交。请核对服务器配置；当前值相同不证明本次完成或落盘。刷新会丢失本页草稿和标记，不会撤销已开始操作。</p>`;
+    showToast("世界知识保存结果未确认，请先核对", "error");
+  } finally {roleplaySavePending=false;setActionBusy(button,false);if (roleplaySaveUnknown) button.disabled=true;}
 }
 
 const newsSourcePresets = [
@@ -18757,6 +19223,7 @@ function renderListCoverage(group, draft = null) {
 }
 
 function renderFeatureSwitches() {
+  const expandedGroups = new Set([...document.querySelectorAll('#featureFlags details[data-feature-group][open]')].map((item) => item.dataset.featureGroup));
   const filter = ($("#featureFilter")?.value || "").trim().toLowerCase();
   renderProactiveOnlyModeCard();
   renderPassiveInjectionPositionForm();
@@ -18821,18 +19288,18 @@ function renderFeatureSwitches() {
       ? proactiveIntensityCommonSettingCard(overviewSettings, intensity)
       : "";
     return `
-      <section class="feature-switch-group">
-        <header>
+      <details class="feature-switch-group aw-feature-group" data-feature-group="${escapeHtml(group.title)}"${filter || expandedGroups.has(group.title) ? " open" : ""}>
+        <summary>
           <div>
             <b>${escapeHtml(group.title)}</b>
           </div>
           <small>${escapeHtml(groupMeta)}</small>
-        </header>
+        </summary>
         <div class="feature-switch-list">
           ${prefix}
           ${visibleKeys.map((key) => featureSwitchItem(key)).join("")}
         </div>
-      </section>
+      </details>
     `;
   }).filter(Boolean).join("");
   $("#featureFlags").innerHTML = board || `<div class="empty small">没有匹配的功能开关</div>`;
@@ -20581,7 +21048,7 @@ function renderProviders() {
   if (window.PrivateCompanionProviderTree?.renderProviders) {
     const saveButton = document.getElementById("saveProvidersBtn");
     const testButton = document.getElementById("testAllProvidersBtn");
-    if (saveButton) saveButton.disabled = false;
+    if (saveButton) saveButton.disabled = Boolean(state.providerSave?.status === "pending" || state.providerSave?.status === "unknown");
     if (testButton) testButton.disabled = false;
     window.PrivateCompanionProviderTree.renderProviders({
       window,
@@ -20648,7 +21115,7 @@ function currentProviderFallbackValues() {
 
 function bindProviderToolbar() {
   if (window.PrivateCompanionProviderTree?.bindProviderToolbar) {
-    window.PrivateCompanionProviderTree.bindProviderToolbar({ document, state, setProviderConfigMode });
+    window.PrivateCompanionProviderTree.bindProviderToolbar({ document, state, setProviderConfigMode, refreshProviders: renderProviders });
   }
 }
 
@@ -24295,11 +24762,12 @@ function switchTab(tabName) {
   const previousIndex = tabs.findIndex((item) => item.dataset.tab === state.activeTab);
   const nextIndex = tabs.findIndex((item) => item.dataset.tab === tabName);
   const direction = nextIndex >= 0 && previousIndex >= 0 && nextIndex < previousIndex ? "previous" : "next";
-  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  const reduceMotion = Boolean(document.documentElement.dataset.nativeWorkspace) || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
   document.documentElement.dataset.tabDirection = direction;
 
   const commit = (fallbackMotion = false) => {
     state.activeTab = tabName;
+    syncNativeCompanionNavigation(tabName);
     tabs.forEach((item) => item.classList.toggle("is-active", item.dataset.tab === tabName));
     revealActiveTab(tabs.find((item) => item.dataset.tab === tabName), reduceMotion);
     document.querySelectorAll(".panel").forEach((item) => {
@@ -24718,24 +25186,26 @@ document.addEventListener("click", async (event) => {
   if (troubleshootingTest) {
     const testType = troubleshootingTest.dataset.troubleshootingTest || "";
     const workflowKind = troubleshootingTest.dataset.troubleshootingWorkflowKind || "";
-    setActionBusy(troubleshootingTest, true);
+    if (!testType || ["running", "unknown"].includes(state.troubleshootingTestAttempts[testType]?.status) || troubleshootingTestResult(testType).pending) return;
+    state.troubleshootingTestAttempts[testType] = {status: "running"};
+    syncTroubleshootingTestButtons();
     try {
       const result = await postJson("/troubleshooting/test", { type: testType, workflow_kind: workflowKind });
-      state.troubleshooting = state.troubleshooting || {};
-      state.troubleshooting.chain_tests = {
-        ...(state.troubleshooting.chain_tests || {}),
-        [testType]: result,
-      };
-      renderTroubleshooting();
-      if (result.pending) {
-        showToast("主动消息链路测试已预约，约 1 分钟后刷新查看结果", "success");
-      } else {
-        showToast(result.ok ? "链路测试通过" : `链路测试失败：${result.error || "未返回有效结果"}`, result.ok ? "success" : "error");
+      if (!result || result.type !== testType || typeof result.ok !== "boolean"
+        || !Number.isFinite(result.ran_at) || result.ran_at <= 0
+        || (result.pending !== undefined && typeof result.pending !== "boolean")) {
+        throw new Error("返回的操作类别或结果字段不完整");
       }
+      state.troubleshooting = state.troubleshooting || {};
+      state.troubleshooting.chain_tests = {...(state.troubleshooting.chain_tests || {}), [testType]: result};
+      state.troubleshootingTestAttempts[testType] = {status: "returned", result};
+      const presentation = troubleshootingTestPresentation(result);
+      renderTroubleshooting();
+      showToast(presentation.label, ["warn", "error"].includes(presentation.status) ? "error" : "success");
     } catch (error) {
-      showToast(`链路测试失败：${error.message}`, "error");
-    } finally {
-      setActionBusy(troubleshootingTest, false);
+      state.troubleshootingTestAttempts[testType] = {status: "unknown", error: String(error.message || error)};
+      renderTroubleshooting();
+      showToast("本次结果未确认，请核对留存记录与实际结果；不会自动重发测试", "error");
     }
     return;
   }
@@ -24757,12 +25227,24 @@ document.addEventListener("click", async (event) => {
     if (!requireSecondClick(deleteButton, `image-cache:${key}`, "再次点击会删除这条图片缓存")) return;
     setActionBusy(deleteButton, true);
     try {
-      await postJson("/image_cache/delete", { key });
-      state.selectedImageCacheKey = "";
-      await loadImageCache();
-      showToast("图片缓存已删除");
+      const deleted = await postJson("/image_cache/delete", { key });
+      if (deleted?.key !== key || !Number.isInteger(deleted.remaining) || deleted.remaining < 0) {
+        imageCacheActionResult("删除结果未确认，请先刷新列表核对，不要重复提交", true);
+        return;
+      }
+      const present = state.imageCacheItems.some(item => item.key === key);
+      state.imageCacheItems = state.imageCacheItems.filter(item => item.key !== key);
+      if (present) state.imageCacheTotal = Math.max(0, state.imageCacheTotal - 1);
+      if (state.selectedImageCacheKey === key) state.selectedImageCacheKey = "";
+      renderImageCache();
+      try {
+        await loadImageCache();
+        imageCacheActionResult("图片缓存已删除");
+      } catch (error) {
+        imageCacheActionResult(`图片缓存已删除；最新列表读取失败，当前列表仅按已确认结果更新：${error.message}`, true);
+      }
     } catch (error) {
-      showToast(`删除失败：${error.message}`, "error");
+      imageCacheActionResult(`删除失败：${error.message}`, true);
     } finally {
       setActionBusy(deleteButton, false);
     }
@@ -24776,15 +25258,15 @@ document.addEventListener("click", async (event) => {
     const candidateId = proactiveDeleteButton.dataset.proactiveCandidateDelete || "";
     const userId = proactiveDeleteButton.dataset.proactiveUserId || "";
     if (!candidateId) return;
-    if (!requireSecondClick(proactiveDeleteButton, `proactive-delete:${candidateId}`, "再次点击删除这条主动候选", "再次点击删除")) return;
+    if (!requireSecondClick(proactiveDeleteButton, `proactive-delete:${candidateId}`, "再次点击删除候选；若关联当前计划也会重新安排检查，已开始或发出的消息不能撤回", "确认删除候选")) return;
     await runAction(async () => {
       const result = await postJson("/proactive/candidate/delete", { candidate_id: candidateId, user_id: userId });
       if (state.overview) {
         state.overview.proactive_candidates = result.proactive_candidates || state.overview.proactive_candidates;
         state.overview.proactive_tasks = result.proactive_tasks || state.overview.proactive_tasks;
       }
-      return state.overview || result;
-    }, "已删除主动候选", proactiveDeleteButton);
+      return {...(state.overview || {}), message: result.message || (result.cleared_current_plan ? "已删除候选，并重新安排关联检查" : "已删除候选")};
+    }, "", proactiveDeleteButton);
     return;
   }
   const proactivePruneButton = element?.closest("[data-proactive-candidate-prune]");
@@ -24792,39 +25274,27 @@ document.addEventListener("click", async (event) => {
     const userId = proactivePruneButton.dataset.proactiveCandidatePrune || "";
     const keep = Number(proactivePruneButton.dataset.proactivePruneKeep || 160) || 160;
     if (!userId) return;
-    if (!requireSecondClick(proactivePruneButton, `proactive-prune:${userId}:${keep}`, `再次点击将该用户未发送候选压到 ${keep} 条`, "再次点击删一点")) return;
+    if (!requireSecondClick(proactivePruneButton, `proactive-prune:${userId}:${keep}`, `再次点击将该用户未发送候选压到 ${keep} 条`, "确认整理该用户候选")) return;
     await runAction(async () => {
       const result = await postJson("/proactive/candidate/prune", { user_id: userId, keep });
       if (state.overview) {
         state.overview.proactive_candidates = result.proactive_candidates || state.overview.proactive_candidates;
         state.overview.proactive_tasks = result.proactive_tasks || state.overview.proactive_tasks;
       }
-      return state.overview || result;
-    }, "已压缩该用户未发送候选", proactivePruneButton);
+      return {...(state.overview || {}), message: result.message || `已整理 ${Number(result.removed || 0)} 条未发送候选`};
+    }, "", proactivePruneButton);
     return;
   }
   const creativeReanalyze = element?.closest("[data-creative-reanalyze]");
   if (creativeReanalyze) {
     const projectId = creativeReanalyze.dataset.creativeReanalyze || "";
-    await runAction(async () => {
-      const result = await postJson("/creative/project/reanalyze", { id: projectId });
-      if (state.selectedBook?.kind === "creative" && state.selectedBook.id === projectId) {
-        await ensureCreativeProjectDetail(state.selectedBook, true);
-      }
-      return result;
-    }, "已完成质量分析", creativeReanalyze);
+    await saveCreativeOperation("reanalyze", "/creative/project/reanalyze", {id:projectId}, "分析");
     return;
   }
   const creativeRebuildMemory = element?.closest("[data-creative-rebuild-memory]");
   if (creativeRebuildMemory) {
     const projectId = creativeRebuildMemory.dataset.creativeRebuildMemory || "";
-    await runAction(async () => {
-      const result = await postJson("/creative/project/rebuild_memory", { id: projectId });
-      if (state.selectedBook?.kind === "creative" && state.selectedBook.id === projectId) {
-        await ensureCreativeProjectDetail(state.selectedBook, true);
-      }
-      return result;
-    }, "已重建创作记忆", creativeRebuildMemory);
+    await saveCreativeOperation("rebuild", "/creative/project/rebuild_memory", {id:projectId}, "作品内部资料");
     return;
   }
   const deleteButton = element?.closest("[data-book-delete]");
@@ -25124,8 +25594,7 @@ document.addEventListener("submit", async (event) => {
     const submit = form.querySelector('button[type="submit"]');
     const formData = new FormData(form);
     const projectId = form.dataset.projectId || "";
-    await runAction(async () => {
-      const result = await postJson("/creative/project/update", {
+    await saveCreativeOperation('basic', "/creative/project/update", {
         id: projectId,
         title: formData.get("title"),
         work_type: formData.get("work_type"),
@@ -25134,12 +25603,7 @@ document.addEventListener("submit", async (event) => {
         target_chars: Number(formData.get("target_chars") || 0),
         premise: formData.get("premise"),
         next_hint: formData.get("next_hint"),
-      });
-      if (state.selectedBook?.kind === "creative" && state.selectedBook.id === projectId) {
-        await ensureCreativeProjectDetail(state.selectedBook, true);
-      }
-      return result;
-    }, "已保存作品信息", submit);
+      }, '作品信息');
     return;
   }
   if (form?.matches("[data-creative-outline-form]")) {
@@ -25147,16 +25611,10 @@ document.addEventListener("submit", async (event) => {
     const submit = form.querySelector('button[type="submit"]');
     const projectId = form.dataset.projectId || "";
     const formData = new FormData(form);
-    await runAction(async () => {
-      const result = await postJson("/creative/project/outline/update", {
+    await saveCreativeOperation('outline', "/creative/project/outline/update", {
         id: projectId,
         outline: formData.get("outline"),
-      });
-      if (state.selectedBook?.kind === "creative" && state.selectedBook.id === projectId) {
-        await ensureCreativeProjectDetail(state.selectedBook, true);
-      }
-      return result;
-    }, "已保存大纲", submit);
+      }, '大纲');
     return;
   }
   if (form?.matches("[data-creative-characters-form]")) {
@@ -25173,16 +25631,10 @@ document.addEventListener("submit", async (event) => {
       showToast(`角色格式错误：${error.message}`, "error");
       return;
     }
-    await runAction(async () => {
-      const result = await postJson("/creative/project/characters/update", {
+    await saveCreativeOperation('characters', "/creative/project/characters/update", {
         id: projectId,
         characters,
-      });
-      if (state.selectedBook?.kind === "creative" && state.selectedBook.id === projectId) {
-        await ensureCreativeProjectDetail(state.selectedBook, true);
-      }
-      return result;
-    }, "已保存角色", submit);
+      }, '角色');
     return;
   }
   if (form?.matches("[data-creative-chunk-form]")) {
@@ -25191,17 +25643,13 @@ document.addEventListener("submit", async (event) => {
     const projectId = form.dataset.projectId || "";
     const chunkIndex = Number(form.dataset.chunkIndex || -1);
     const formData = new FormData(form);
-    await runAction(async () => {
-      const result = await postJson("/creative/project/chunk/update", {
+    const body = String(formData.get("text") || "").trim();
+    if (!body || Array.from(body).length > 5000) { showToast("正文须为 1–5000 字，未提交；原内容保留。", "error"); return; }
+    await saveCreativeOperation('chunk:'+chunkIndex, "/creative/project/chunk/update", {
         id: projectId,
         chunk_index: chunkIndex,
         text: formData.get("text"),
-      });
-      if (state.selectedBook?.kind === "creative" && state.selectedBook.id === projectId) {
-        await ensureCreativeProjectDetail(state.selectedBook, true);
-      }
-      return result;
-    }, "已保存正文片段", submit);
+      }, '正文片段');
     return;
   }
   if (!form || !form.matches("[data-image-cache-editor]")) return;
@@ -25217,11 +25665,20 @@ document.addEventListener("submit", async (event) => {
       scope: formData.get("scope"),
       provider_id: formData.get("provider_id"),
     });
-    state.selectedImageCacheKey = updated?.key || key;
-    await loadImageCache();
-    showToast("图片缓存已保存");
+    if (updated?.key !== key || typeof updated.text !== "string") {
+      imageCacheActionResult("保存结果未确认，请先刷新列表核对，不要重复提交", true);
+      return;
+    }
+    state.imageCacheItems = state.imageCacheItems.map(item => item.key === key ? {...item, ...updated} : item);
+    renderImageCache();
+    try {
+      await loadImageCache();
+      imageCacheActionResult("图片缓存已保存");
+    } catch (error) {
+      imageCacheActionResult(`图片缓存已保存；最新列表读取失败，当前显示本次确认结果：${error.message}`, true);
+    }
   } catch (error) {
-    showToast(`保存失败：${error.message}`, "error");
+    imageCacheActionResult(`保存失败：${error.message}`, true);
   } finally {
     setActionBusy(submit, false);
   }
@@ -25251,6 +25708,7 @@ async function savePageTheme(theme) {
   renderAppearanceSettings();
   try {
     const result = await postJson("/settings/update", { settings: { page_theme: theme } });
+    if (result?.config_saved !== false) applyPageTheme({ explicit: true });
     showToast(result?.config_saved === false ? "主题已应用，但配置持久化失败；重启后可能恢复旧值" : "主题已保存", result?.config_saved === false ? "error" : "success");
   } catch (error) {
     state.pageTheme = previous;
@@ -25348,9 +25806,13 @@ $("#memoEditorForm")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   await openTLSNativeWorkspace("memo_notes");
 });
-$("#userFilter").addEventListener("input", renderUsers);
-$("#groupFilter").addEventListener("input", renderGroups);
+$("#userFilter").addEventListener("input", () => renderUsers(false));
+$("#userStatusFilter").addEventListener("change", () => renderUsers(false));
+$("#groupFilter").addEventListener("input", () => renderGroups(false));
+$("#groupStatusFilter").addEventListener("change", () => renderGroups(false));
 $("#worldbookMemberFilter").addEventListener("input", renderWorldbook);
+$("#worldbookObservationFilter").addEventListener("change", renderWorldbook);
+$("#worldbookObservationCheckBtn").addEventListener("click", checkWorldbookObservation);
 $("#featureFilter").addEventListener("input", renderFeatureSwitches);
 $("#worldbookMembers").addEventListener("click", async (event) => {
   const button = event.target instanceof Element ? event.target.closest("[data-worldbook-living-memory], [data-worldbook-living-memory-close], [data-worldbook-edit], [data-worldbook-member], [data-worldbook-save], [data-worldbook-memory-toggle], [data-worldbook-memory-delete], [data-worldbook-observation-accept], [data-worldbook-observation-reject], [data-worldbook-delete]") : null;
@@ -25405,11 +25867,12 @@ $("#worldbookAddGroupForm").addEventListener("submit", async (event) => {
 });
 $("#skillAddForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const element = event.currentTarget;
+  const form = new FormData(element);
   const name = String(form.get("name") || "").trim();
   if (!name) return;
   const level = Number(form.get("level") || 1);
-  const saved = await runAction(() => postJson("/skill/update", {
+  await saveSkillRecord({
     name,
     category: form.get("category") || "能力",
     level,
@@ -25418,17 +25881,60 @@ $("#skillAddForm").addEventListener("submit", async (event) => {
     aliases: form.get("aliases") || "",
     hidden: false,
     frozen: false,
-  }), "已添加技能", event.submitter);
-  if (saved) event.currentTarget.reset();
+  }, element, event.submitter, true);
 });
 $("#personalGoalAddForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   await openTLSNativeWorkspace("personal_goals");
 });
+function completeTokenStatsSnapshot(value) {
+  const object = (v) => v && typeof v === "object" && !Array.isArray(v);
+  const bucket = (v) => object(v) && ["total_tokens", "calls"].every((key) => typeof v[key] === "number" && Number.isFinite(v[key]));
+  const source = (v) => object(v) && bucket(v.totals) && ["by_day", "by_hour", "by_provider", "by_task", "recent"].every((key) => Array.isArray(v[key]));
+  return source(value) && source(value.external) && source(value.memory_plugin)
+    && object(value.budget) && typeof value.budget.used === "number" && Number.isFinite(value.budget.used)
+    && object(value.balance) && typeof value.memory_plugin.available === "boolean";
+}
+
+function renderTokenResetNotice() {
+  const result = state.tokenResetState;
+  const notice = $("#tokenResetNotice"), check = $("#tokenResetCheckBtn"), button = $("#resetTokenStatsBtn");
+  notice.hidden = !result;
+  notice.textContent = result?.text || "";
+  check.hidden = result?.status !== "unknown";
+  button.disabled = result?.status === "pending" || result?.status === "unknown";
+}
+
 $("#resetTokenStatsBtn").addEventListener("click", async () => {
   const button = $("#resetTokenStatsBtn");
-  if (!requireSecondClick(button, "token-reset", "再次点击清空 Token 统计", "再次点击清空")) return;
-  await runAction(() => postJson("/token/reset", {}), "已清空 Token 统计", button);
+  if (["pending", "unknown"].includes(state.tokenResetState?.status)) return;
+  if (!requireSecondClick(button, "token-reset", "再次点击将清空陪伴与主链的全部留存统计，并重置陪伴当日计入限额的用量；与当前筛选无关。", "再次点击确认清空")) return;
+  state.tokenResetState = { status: "pending", text: "正在提交统计清空；尚未确认结果。" };
+  setActionBusy(button, true);renderTokenResetNotice();showToast("正在处理...");
+  try {
+    const result = await postJson("/token/reset", {});
+    if (!completeTokenStatsSnapshot(result)) throw new Error("接口返回的统计结果不完整");
+    state.tokenResetState = { status: "confirmed", text: "接口已确认清空陪伴与主链统计，已显示本次返回值。记忆侧统计、余额及限额配置保留；后续调用仍会继续累计。" };
+    applyTokenStatsSnapshot(result);
+    showToast("已确认清空陪伴与主链统计");
+  } catch (error) {
+    state.tokenResetState = { status: "unknown", text: `清空结果未确认：${error.message}。保留原显示供对照，本页不重复提交；可仅核对当前统计。` };
+    showToast("清空结果未确认，请仅核对当前统计", "error");
+  } finally {
+    setActionBusy(button, false);button.textContent = "清空陪伴与主链统计";renderTokenResetNotice();
+  }
+});
+$("#tokenResetCheckBtn").addEventListener("click", async () => {
+  if (state.tokenResetState?.status !== "unknown") return;
+  const button = $("#tokenResetCheckBtn");setActionBusy(button, true);
+  try {
+    const current = await fetchJson("/token/stats");
+    if (!completeTokenStatsSnapshot(current)) throw new Error("当前统计返回不完整");
+    state.tokenResetState.text = "已读取当前统计；这不能证明先前未确认的清空请求是否完成或落盘。本页仍不重复提交，当前值可能包含后续新增调用。";
+    applyTokenStatsSnapshot(current);
+  } catch (error) {
+    state.tokenResetState.text = `清空结果仍未确认，当前统计读取失败：${error.message}。原显示保留，本页不重复提交。`;
+  } finally { setActionBusy(button, false);renderTokenResetNotice(); }
 });
 document.querySelectorAll("[data-token-view]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -25538,6 +26044,7 @@ bindProviderToolbar();
   form.addEventListener("change", () => markModuleFormDirty(form));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (formId === "roleplayProfileForm") return saveRoleplayWorkspace(form,event.submitter);
     const saved = await runAction(() => postJson("/settings/update", {
       settings: collectFormSettings(`#${formId}`),
     }), formId === "runtimeSettingsForm" ? "已保存运行设置" : "已保存模块调参", event.submitter);
@@ -25552,41 +26059,48 @@ bindSegmentedPreview();
 
 $("#addUserForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const element = event.currentTarget, form = new FormData(element);
   const userId = String(form.get("user_id") || "").trim();
   if (!userId) return;
-  state.selectedUserId = userId;
-  const saved = await runAction(() => postJson("/user/update", {
-    user_id: userId,
-    enabled: true,
-    nickname: form.get("nickname") || "",
-  }), "已添加私聊对象", event.submitter);
-  if (saved) event.currentTarget.reset();
+  const saved = await runAction(async () => {
+    const result = await postJson("/user/update", {user_id: userId, enabled: true, nickname: form.get("nickname") || ""});
+    state.selectedUserId = result.user_id || userId;
+    state.userDetailSection = "profile";
+    return result;
+  }, "已添加私聊对象", event.submitter);
+  if (saved) element.reset();
 });
 
 $("#addGroupForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const element = event.currentTarget, form = new FormData(element);
   const groupId = String(form.get("group_id") || "").trim();
   const listMode = String(form.get("list_mode") || "none");
   if (!groupId) return;
-  state.selectedGroupId = groupId;
+  let created = false;
   const saved = await runAction(async () => {
     let result = await postJson("/group/update", { group_id: groupId, enabled: true });
+    created = true;
+    state.selectedGroupId = groupId;
+    state.groupDetailSection = "status";
     if (listMode !== "none") {
       const group = state.overview?.group || {};
       const whitelist = new Set(group.whitelist || []);
       const blacklist = new Set(group.blacklist || []);
       if (listMode === "whitelist") whitelist.add(groupId);
       if (listMode === "blacklist") blacklist.add(groupId);
-      result = await postJson("/settings/update", {
-        group_whitelist_ids: [...whitelist],
-        group_blacklist_ids: [...blacklist],
-      });
+      try {
+        result = await postJson("/settings/update", {
+          group_whitelist_ids: [...whitelist], group_blacklist_ids: [...blacklist],
+        });
+      } catch (error) {
+        throw new Error(`群观测已创建；名单保存未确认：${error.message}。请先在群聊名单核对，勿反复新增。`);
+      }
     }
     return result;
   }, "已添加群聊观测", event.submitter);
-  if (saved) event.currentTarget.reset();
+  if (saved) element.reset();
+  else if (created) await loadAll();
 });
 
 $("#exportSnapshotBtn").addEventListener("click", async () => {
@@ -25600,7 +26114,7 @@ $("#exportSnapshotBtn").addEventListener("click", async () => {
 });
 
 $("#exportConfigBtn").addEventListener("click", async () => {
-  await runAction(handleConfigExport, "", $("#exportConfigBtn"));
+  await handleConfigExport();
 });
 
 $("#importConfigFile").addEventListener("change", async (event) => {
@@ -25617,11 +26131,11 @@ $("#importConfigFile").addEventListener("change", async (event) => {
 });
 
 $("#previewConfigImportBtn").addEventListener("click", async () => {
-  await runAction(previewConfigImport, "", $("#previewConfigImportBtn"));
+  await previewConfigImport();
 });
 
 $("#applyConfigImportBtn").addEventListener("click", async () => {
-  await runAction(applyConfigImport, "", $("#applyConfigImportBtn"));
+  await applyConfigImport();
 });
 
 $("#configImportMode").addEventListener("change", () => {
@@ -25629,6 +26143,8 @@ $("#configImportMode").addEventListener("change", () => {
 });
 
 $("#configAllowChecksumMismatch").addEventListener("change", () => {
+  ++state.configImportPreviewSerial;
+  state.configImportPreviewBusy = false;
   state.configImportPreview = null;
   renderConfigMigrationPreview();
 });
@@ -25658,7 +26174,7 @@ $("#storageConfigForm").addEventListener("submit", async (event) => {
 $("#configBackupList").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-config-restore]");
   if (!button) return;
-  await runAction(() => restoreConfigBackup(button.dataset.configRestore), "", button);
+  await restoreConfigBackup(button.dataset.configRestore);
 });
 
 $("#accessForm").addEventListener("submit", async (event) => {
@@ -25745,44 +26261,135 @@ $("#enableSafeFeaturesBtn").addEventListener("click", () => {
   renderFeatureSwitches();
 });
 
-$("#saveProvidersBtn").addEventListener("click", async () => {
-  if (!window.PrivateCompanionProviderTree?.currentProviderValues) {
-    showToast("模型配置面板脚本未加载，请刷新拓展页", "error");
-    return;
+function providerFormSnapshot() {
+  return {
+    providers: currentProviderValues(), timeouts: currentProviderTimeoutValues(), fallbacks: currentProviderFallbackValues(),
+    peak: window.PrivateCompanionProviderTree.currentDeepseekPeakValues({ document, state }), mode: currentProviderConfigMode(),
+  };
+}
+
+function providerReceiptMap(raw, numbers = false) {
+  if (typeof raw === "string") { try { raw = JSON.parse(raw); } catch (_error) { return null; } }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  if (!Object.values(raw).every(v => numbers ? Number.isInteger(v) && v >= 5 && v <= 600 : typeof v === "string")) return null;
+  return raw;
+}
+
+function providerSame(a, b) {
+  if (a && b && typeof a === "object" && typeof b === "object") {
+    const keys = Object.keys(a);return keys.length === Object.keys(b).length && keys.every(k => providerSame(a[k], b[k]));
   }
-  const values = currentProviderValues();
-  const timeoutOverrides = currentProviderTimeoutValues();
-  const fallbackOverrides = currentProviderFallbackValues();
-  const deepseekPeak = window.PrivateCompanionProviderTree.currentDeepseekPeakValues({ document, state });
-  const provider_config_mode = currentProviderConfigMode();
-  const providers = {};
-  Object.keys(providerLabels).forEach((key) => {
-    if (visibleConfigKey(key)) providers[key] = values[key] || "";
+  return a === b;
+}
+
+function providerReceiptComplete(result, payload) {
+  if (!result || typeof result.config_saved !== "boolean" || !result.providers || !result.settings || !result.changed) return false;
+  if (!Object.keys(payload.providers).every(k => typeof result.providers[k] === "string" && result.changed[k] === result.providers[k])) return false;
+  if (result.settings.provider_config_mode !== payload.settings.provider_config_mode) return false;
+  return Object.keys(payload.settings).every(k => {
+    const value = result.settings[k], changed = result.changed[k];
+    if (k === "model_timeout_overrides" || k === "model_fallback_overrides") {
+      const a = providerReceiptMap(value, k === "model_timeout_overrides"), b = providerReceiptMap(changed, k === "model_timeout_overrides");
+      return a !== null && b !== null && providerSame(a, b);
+    }
+    return typeof value === typeof payload.settings[k] && providerSame(value, changed);
   });
-  providers.DEEPSEEK_PEAK_REPLACEMENT_PROVIDER_ID = deepseekPeak.provider;
-  const saved = await runAction(
-    () => postJson("/settings/update", { settings: {
-      provider_config_mode,
-      model_timeout_overrides: timeoutOverrides,
-      model_fallback_overrides: fallbackOverrides,
-      enable_deepseek_peak_replacement: deepseekPeak.enabled,
-      deepseek_peak_windows: deepseekPeak.windows,
-      deepseek_peak_timezone: deepseekPeak.timezone,
-      deepseek_peak_match_keywords: deepseekPeak.keywords,
-    }, providers, overwrite_provider_modes: true }),
-    "已保存模型配置，并覆盖 quick / precision 两套分流",
-    $("#saveProvidersBtn")
-  );
-  if (!saved) return;
-  state.overview = state.overview || {};
-  state.overview.settings = { ...(state.overview.settings || {}), provider_config_mode };
-  state.providerDraft = { ...state.providerDraft, ...providers };
-  state.providerTimeoutDraft = { ...timeoutOverrides };
-  state.providerFallbackDraft = { ...fallbackOverrides };
-  state.overview.settings.model_timeout_overrides = { ...timeoutOverrides };
-  state.overview.settings.model_fallback_overrides = { ...fallbackOverrides };
-  state.providerConfigMode = provider_config_mode;
-  renderProviders();
+}
+
+function providerReadComplete(result) {
+  return result?.providers && Object.keys(providerLabels).filter(visibleConfigKey).every(k => typeof result.providers[k] === "string")
+    && ["quick", "precision"].includes(result.settings?.provider_config_mode)
+    && providerReceiptMap(result.settings.model_timeout_overrides, true) !== null
+    && providerReceiptMap(result.settings.model_fallback_overrides) !== null;
+}
+
+function providerLaterValues(current, submitted) {
+  const result = {};
+  new Set([...Object.keys(current), ...Object.keys(submitted)]).forEach(k => {
+    if (!providerSame(current[k] ?? "", submitted[k] ?? "")) result[k] = current[k] ?? "";
+  });
+  return result;
+}
+
+function applyProviderRead(result) {
+  state.overview = { ...state.overview, providers: { ...result.providers },
+    settings: { ...state.overview?.settings, ...result.settings }, deepseek_peak_routing: result.deepseek_peak_routing };
+}
+
+function renderProviderSaveNotice() {
+  const record = state.providerSave, busy = record?.status === "pending", unknown = record?.status === "unknown";
+  const notice = $("#providerSaveNotice");
+  if (notice) { notice.hidden = !record?.message;notice.textContent = record?.message || ""; }
+  const savedMode = state.overview?.settings?.provider_config_mode;
+  const mode = $("#providerSavedMode");if (mode) mode.textContent = savedMode === "quick" ? "快速配置" : savedMode === "precision" ? "精准配置" : "尚未读取";
+  const save = $("#saveProvidersBtn");if (save) save.disabled = busy || unknown;
+  const read = $("#providerReadBtn");if (read) read.disabled = busy || Boolean(state.providerReadBusy);
+}
+
+$("#saveProvidersBtn").addEventListener("click", async () => {
+  if (!window.PrivateCompanionProviderTree?.currentProviderValues) { showToast("模型配置面板脚本未加载，请刷新拓展页", "error");return; }
+  if (["pending", "unknown"].includes(state.providerSave?.status) || state.providerReadBusy) return;
+  const submitted = providerFormSnapshot(), providers = {};
+  Object.keys(providerLabels).forEach(k => { if (visibleConfigKey(k)) providers[k] = submitted.providers[k] || ""; });
+  providers.DEEPSEEK_PEAK_REPLACEMENT_PROVIDER_ID = submitted.peak.provider;
+  const payload = { providers, overwrite_provider_modes: true, settings: {
+    provider_config_mode: submitted.mode, model_timeout_overrides: submitted.timeouts, model_fallback_overrides: submitted.fallbacks,
+    enable_deepseek_peak_replacement: submitted.peak.enabled, deepseek_peak_windows: submitted.peak.windows,
+    deepseek_peak_timezone: submitted.peak.timezone, deepseek_peak_match_keywords: submitted.peak.keywords,
+  } };
+  const button = $("#saveProvidersBtn");
+  state.providerSave = { status: "pending", message: "正在保存两套分流配置。等待期间的后续输入会保留，不会自动补交。" };
+  setActionBusy(button, true);renderProviderSaveNotice();
+  try {
+    const result = await postJson("/settings/update", payload);
+    if (!providerReceiptComplete(result, payload)) throw new Error("返回缺少完整模型或配置确认字段");
+    const current = providerFormSnapshot();
+    applyProviderRead(result);
+    if (result.config_saved === false) {
+      state.providerDraft = { ...current.providers };
+      state.providerTimeoutDraft = providerLaterValues(current.timeouts, providerReceiptMap(result.settings.model_timeout_overrides, true));
+      state.providerFallbackDraft = providerLaterValues(current.fallbacks, providerReceiptMap(result.settings.model_fallback_overrides));
+      state.providerSave = { status: "failed", message: "服务端明确未能保存到配置文件；运行态可能已经改变。输入已保留，请先核对再决定是否重新保存。读取运行态不证明已写入文件。" };
+    } else {
+      // Only retire the submitted values. Later edits stay as drafts over the confirmed server expansion.
+      state.providerDraft = providerLaterValues(current.providers, submitted.providers);
+      state.providerTimeoutDraft = providerLaterValues(current.timeouts, submitted.timeouts);
+      state.providerFallbackDraft = providerLaterValues(current.fallbacks, submitted.fallbacks);
+      const confirmedPeak = { enabled: result.settings.enable_deepseek_peak_replacement, provider: result.providers.DEEPSEEK_PEAK_REPLACEMENT_PROVIDER_ID,
+        windows: result.settings.deepseek_peak_windows, timezone: result.settings.deepseek_peak_timezone, keywords: result.settings.deepseek_peak_match_keywords };
+      for (const [key, selector] of Object.entries({enabled:"[data-deepseek-peak-enabled]",provider:"[data-deepseek-peak-provider-input]",windows:"[data-deepseek-peak-windows]",timezone:"[data-deepseek-peak-timezone]",keywords:"[data-deepseek-peak-keywords]"})) {
+        const input = document.querySelector(selector);
+        if (input && providerSame(current.peak[key], submitted.peak[key])) { if (key === "enabled") input.checked = confirmedPeak[key];else input.value = confirmedPeak[key]; }
+      }
+      state.providerSave = { status: "confirmed", message: "已确认保存，已采用服务端返回的两套分流配置；保存等待期间的后续输入已保留为草稿，未自动提交。配置读取或测试结果不等于每次实际调用模型。" };
+    }
+    state.providerConfigMode = current.mode;
+    renderProviders();showToast(result.config_saved ? "模型配置已确认保存" : "配置文件保存失败，输入已保留", result.config_saved ? "success" : "error");
+  } catch (error) {
+    state.providerSave = { status: "unknown", message: `保存结果未确认：${error.message}。本页先仅读取核对，不重复提交；不能据此撤销或判断已开始的保存是否完成。` };
+    showToast("保存结果未确认，请先核对", "error");
+  } finally { setActionBusy(button, false);renderProviderSaveNotice(); }
+});
+
+$("#providerReadBtn").addEventListener("click", async () => {
+  if (state.providerReadBusy || state.providerSave?.status === "pending") return;
+  state.providerReadBusy = true;renderProviderSaveNotice();
+  try {
+    const result = await fetchJson("/overview");
+    if (!providerReadComplete(result)) throw new Error("配置读取不完整");
+    const current = providerFormSnapshot();applyProviderRead(result);
+    state.providerDraft = { ...current.providers };
+    state.providerTimeoutDraft = providerLaterValues(current.timeouts, providerReceiptMap(result.settings.model_timeout_overrides, true));
+    state.providerFallbackDraft = providerLaterValues(current.fallbacks, providerReceiptMap(result.settings.model_fallback_overrides));
+    state.providerConfigMode = current.mode;
+    const status = state.providerSave?.status || "read";
+    state.providerSave = { status, message: status === "unknown"
+      ? "已读取当前服务端配置，草稿保留；相同内容不能证明先前未确认的写入已经完成或落盘，本页不自动重复提交。"
+      : "已读取当前服务端配置，草稿保留。读取反映运行态，不证明未确认的保存已完成或写入文件。" };
+    renderProviders();
+  } catch (error) {
+    state.providerSave = { status: state.providerSave?.status || "read", message: `${state.providerSave?.message || ""} 读取失败：${error.message}；保留原输入和最近读取。` };
+  } finally { state.providerReadBusy = false;renderProviderSaveNotice(); }
 });
 
 $("#testAllProvidersBtn").addEventListener("click", async () => {
@@ -25795,4 +26402,76 @@ $("#testAllProvidersBtn").addEventListener("click", async () => {
   }
 });
 
+
+function syncNativeCompanionNavigation(tab) {
+  const root = document.getElementById("nativeCompanionNavigation");
+  if (!root) return;
+  root.querySelectorAll("[data-tab]").forEach((button) => {
+    const active = button.dataset.tab === tab;
+    button.setAttribute("aria-current", active ? "page" : "false");
+    if (active) document.getElementById("nativeCompanionNavigationTitle").textContent = button.textContent.trim();
+  });
+  const hash = tab === "dashboard" ? "" : `#tab=${encodeURIComponent(tab)}`;
+  if (location.hash !== hash) history.replaceState(history.state, "", `${location.pathname}${location.search}${hash}`);
+  if (matchMedia("(max-width:760px)").matches) root.open = false;
+}
+
+function initNativeCompanionNavigation() {
+  const root = document.getElementById("nativeCompanionNavigation");
+  if (!root) return;
+  const narrow = matchMedia("(max-width:760px)");
+  root.open = !narrow.matches;
+  narrow.addEventListener("change", () => { root.open = !narrow.matches; });
+  document.getElementById("nativeCompanionSearch").addEventListener("input", (event) => {
+    const query = event.target.value.trim().toLocaleLowerCase();
+    let visible = 0;
+    root.querySelectorAll("[data-tab]").forEach((button) => {
+      button.hidden = !button.textContent.toLocaleLowerCase().includes(query);
+      if (!button.hidden) visible++;
+    });
+    root.querySelectorAll(".aw-nav-group").forEach((group) => { group.hidden = !group.querySelector("button:not([hidden])"); });
+    root.querySelector(".aw-nav-empty").hidden = visible > 0;
+  });
+  // Technical projections remain accessible, but do not occupy the daily view by default.
+  for (const id of ["dailyState", "livingMemoryBox", "memoryComposition", "interactionImpact"]) {
+    const target = document.getElementById(id);
+    const card = target?.closest("article");
+    if (!card || card.closest(".aw-native-fold")) continue;
+    const fold = document.createElement("details"); fold.className = "aw-native-fold";
+    const title = document.createElement("summary");
+    title.textContent = card.querySelector("h2,h3,h4")?.textContent || "详细状态";
+    fold.append(title); card.before(fold); fold.append(card);
+  }
+  const requested = new URLSearchParams(location.hash.slice(1)).get("tab");
+  const exists = [...root.querySelectorAll("[data-tab]")].some((button) => button.dataset.tab === requested);
+  if (exists && requested !== "dashboard") switchTab(requested);
+  else syncNativeCompanionNavigation("dashboard");
+}
+
+initNativeCompanionNavigation();
 loadAll();
+
+// Local viewing controls reuse the current overview; no additional fetch or timer.
+document.querySelectorAll('[data-proactive-view]').forEach(button => button.addEventListener('click', () => {
+  state.proactiveRecordView = button.dataset.proactiveView;
+  state.proactiveRecordStatus = "all"; state.proactiveRecordSource = "all"; state.proactiveRecordPage = 0;
+  renderProactiveRecords();
+}));
+$("#proactiveRecordQuery").addEventListener('input', event => {
+  state.proactiveRecordQuery = event.target.value; state.proactiveRecordPage = 0; renderProactiveRecords();
+});
+for (const [id, key] of [["proactiveRecordUser", "proactiveCandidateFilter"], ["proactiveRecordStatus", "proactiveRecordStatus"], ["proactiveRecordSource", "proactiveRecordSource"]]) {
+  $("#" + id).addEventListener('change', event => {state[key] = event.target.value; state.proactiveRecordPage = 0; renderProactiveRecords();});
+}
+$("#proactiveRecordReset").addEventListener('click', () => {
+  state.proactiveRecordQuery = ""; state.proactiveCandidateFilter = "all"; state.proactiveRecordStatus = "all";
+  state.proactiveRecordSource = "all"; state.proactiveRecordPage = 0; $("#proactiveRecordQuery").value = ""; renderProactiveRecords();
+});
+$("#proactiveRecordPrevious").addEventListener('click', () => {state.proactiveRecordPage--; renderProactiveRecords();});
+$("#proactiveRecordNext").addEventListener('click', () => {state.proactiveRecordPage++; renderProactiveRecords();});
+
+// Readback does not resubmit writes or replace open editor fields.
+document.addEventListener("click", event => {
+  const button = event.target.closest?.('[data-creative-readback]');
+  if (button) void readCreativeOperation(button.dataset.creativeReadback);
+});

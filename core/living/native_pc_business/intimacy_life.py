@@ -21,7 +21,7 @@ from astrbot.api import logger
 
 from .helpers import _now_ts, _safe_float, _safe_int, _single_line
 
-# ---------- 种子语料（角色声线：短句、动作先于语言、不解释） ----------
+# ---------- 种子语料（德克萨斯声线：短句、动作先于语言、不解释） ----------
 # tier: familiar=轻熟 / ambiguous=暧昧 / deep=深爱 / passionate=缠绵
 
 SEED_CORPUS = [
@@ -517,6 +517,8 @@ class IntimacyLifeMixin:
 
     async def _maybe_distill_intimacy_corpus(self, user: dict[str, Any]) -> None:
         """每日一次：从真实对话蒸馏高质量亲密回合与新词汇。"""
+        if not _single_line(user.get("umo"), 80):
+            return
         if not self._intimacy_enabled():
             return
         if not bool(getattr(self, "intimacy_distill_enabled", True)):
@@ -528,7 +530,7 @@ class IntimacyLifeMixin:
         # 失败冷却：3小时内不重试（避免每tick打一次）
         if _now_ts() < _safe_float(state.get("distill_retry_after"), 0):
             return
-        session = _single_line(user.get("umo"), 80) or "default:FriendMessage:2117919529"
+        session = _single_line(user.get("umo"), 80) or ""
         turns = self._intimacy_recent_dialogue(session)
         if len(turns) < 6:
             return

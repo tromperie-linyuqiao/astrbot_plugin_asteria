@@ -105,6 +105,8 @@ def get(api, username, session, query):
                 people=[row for identity in thread['fields']['character_ids'] if (row := service.get_character(scope, identity))])
         else:
             value = service.overview(scope)
+            from .chat_daily_view import project
+            value.update(project(item[1], scope, value, now=service.journal.clock()))
         value = dict(value, status=coordinator.status(scope), session_id=session.session_id, scope=scope,
             evidence_kind='roleplay_event', shared_fictional_archive=scope['platform'] != 'webchat')
         current(api, username, session, item)

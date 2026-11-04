@@ -2,17 +2,17 @@
   "$meta": {
     "schema_version": 1,
     "name": "星栖 Asteria for AstrBot",
-    "version": "2026-11-01",
+    "version": "2026-11-04",
     "homepage": "https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria",
     "repository": "https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria",
     "description": "Asteria单插件来源；非AstrBot官方收录声明。"
   },
-  "tromperie-linyuqiao/astrbot_plugin_virtual_body": {
+  "tromperie-linyuqiao/astrbot_plugin_asteria": {
     "author": "tromperie-linyuqiao",
-    "name": "astrbot_plugin_virtual_body",
-    "version": "0.74.2",
+    "name": "astrbot_plugin_asteria",
+    "version": "0.75.2",
     "repo": "https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria",
-    "display_name": "星栖 Asteria · AstrBot 伴侣系统",
+    "display_name": "星栖 Asteria",
     "short_desc": "AstrBot 角色陪伴插件，整合记忆、状态、互动与日程。",
     "desc": "为 AstrBot 提供角色持续状态、长期记忆、虚拟身体、场景互动、日程提醒与感知接入，配套 Asteria Chat 客户端。",
     "logo": "https://cdn.jsdelivr.net/gh/tromperie-linyuqiao/astrbot_plugin_asteria@main/logo.png",

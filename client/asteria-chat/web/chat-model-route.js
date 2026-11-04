@@ -3,13 +3,13 @@
 /* The server owns session model selection. This panel sends no chat requests. */
 window.ChatModelRoute = (() => {
   let dialog, content, status, primary, fallback, draftNote, saveButton, resetButton, refreshButton, quick;
-  let owner = '', session = '', epoch = 0, busy = false, saved = null, draft = null, quickScope = '';
-  const pendingWrites = new Map();
-  const scope = () => JSON.stringify([state.server, state.username, state.activeId]);
+  let busy = false, saved = null, draft = null, quickScope = '';
+  const lifetime = window.ChatSessionScope.create(() => state, () => !!dialog?.open);
+  const scope = lifetime.key;
   const node = (tag, text, className = '') => { const item = document.createElement(tag); if (text !== undefined) item.textContent = text; item.className = className; return item; };
   const action = (label, fn, className = 'text-button') => { const item = node('button', label, className); item.type = 'button'; item.addEventListener('click', fn); return item; };
-  const ticket = () => ({ owner, session, epoch });
-  const current = t => dialog?.open && state.authenticated && owner === scope() && t.owner === owner && t.session === session && t.session === state.activeId && t.epoch === epoch;
+  const ticket = lifetime.ticket;
+  const current = lifetime.current;
   const sourceLabels = { session_override: '本会话首选', session_fallback: '本会话备选', task_preferred: '任务首选', task_fallback: '任务备选', sdk_session_default: '会话 / 系统默认', unavailable: '暂无可用模型' };
   const choices = () => ({ model_provider_id: primary.value, model_fallback_provider_id: fallback.value });
   const same = (a, b) => a && b && a.model_provider_id === b.model_provider_id && a.model_fallback_provider_id === b.model_fallback_provider_id;
@@ -30,7 +30,7 @@ window.ChatModelRoute = (() => {
   function shortcut(text, title) { if (quick) { quickScope = scope(); quick.textContent = text; quick.title = title; } }
   function close() {
     if (busy) shortcut('模型', '查看和切换本会话模型');
-    epoch++; owner = ''; session = ''; saved = draft = null; busy = false;
+    lifetime.invalidate(); saved = draft = null; busy = false;
     if (dialog) { content.replaceChildren(); primary.replaceChildren(); fallback.replaceChildren(); draftNote.textContent = ''; status.textContent = ''; if (dialog.open) dialog.close(); }
   }
   function setup() {
@@ -113,8 +113,8 @@ window.ChatModelRoute = (() => {
     const editing = dirty() ? { ...draft } : null;
     busy = true; controls(); status.textContent = '正在读取本会话模型设置…'; shortcut('模型 · 读取中', '正在核对当前会话的已保存配置');
     try {
-      const pending = pendingWrites.get(t.owner);
-      if (pending) { status.textContent = '正在等待先前保存结束，再读取服务器设置…'; try { await pending; } catch (_) {} if (!current(t)) return; }
+      if (lifetime.waiting(t)) status.textContent = '正在等待先前保存结束，再读取服务器设置…';
+      if (!await lifetime.settlePrevious(t)) return;
       const value = await apiClient.json('GET', '/chat/model-route?session_id=' + encodeURIComponent(t.session)); if (!current(t)) return;
       saved = snapshot(value, t); draft = editing || { ...saved.override }; render();
       status.textContent = dirty() ? '已读取服务器设置，未保存的选择已保留；保存前请核对。' : '已从服务器读取。此处配置解析不代表已成功生成回复。';
@@ -129,23 +129,23 @@ window.ChatModelRoute = (() => {
     const revision = saved.revision, submitted = { ...draft }; let request;
     busy = true; controls(); status.textContent = '正在保存当前会话选择…';
     try {
-      request = apiClient.json('POST', '/chat/model-route', { session_id: t.session, expected_revision: revision, changes: submitted }); pendingWrites.set(t.owner, request);
+      request = apiClient.json('POST', '/chat/model-route', { session_id: t.session, expected_revision: revision, changes: submitted }); lifetime.track(t, request);
       const value = await request; if (!current(t)) return;
       const confirmed = snapshot(value, t);
       if (confirmed.revision <= revision || !same(confirmed.override, submitted)) throw new Error('服务器返回未确认本次选择，请重新读取。');
       saved = confirmed; draft = { ...saved.override }; render();
       status.textContent = reset ? '本会话已恢复继承，后续请求沿用任务 / 系统配置。' : '已保存到当前会话。后续请求将重新解析配置；请以模型回执核对实际调用。';
     } catch (error) { if (current(t)) { saved = null; draft = submitted; render(); shortcut('模型 · 待核对', '保存结果尚未确认，请重新读取'); status.textContent = errorText(error) + ' 请重新读取核对实际保存结果；不会自动重试写入。'; } }
-    finally { if (request && pendingWrites.get(t.owner) === request) pendingWrites.delete(t.owner); if (current(t)) { busy = false; controls(); } }
+    finally { if (request) lifetime.release(t, request); if (current(t)) { busy = false; controls(); } }
   }
   function open() {
     if (!state.authenticated || !state.activeId) { showNotice('请先打开自己的聊天会话。'); return; }
-    if (dialog?.open && owner === scope()) return;
-    setup(); close(); owner = scope(); session = state.activeId; epoch++; dialog.showModal(); render(); controls(); void read();
+    if (lifetime.active()) return;
+    setup(); close(); lifetime.enter(); dialog.showModal(); render(); controls(); void read();
   }
   document.addEventListener('DOMContentLoaded', () => {
     const row = document.querySelector('.conversation-title-row'); if (!row) return;
     quick = action('模型', open, 'model-route-shortcut'); quick.id = 'chat-model-route-open'; quick.setAttribute('aria-label', '查看和切换本会话模型'); row.append(quick);
   }, { once: true });
-  return { open, closeActive: () => { if (!dialog?.open) return false; close(); return true; }, scopeChanged: () => { if (owner && (!state.authenticated || owner !== scope())) close(); const next = state.authenticated ? scope() : ''; if (quick && next !== quickScope) { quickScope = next; quick.textContent = '模型'; quick.title = '查看和切换本会话模型'; } } };
+  return { open, closeActive: () => { if (!dialog?.open) return false; close(); return true; }, scopeChanged: () => { if (dialog?.open && !lifetime.active()) close(); const next = state.authenticated ? scope() : ''; if (quick && next !== quickScope) { quickScope = next; quick.textContent = '模型'; quick.title = '查看和切换本会话模型'; } } };
 })();

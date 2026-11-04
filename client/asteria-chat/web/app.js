@@ -39,7 +39,7 @@ const storage = {
   get(key) { try { return localStorage.getItem(key) || ''; } catch (_) { return ''; } },
   set(key, value) { try { value ? localStorage.setItem(key, value) : localStorage.removeItem(key); } catch (_) {} }
 };
-const pref = name => 'asteria-chat.' + name;
+const pref = name => 'texas-chat.' + name;
 const draftKey = id => pref('draft.' + encodeURIComponent(state.server + '|' + state.username) + '.' + (id || 'new'));
 const parse = value => typeof value === 'string' ? JSON.parse(value) : value;
 let chatCacheEpoch = 0;
@@ -155,11 +155,11 @@ function bridgeRequest(method, path, body, options = {}) {
       if (completeNative) {
         const pending = state.requests.get(requestId); if (pending) pending.expired = true;
       } else state.requests.delete(requestId);
-      const error = new Error('等待服务器超时。发送结果需要先同步记录确认，请勿连续重复发送。');
+      const error = new Error(path === '/chat/voice/synthesize' ? '合成等待超时，请刷新语音记录确认结果；不会自动再次合成。' : '等待服务器超时。发送结果需要先同步记录确认，请勿连续重复发送。');
       error.status = 0;
       if (completeNative) error.nativeCompletionUnknown = true;
       reject(error);
-    }, method === 'POST' && [API.send,'/chat/regenerate'].includes(path) ? 180000 : 45000);
+    }, method === 'POST' && [API.send,'/chat/regenerate'].includes(path) ? 180000 : method === 'POST' && path === '/chat/voice/synthesize' ? 110000 : 45000);
     state.requests.set(requestId, { resolve, reject, timeout, completeNative, accept: options.accept, authEpoch: chatAuthEpoch });
     try {
       if(options.streaming && method==='GET' && typeof bridge.requestReadStream==='function')bridge.requestReadStream(requestId,path);
@@ -169,7 +169,7 @@ function bridgeRequest(method, path, body, options = {}) {
     catch (error) { clearTimeout(timeout); state.requests.delete(requestId); if (completeNative) completeNative(); reject(error); }
   });
 }
-function nativeAsync(method, args, timeoutMs = 45000) {
+function nativeAsync(method, args, timeoutMs = 45000, onDispatch) {
   return new Promise((resolve, reject) => {
     let bridge;
     try { bridge = native(); if (typeof bridge[method] !== 'function') throw new Error('此功能需要新版 Asteria Chat 应用。'); }
@@ -177,12 +177,12 @@ function nativeAsync(method, args, timeoutMs = 45000) {
     const requestId = 'tc-media-' + Date.now().toString(36) + '-' + (++state.requestSerial);
     const timeout = setTimeout(() => {
       state.requests.delete(requestId);
-      const error = new Error('文件操作等待超时，结果尚未确认；应用不会自动重新上传或发送。');
+      const error = new Error(['voiceCommand','playCloudVoice','recognizeSpeech'].includes(method) ? '手机语音处理未完成，请查看语音面板；不会自动重复合成。' : '文件操作等待超时，结果尚未确认；应用不会自动重新上传或发送。');
       error.nativeTimeout = true;
       reject(error);
     }, timeoutMs);
     state.requests.set(requestId, { resolve, reject, timeout, authEpoch: chatAuthEpoch });
-    try { bridge[method](requestId, ...args); }
+    try { if (onDispatch) onDispatch(requestId); bridge[method](requestId, ...args); }
     catch (error) { clearTimeout(timeout); state.requests.delete(requestId); reject(error); }
   });
 }
@@ -252,6 +252,10 @@ function currentAppearance() {
 function appearanceBaseName() {
   return '助手';
 }
+function currentRoleName() {
+  const appearance = currentAppearance(), persona = configuredPersonaForCurrent();
+  return appearance.displayName || (persona?.status === 'configured' && persona.displayName) || appearanceBaseName();
+}
 /* One wallpaper layer behind every region: the sidebar, header, transcript and
    composer are translucent, so a chosen palette or picture covers the whole app
    instead of only the middle column. */
@@ -318,13 +322,14 @@ function applyAppearance() {
   if (appearance.displayName) $('conversation-title').textContent = appearance.displayName;
   paintAppearance($('app'), appearance);
   if (state.authenticated && state.activeId) {
-    const name = appearance.displayName || '伙伴', avatar = appearance.avatar || '';
+    const name = currentRoleName(), avatar = appearance.avatar || '';
     const key = JSON.stringify([state.server, state.username, state.activeId, name, avatar]);
     if (key !== lastNotificationIdentity) {
       try {
         const bridge = native();
         if (typeof bridge.setNotificationIdentity === 'function') {
-          bridge.setNotificationIdentity(state.activeId, name, avatar); lastNotificationIdentity = key;
+          const result = parse(bridge.setNotificationIdentity(state.activeId, name, avatar));
+          if (result?.ok === true) lastNotificationIdentity = key;
         }
       } catch (_) {}
     }
@@ -832,7 +837,7 @@ function renderAttachments() {
 async function chooseAttachment() {
   if (!state.authenticated) { openSettings(); return; }
   if (state.sending || state.loading || state.attaching || state.appearanceBusy || state.exportBusy || state.remoteRunning) return;
-  if(primaryConnectionId()&&state.activeId!==primaryConnectionId()){showNotice('这里是历史记录，请回到伙伴再发送。');return;}
+  if(primaryConnectionId()&&state.activeId!==primaryConnectionId()){showNotice('这里是历史记录，请回到当前 Bot再发送。');return;}
   if (attachmentQueue().length >= 4) { showNotice('每条消息最多附带 4 个文件。'); return; }
   state.attaching = true; renderChrome();
   let item;
@@ -1059,7 +1064,7 @@ function buildConversationMarkdown(messages, title, at = new Date()) {
   }
   if (!count) throw new Error('当前没有可导出的已确认消息。');
   const localDate = [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
-  return { markdown: chunks.join(''), bytes, count, title, filename: 'asteria-chat-' + localDate + '.md' };
+  return { markdown: chunks.join(''), bytes, count, title, filename: 'texas-chat-' + localDate + '.md' };
 }
 function exportBlocked() {
   return state.sending || state.loading || state.creating || state.attaching || state.appearanceBusy
@@ -1270,11 +1275,11 @@ function renderChrome() {
   const phase=state.replyPhase;
   $('reply-status').hidden = !state.sending && !state.remoteRunning && !['failed','unknown'].includes(phase);
   $('reply-status').dataset.phase=phase;
-  const phases={submitting:'正在提交这条消息…',queued:'消息已接收，等待开始回复…',generating:'伙伴正在组织回复…',streaming:'伙伴正在输入…',completed:'回复已生成，正在同步保存记录…',failed:'本轮回复未完成，可同步查看实际记录。',unknown:'连接中断，回复结果待同步；不会自动重发。'};
+  const phases={submitting:'正在提交这条消息…',queued:'消息已接收，等待开始回复…',generating:currentRoleName()+'正在组织回复…',streaming:currentRoleName()+'正在输入…',completed:'回复已生成，正在同步保存记录…',failed:'本轮回复未完成，可同步查看实际记录。',unknown:'连接中断，回复结果待同步；不会自动重发。'};
   $('reply-status-text').textContent=state.sending || state.remoteRunning
     ? (phases[phase]||'TLS正在处理这轮消息…') : (phases[phase]||'');
   $('empty-login').hidden = state.authenticated;
-  $('empty-description').textContent = state.authenticated ? '登录后持续连接伙伴，之前的聊天与日常都会留在这里。' : '连接你的服务器，继续与伙伴的对话。';
+  $('empty-description').textContent = state.authenticated ? '持续连接当前 Bot，之前的聊天与日常都会留在这里。' : '连接你的服务器，继续与角色的对话。';
   $('draft-status').textContent = attachmentQueue().length ? '文字草稿保存在本机 · 附件在当前页面待发送' : $('draft').value ? '草稿已保存在这台设备' : '草稿仅保存在这台设备';
   $('menu-delete').disabled = !state.activeId || state.activeId === primaryConnectionId() || state.sending || state.loading;
   $('menu-delete').hidden = !!state.activeId && state.activeId === primaryConnectionId();
@@ -1344,7 +1349,7 @@ function renderSessions() {
   list.replaceChildren();
   if (!state.sessions.length) {
     const empty = document.createElement('p'); empty.className = 'list-empty';
-    empty.textContent = state.authenticated ? '尚未连接伙伴，登录后会恢复长期聊天。' : '登录后同步你的会话。';
+    empty.textContent = state.authenticated ? '尚未连接 Bot，登录后会恢复长期聊天。' : '登录后同步你的会话。';
     list.append(empty);
   }
   for (const item of state.sessions.filter(item=>state.sessionView==='archived' ? item.tls_state&&item.tls_state.archived===true : !(item.tls_state&&item.tls_state.archived===true))) {
@@ -1374,7 +1379,7 @@ function renderSessions() {
     remove.setAttribute('aria-label', '删除会话 ' + (item.display_name || '未命名会话'));
     remove.disabled = state.sending || state.attaching || state.stickerBusy;
     remove.addEventListener('click', event => { event.stopPropagation(); openDeleteConversation(item.session_id); });
-    const archive=document.createElement('button');archive.className='session-archive';archive.textContent=item.tls_state&&item.tls_state.archived?'恢复':'归档';archive.type='button';archive.onclick=()=>window.ChatExperience&&window.ChatExperience.archive(item);    if(item.session_id===primaryConnectionId()){row.classList.add('primary-connection');archive.hidden=true;remove.hidden=true;preview.textContent='与伙伴的长期聊天';}row.append(button,archive, remove); list.append(row);
+    const archive=document.createElement('button');archive.className='session-archive';archive.textContent=item.tls_state&&item.tls_state.archived?'恢复':'归档';archive.type='button';archive.onclick=()=>window.ChatExperience&&window.ChatExperience.archive(item);    if(item.session_id===primaryConnectionId()){row.classList.add('primary-connection');archive.hidden=true;remove.hidden=true;preview.textContent='与这个 Bot 的长期聊天';}row.append(button,archive, remove); list.append(row);
   }
   renderChrome();
 }
@@ -1445,7 +1450,33 @@ function timeSeparator(message) {
   return line;
 }
 function messageParts(message) {
-  return Array.isArray(message.parts) && message.parts.length ? message.parts : [{ type: 'plain', text: message.text || '这条消息暂不支持显示。' }];
+  const parts = Array.isArray(message.parts) && message.parts.length ? message.parts : [{ type: 'plain', text: message.text || '这条消息暂不支持显示。' }];
+  if (message.role !== 'assistant') return parts;
+  // Same leading-envelope policy as TLS, also for saved/offline snapshots.
+  // Project only the reading copy; keep source IDs, media and original cache.
+  const tags = ['thinking', 'think', 'analysis', 'reasoning'], result = [];
+  let pending = '', visible = false, hidden = false;
+  for (const part of parts) {
+    if (['reasoning', 'tool_call', 'tool_call_result'].includes(part.chain_type)) continue;
+    if (!['plain', 'text', 'speech'].includes(part.type) || typeof part.text !== 'string') {
+      if (!(part.source === 'assistant_expression' && hidden && !visible)) result.push(part);
+      continue;
+    }
+    if (visible) { result.push(part); continue; }
+    pending += part.text;
+    while (true) {
+      const open = /^\s*<(thinking|think|analysis|reasoning)\s*>/i.exec(pending);
+      if (!open) {
+        if (tags.some(tag => ('<' + tag + '>').startsWith(pending.trimStart().toLowerCase()))) break;
+        result.push({ ...part, text: pending }); pending = ''; visible = true; break;
+      }
+      hidden = true;
+      const tail = pending.slice(open[0].length), close = new RegExp('</' + open[1] + '\\s*>', 'i').exec(tail);
+      if (!close) break;
+      pending = tail.slice(close.index + close[0].length).trimStart();
+    }
+  }
+  return result;
 }
 function updateMessageSearchHits() {
   const search = state.messageSearch, previous = search.hits[search.index];
@@ -1827,7 +1858,9 @@ function renderMediaPart(part, message, sessionId) {
   const filename = attachmentFilename(part), name = part.display_name || part.filename || (part.type === 'image' ? '图片' : '文件');
   const available = message.delivery === 'confirmed' && part.source !== 'stream' && !!filename;
   const error = document.createElement('p'); error.className = 'media-error'; error.hidden = true;
-  const account = chatAccountKey();
+  const account = chatAccountKey(), renderedEpoch = chatAuthEpoch;
+  const current = epoch => epoch === chatAuthEpoch && state.authenticated && account === chatAccountKey()
+    && sessionId === state.activeId && card.isConnected;
   async function open() {
     if (!available) return;
     try { await nativeAsync('openAttachment', [sessionId, filename]); }
@@ -1838,12 +1871,21 @@ function renderMediaPart(part, message, sessionId) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'image-button';
     button.textContent = available ? '▧  查看图片' : filename ? '同步保存记录后查看图片' : '图片缺少可下载引用'; button.disabled = !available;
     const key = JSON.stringify([account, sessionId, filename]);
+    const disk = window.ChatMediaCache, diskOwner = disk?.scope(state.server, state.username);
+    const diskResource = JSON.stringify(['attachment', sessionId, filename]);
     image.addEventListener('error', () => { image.hidden = true; button.hidden = false; button.disabled = false; button.textContent = '图片未能显示，点击重试'; });
     button.addEventListener('click', async () => {
+      const epoch = chatAuthEpoch;
       button.disabled = true; button.textContent = '正在读取图片…'; error.hidden = true;
       try {
-        const body = state.mediaCache.get(key) || responseData(await nativeAsync('loadAttachment', [sessionId, filename]));
-        if (!state.authenticated || account !== chatAccountKey()) throw new Error('账户已切换，请重新打开记录。');
+        const generation = disk?.generation();
+        if (!current(epoch)) throw new Error('账户或会话已切换，请重新打开记录。');
+        let body = state.mediaCache.get(key) || await disk?.get(diskOwner, diskResource, 0);
+        if (!current(epoch)) throw new Error('账户或会话已切换，请重新打开记录。');
+        if (!body) body = responseData(await nativeAsync('loadAttachment', [sessionId, filename]));
+        if (!current(epoch)) throw new Error('账户或会话已切换，请重新打开记录。');
+        await disk?.put(diskOwner, diskResource, 0, body, generation);
+        if (!current(epoch)) throw new Error('账户或会话已切换，请重新打开记录。');
         showPreview(image, button, body); rememberImage(key, body);
       } catch (failure) { button.disabled = false; button.textContent = '重新读取图片'; error.textContent = errorText(failure); error.hidden = false; }
     });
@@ -1851,6 +1893,12 @@ function renderMediaPart(part, message, sessionId) {
     const caption = document.createElement('div'); caption.className = 'media-caption'; caption.textContent = '点击图片可用系统打开原文件'; card.append(caption);
     if (available && state.mediaCache.has(key)) {
       try { showPreview(image, button, state.mediaCache.get(key)); } catch (_) { state.mediaCache.delete(key); }
+    } else if (available && disk) {
+      disk.get(diskOwner, diskResource, 0).then(body => {
+        if (body && current(renderedEpoch)) {
+          try { showPreview(image, button, body); rememberImage(key, body); } catch (_) { /* Keep the explicit read button. */ }
+        }
+      });
     }
   } else {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'file-button'; button.disabled = !available;
@@ -1881,7 +1929,8 @@ function normalizeHistory(rows) {
     const stableKey = row.id != null ? String(row.id) : key;
     if (seen.has(stableKey)) continue; seen.add(stableKey);
     const typed = row.tls_parts || row.content.tls_parts;
-    const parts = window.ChatComposer && Array.isArray(typed) ? window.ChatComposer.normalizeParts(typed) : contentParts(row.content);
+    let parts = window.ChatComposer && Array.isArray(typed) ? window.ChatComposer.normalizeParts(typed) : contentParts(row.content);
+    if (row.content.type === 'bot' && parts.length) parts = messageParts({ role: 'assistant', parts });
     const notice = savedMessageNotice(row.content);
     const generated=row.content.refs?.tls_generated_image;
     const generatedImage=row.content.type==='bot'&&generated&&/^[a-f0-9]{64}$/.test(generated.job_id||'')
@@ -1917,8 +1966,8 @@ async function loadPersonas() {
   if (!Array.isArray(rows)) throw new Error('角色列表格式暂不兼容。');
   state.personas = rows.filter(item => item && typeof item.persona_id === 'string' && item.persona_id && typeof item.display_name === 'string');
   const saved = storage.get(pref('persona.' + encodeURIComponent(state.server + '|' + state.username)));
-  const solePersona = state.personas.length === 1 ? state.personas[0].persona_id : '';
-  state.newPersona = state.personas.some(item => item.persona_id === saved) ? saved : solePersona;
+  const texas = state.personas.filter(item => item.display_name === '伙伴');
+  state.newPersona = state.personas.some(item => item.persona_id === saved) ? saved : texas.length === 1 ? texas[0].persona_id : '';
   const select = $('persona'); select.replaceChildren();
   const empty = document.createElement('option'); empty.value = ''; empty.textContent = state.personas.length ? '请选择服务器中的角色' : '服务器尚无可用角色'; select.append(empty);
   for (const persona of state.personas) { const option = document.createElement('option'); option.value = persona.persona_id; option.textContent = persona.display_name; select.append(option); }
@@ -2132,7 +2181,7 @@ function parseStream(body) {
 }
 async function sendMessage(event, prepared = null) {
   event.preventDefault();
-  if(primaryConnectionId()&&state.activeId&&state.activeId!==primaryConnectionId()){showNotice('这里是以前的记录，请回到伙伴继续长期聊天。');return;}
+  if(primaryConnectionId()&&state.activeId&&state.activeId!==primaryConnectionId()){showNotice('这里是以前的记录，请回到当前 Bot继续长期聊天。');return;}
   const legacySticker = prepared && prepared.kind === 'sticker';
   const direct = prepared && prepared.kind === 'composition';
   if (prepared && !legacySticker && !direct) return;
@@ -2218,9 +2267,10 @@ async function refreshSessions() {
   catch (error) { showNotice(errorText(error), { label: '重试同步', run: refreshSessions }, true); }
   finally { state.loading = false; renderChrome(); }
 }
-function openSettings() {
+function openSettings(page = 'connection') {
   sidebar(false); $('server').value = state.server; $('username').value = state.username;
   $('password').value = ''; $('login-error').hidden = true;
+  window.ChatSettingsPages?.show(typeof page === 'string' ? page : 'connection');
   if (!$('settings-dialog').open) $('settings-dialog').showModal();
 }
 async function login(event) {
@@ -2264,10 +2314,18 @@ async function login(event) {
 }
 function logout() {
   if (state.sending || state.attaching) { showNotice('请等待本轮消息或文件处理结束。'); return; }
+  let result;
+  try { result = parse(native().clearAuth()); } catch (_) {}
+  if (!result || result.authenticated !== false) {
+    const text = '退出尚未完成，当前聊天和草稿已保留。请重试退出，以确认此账户的登录与收件已停止。';
+    $('login-error').textContent = text; $('login-error').hidden = false;
+    $('login-error').scrollIntoView({ block: 'nearest' });
+    showNotice(text, { label: '重试退出', run: logout }, true);
+    return;
+  }
   foregroundRecovery.cancel('logout', true);
   cancelAppearance(); cancelInteractions(); saveDraft();
   chatAuthEpoch++; state.historySerial++; notificationTarget = null; lastNotificationIdentity = '';
-  try { native().clearAuth(); } catch (_) {}
   state.authenticated = false; state.sessions = []; state.messages = []; state.activeId = null; state.sessionPersonaConfig = null; state.remoteRunning = false; state.replyPhase='idle';
   state.cacheDisplay = null;
   state.personas = []; state.newPersona = ''; state.sessionPersonas.clear();
@@ -2275,6 +2333,7 @@ function logout() {
   state.appearanceCache = null;
   state.interactionCache = null;
   $('draft').value = ''; resizeDraft(); $('settings-dialog').close(); renderSessions(); renderMessages(); hideNotice();
+  if (result.ok !== true) showNotice('当前登录已停止，但本机保存的登录信息尚未确认清理完成。请重试清理。', { label: '重试清理', run: logout }, true);
 }
 function init() {
   if (typeof ResizeObserver === 'function') {
@@ -2454,6 +2513,8 @@ function prepareSavedReplyAccountSwitch() {
     showNotice('先等待当前消息或文件处理结束，再打开另一位 Bot 的消息。',null,true);return false;
   }
   saveDraft();foregroundRecovery.cancel('saved_account_switch',true);
+  // Native switches credentials before the page reload; queued callbacks still belong to the old login.
+  chatAuthEpoch++;state.historySerial++;
   return true;
 }
 window.activateReplyAccount = async accountId => {
@@ -2470,12 +2531,23 @@ window.AsteriaChatUI = Object.freeze({
   viewportChanged: value => { if (window.ChatComposer) window.ChatComposer.viewportChanged(value); },
   replyWatchChanged: value => { if (window.ChatComposer) window.ChatComposer.watchChanged(value); window.ChatNotificationStatus?.refresh(); },
   notificationPermissionChanged: granted => { if (window.ChatComposer) window.ChatComposer.permissionChanged(granted); if (window.ChatNotificationStatus) window.ChatNotificationStatus.refresh(); },
-  openConversation: (id, messageId, clickTarget = 'message') => {
-    if (typeof id !== 'string' || !id || id.length > 256) return;
+  openConversation: (id, messageId, clickTarget = 'message', origin) => {
+    if (typeof id !== 'string' || !id || id.length > 256) return false;
+    // Native can queue this before another account is selected or the page reloads.
+    // Match both the current page and the actual saved Native login before opening.
+    if (origin !== undefined) {
+      try {
+        const config = parse(native().getConfig());
+        if (!origin || !state.authenticated || config?.authenticated !== true
+            || origin.server !== state.server || origin.username !== state.username
+            || config.server !== origin.server || config.username !== origin.username) return false;
+      } catch (_) { return false; }
+    }
     notificationTarget = { account: chatAccountKey(), sessionId: id, messageId: String(messageId || ''), clickTarget };
     if (window.ChatReceipts) window.ChatReceipts.notificationOpened(id, messageId);
     if (window.ChatComposer) window.ChatComposer.openConversation(id);
+    return true;
   },
   foregroundChanged: () => { foregroundRecovery.signal(); syncViewport(); if (phonePerceptionPanel) phonePerceptionPanel.foregroundChanged(); if (window.ChatNotificationStatus) window.ChatNotificationStatus.refresh(); window.ChatImageJobs?.foregroundChanged(); },
-  back: () => window.ChatVoice?.closeActive() || window.ChatPersonalSpace?.closeActive() || window.ChatLife?.closeActive() || window.ChatImageJobs?.closeActive() || window.ChatNotificationCenter?.closeActive() || window.ChatModelRoute?.closeActive() || window.ChatSettingsHub?.closeActive() || window.ChatDeliveryCenter?.closeActive() || window.ChatMessageMemory?.closeActive?.() || window.ChatSessionPreferences?.closeActive?.() || window.ChatComposer && window.ChatComposer.closeActive() || closeMessageSearch() || cancelRenameTitle() || cancelConversationExport() });
+  back: () => window.ChatConnections?.closeContacts?.() || window.ChatVoice?.closeActive() || window.ChatPersonalSpace?.closeActive() || window.ChatLife?.closeActive() || window.ChatImageJobs?.closeActive() || window.ChatNotificationCenter?.closeActive() || window.ChatModelRoute?.closeActive() || window.ChatSettingsHub?.closeActive() || window.ChatDeliveryCenter?.closeActive() || window.ChatMessageMemory?.closeActive?.() || window.ChatSessionPreferences?.closeActive?.() || window.ChatComposer && window.ChatComposer.closeActive() || closeMessageSearch() || cancelRenameTitle() || cancelConversationExport() });
 document.addEventListener('DOMContentLoaded', init, { once: true });

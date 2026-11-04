@@ -237,11 +237,10 @@ def render_music_context(event: Any, *, max_chars: int = 500) -> str:
         if not data["曲目"]:
             fact = "当前曲目无法确认；不要沿用此前歌曲为当前播放。"
         else:
-            if event.get("match_status") == "matched":
-                for field, label in (("genre", "已有曲风标签"), ("mood", "已有曲目氛围标签")):
-                    value = _text(info.get(field), 40)
-                    if value and value != "unknown":
-                        data[label] = value
+            # The retained unscoped index is playback-match provenance, not
+            # current user-maintained metadata. NativeMusicReference supplies
+            # scoped, revision-checked tags separately; do not revive old tags
+            # here after the authoritative library was edited or archived.
             fact = "可靠媒体状态显示正在播放：" + json.dumps(data, ensure_ascii=False, separators=(",", ":"))
             progress, duration = state.get("progress_ms"), state.get("duration_ms")
             if type(progress) is int and type(duration) is int and 0 <= progress <= duration <= 7 * 86400000 and duration > 0:

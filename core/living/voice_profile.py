@@ -7,7 +7,7 @@ from copy import deepcopy
 import math
 
 NS = 'tls.voice.profile.v1'
-DEFAULT = dict(name='Asteria Voice · 独立音色', language='zh-CN',
+DEFAULT = dict(name='Texas Voice · 独立音色', language='zh-CN',
     timbre='自然、清晰、克制的中文表达；不模仿原作配音演员',
     pronunciation='普通话，专有名词保持原文', emotion='平静为主，温和表达；不夸张',
     pauses='遵循原文标点，不改变动作与事实', rate=0.95, pitch=1.0,

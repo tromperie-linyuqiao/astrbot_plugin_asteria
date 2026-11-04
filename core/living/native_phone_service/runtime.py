@@ -655,6 +655,7 @@ class NativePhoneService:
                 return json_response(data)
             except BridgeError as exc:
                 return error_response(str(exc), status_code=exc.status)
+        handler.__asteria_owner__ = self
         return handler
 
     def _web_save(self, resource):
@@ -675,6 +676,7 @@ class NativePhoneService:
                 return json_response(data)
             except BridgeError as exc:
                 return error_response(str(exc), status_code=exc.status)
+        handler.__asteria_owner__ = self
         return handler
 
     async def ppb_command(self, event: AstrMessageEvent, action: str = "状态"):

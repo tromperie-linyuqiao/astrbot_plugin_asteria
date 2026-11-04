@@ -271,6 +271,7 @@ window.PrivateCompanionProviderTree = (() => {
   function providerCardMarkup(context, key, label, providers) {
     const { providerGroupByKey, noFallbackProviderKeys, optionalNoFallbackProviderKeys, providerGuides, providerPreferenceMeta, providerPassiveImpactMeta, escapeHtml } = context;
     const selected = providers[key] || "";
+    const serverValue = context.state.overview?.providers?.[key];
     const resolved = resolveProviderId(context, key, providers);
     const configured = Boolean(selected);
     const noFallback = noFallbackProviderKeys.has(key);
@@ -304,6 +305,9 @@ window.PrivateCompanionProviderTree = (() => {
             <span>Provider</span>
             ${providerSelect(context, key, selected)}
           </label>
+          <div class="provider-current"><span>草稿分配预览</span><b>${escapeHtml(resolved || (noFallback ? "未配置" : (optionalNoFallback ? "未启用" : "AstrBot 默认模型")))}</b></div>
+          <div class="aw-provider-saved" data-provider-saved="${escapeHtml(key)}"><span>最近服务端字段</span><b>${escapeHtml(typeof serverValue === "string" ? (serverValue || "留空 · 沿原回退/停用规则") : "尚未读取")}</b></div>
+          <details class="aw-provider-advanced" data-provider-details="${escapeHtml(key)}"><summary>超时、备用与用途 · 单项测试</summary>
           <label class="provider-field provider-timeout-field">
             <span>请求超时</span>
             <span class="provider-timeout-control">
@@ -315,16 +319,14 @@ window.PrivateCompanionProviderTree = (() => {
             <span>备用模型 <small>主模型失败、超时或空响应时尝试一次</small></span>
             ${providerFallbackSelect(context, key, fallbackValue)}
           </label>
-          <div class="provider-current">
-            <span>当前使用</span>
-            <b>${escapeHtml(resolved || (noFallback ? "未配置" : (optionalNoFallback ? "未启用" : "AstrBot 默认模型")))}</b>
-          </div>
           ${providerGuideMarkup(context, key)}
           <div class="provider-row">
             <span class="hint">${escapeHtml(key)}</span>
-            <button type="button" data-provider-test="${escapeHtml(key)}">测试</button>
+            <button type="button" data-provider-test="${escapeHtml(key)}">测试本项 · 真实调用</button>
           </div>
+          <p class="aw-provider-note">测试使用当前草稿，会实际请求模型并可能产生用量；单次结果不证明长期可用或语音能力。</p>
           <span class="provider-status" data-provider-status="${escapeHtml(key)}"></span>
+          </details>
         </div>
       </article>
     `;
@@ -346,17 +348,19 @@ window.PrivateCompanionProviderTree = (() => {
       : (providers.PRIVATE_READING_VISION_PROVIDER_ID || providers.NARRATION_PROVIDER_ID || "精准分流 / 默认链路");
     document.getElementById("providerSummary").innerHTML = `
       <div class="provider-cost-notice">
-        <b>成本提醒</b>
-        <span>火山方舟协作计划免费额度已延期到 2026-07-31 左右，具体以控制台/官方活动页为准。使用火山方舟 Provider 时，请检查每日 Token 限额和后台任务开关，注意成本控制。</span>
+        <b>本页草稿概览</b>
+        <span>以下数量来自当前模式表单，尚未保存的修改也计入；可选项来自 AstrBot 配置，不验证供应商余额、价格或服务可用性。</span>
       </div>
       <div class="provider-summary-card strong"><span>单独配置</span><b>${configured}/${keys.length}</b><small>已指定专用 Provider</small></div>
       <div class="provider-summary-card"><span>自动回退</span><b>${inherited}</b><small>留空项会按兜底链路执行</small></div>
+      <details class="aw-provider-counts"><summary>用途、延迟与视觉通道说明</summary><div class="aw-provider-count-grid">
       <div class="provider-summary-card speed"><span>被动速度相关</span><b>${passiveSensitive}</b><small>这些项建议优先关注延迟</small></div>
       <div class="provider-summary-card quality"><span>效果优先项</span><b>${qualityRecommended}</b><small>适合更强推理或多模态模型</small></div>
       <div class="provider-summary-card"><span>低延迟优先项</span><b>${speedRecommended}</b><small>卡顿时优先检查这些项</small></div>
       ${requiredMissing ? `<div class="provider-summary-card warn"><span>未配置专用项</span><b>${requiredMissing}</b><small>这些任务留空时不会回退</small></div>` : ""}
       <div class="provider-summary-card"><span>可选 Provider</span><b>${available}</b><small>${escapeHtml(available ? "来自 AstrBot 当前配置" : "暂无可选项，可手动输入 ID")}</small></div>
       <div class="provider-summary-card"><span>视觉通道</span><b>${escapeHtml(vision)}</b><small>${escapeHtml(providerConfigMode === "quick" ? "图片、识屏与素材理解" : "精准模式不使用快速视觉入口")}</small></div>
+      </div></details>
     `;
   }
 
@@ -407,10 +411,10 @@ window.PrivateCompanionProviderTree = (() => {
       statusLabel = "等待选择替代模型";
       statusTone = "warn";
     } else if (runtime.active) {
-      statusLabel = "高价时段 · 正在替换";
+      statusLabel = "规则时段内 · 替代已启用";
       statusTone = "active";
     } else if (runtime.enabled) {
-      statusLabel = "低价时段 · DeepSeek 直连";
+      statusLabel = "规则时段外 · 未启用替代";
       statusTone = "ready";
     }
     root.innerHTML = `
@@ -418,8 +422,8 @@ window.PrivateCompanionProviderTree = (() => {
         <div class="deepseek-peak-head">
           <div>
             <span class="deepseek-peak-kicker">成本路由 · 可选</span>
-            <h3>DeepSeek 高价时段替代</h3>
-            <p>仅临时替换插件任务的运行时路由，不改写原有模型分工；离开高价时段会自动恢复。</p>
+            <h3>DeepSeek 指定时段替代</h3>
+            <p>按已保存时段和关键词临时替换原任务路由，不改写模型分工；离开该时段会恢复。当前状态来自最近服务端读取，不是供应商计费判断。</p>
           </div>
           <div class="deepseek-peak-head-actions">
             <span class="deepseek-peak-status ${escapeHtml(statusTone)}">${escapeHtml(statusLabel)}</span>
@@ -428,11 +432,11 @@ window.PrivateCompanionProviderTree = (() => {
         </div>
         <div class="deepseek-peak-body" ${values.enabled ? "" : "hidden"}>
           <label class="provider-field deepseek-peak-provider-field">
-            <span>高价时段替代模型</span>
+            <span>指定时段替代模型</span>
             ${deepseekPeakProviderControl(context, values.provider)}
           </label>
           <label class="provider-field">
-            <span>高价时段 <small>每行或逗号分隔，支持跨午夜</small></span>
+            <span>生效时段 <small>每行或逗号分隔，支持跨午夜</small></span>
             <textarea rows="3" data-deepseek-peak-windows placeholder="09:00-12:00&#10;14:00-18:00">${escapeHtml(values.windows)}</textarea>
           </label>
           <label class="provider-field">
@@ -446,10 +450,10 @@ window.PrivateCompanionProviderTree = (() => {
           <div class="deepseek-peak-runtime">
             <span>当前时间 <b>${escapeHtml(runtime.current_time || "保存后刷新")}</b></span>
             <span>下次切换 <b>${escapeHtml(runtime.next_transition || "暂无")}</b></span>
-            <span>当前替代 <b>${escapeHtml(runtime.replacement_provider_id || values.provider || "未配置")}</b></span>
+            <span>当前替代 <b>${escapeHtml(runtime.replacement_provider_id || "未配置/未读取")}</b></span>
           </div>
         </div>
-        <div class="deepseek-peak-note">定价公告：预计 2026 年 7 月中旬启用；北京时间每日 09:00-12:00、14:00-18:00 为高峰，高峰价格为平时 2 倍并适用于所有计费项。公告未给出精确生效日期，请确认正式启用后再打开开关，并以后续官方通知为准。</div>
+        <div class="deepseek-peak-note">此处维护用户配置的时段规则，不读取实时价格、余额或优惠政策。调整后随模型配置一起保存；是否适合替代需由所选模型能力与实际服务条件判断。</div>
       </article>
     `;
     const enabled = root.querySelector("[data-deepseek-peak-enabled]");
@@ -603,12 +607,12 @@ window.PrivateCompanionProviderTree = (() => {
   }
 
   function bindProviderToolbar(context) {
-    const { document, state, setProviderConfigMode } = context;
+    const { document, state, setProviderConfigMode, refreshProviders } = context;
     const filter = document.getElementById("providerFilter");
     if (filter && filter.dataset.providerToolbarBound !== "1") {
       filter.addEventListener("input", () => {
         state.providerFilter = filter.value;
-        renderProviders(context);
+        refreshProviders();
       });
       filter.dataset.providerToolbarBound = "1";
     }
@@ -624,7 +628,7 @@ window.PrivateCompanionProviderTree = (() => {
         document.querySelectorAll("[data-provider-mode]").forEach((item) => {
           item.classList.toggle("active", item === button);
         });
-        renderProviders(context);
+        refreshProviders();
       });
       button.dataset.providerToolbarBound = "1";
     });

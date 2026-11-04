@@ -46,7 +46,7 @@ window.ChatDeliveryCenter = (() => {
   function receiptsPending() {
     if (!ready()) return { available: false, messages: 0, reports: 0, opened: false };
     try {
-      const raw = localStorage.getItem('asteria-chat.receipts.' + key()) || '{}';
+      const raw = localStorage.getItem('texas-chat.receipts.' + key()) || '{}';
       if (raw.length > 65536) return { available: false, messages: 0, reports: 0, opened: false };
       const data = JSON.parse(raw); if (!data || typeof data !== 'object' || Array.isArray(data)) throw Error();
       let messages = 0, reports = 0;

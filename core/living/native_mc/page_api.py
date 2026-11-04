@@ -932,6 +932,11 @@ class PluginPageApi:
         payload["metadata"] = record.metadata
         payload["merged_count"] = record.merged_count
         payload["content_fingerprint"] = record.content_fingerprint
+        try:
+            revision_offset = max(0, int(request.args.get("revision_offset", 0)))
+        except (TypeError, ValueError):
+            return self._err("invalid revision_offset", 400)
+        payload["revisions"] = await self.plugin.service.store.memory_revisions(record.id, revision_offset)
         return self._ok({"memory": payload})
 
     async def memory_update(self):
@@ -981,6 +986,7 @@ class PluginPageApi:
             salience=salience,
             durability=durability,
             sensitivity=sensitivity,
+            manual_summary_actor="astrbot_admin",
         )
         if not ok:
             return self._err("memory not found", 404)

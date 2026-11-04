@@ -57,7 +57,9 @@ def touch_catalog(plugin):
         aliases = list(part.get('aliases') or [])
         if any(word in {'腹部', '肚子', '肚皮'} for word in [part.get('label'), *aliases]) and '肚皮' not in aliases:
             aliases.append('肚皮')
-        parts.append({'id': part['id'], 'label': part.get('label') or part['id'], 'aliases': aliases})
+        parts.append({'id': part['id'], 'label': part.get('label') or part['id'], 'aliases': aliases,
+                      'group': part.get('group') if part.get('group') in
+                      {'ears','face','hands','tail','upper','legs'} else 'other'})
     # The original parser decides valid pairs. This is a display-only copy;
     # APP aliases never change the role configuration or QQ parser vocabulary.
     aliases = {part['id']: part['aliases'] for part in parts}
@@ -68,6 +70,10 @@ def touch_catalog(plugin):
              for word in events._action_words(profile)]
     return {'available': True, 'character': character, 'name': profile.get('name') or character,
             'verbs': verbs,
+            'groups': [{'id': key, 'label': label} for key, label in
+                       [('ears','耳部'),('face','头面部'),('hands','手与手臂'),('tail','尾部'),
+                        ('upper','颈肩与躯干'),('legs','腿与脚'),('other','其他')]
+                       if any(part['group'] == key for part in parts)],
             'parts': parts}
 
 
@@ -92,16 +98,35 @@ def _touch_session(username, session_id):
 
 def apply_chat_touch(plugin, username, session_id, parts):
     """One explicit submit, through the original TLS parser/advance/store."""
-    from .. import events
+    from .. import events, interaction
+    from .chat_expressions import SELF_ACTIONS
+    scene = {}
+    for part in parts:
+        if (part.get('type') != 'action' or part.get('source') != 'user_self_action'
+                or part.get('actor') != 'user' or part.get('target') != 'self'):
+            continue
+        template = next((item for item in SELF_ACTIONS if item['id'] == part.get('self_template')), None)
+        if not template or part.get('target_part') not in {item['id'] for item in template['targets']}:
+            continue
+        field = 'posture' if template['id'] in interaction.POSES else 'position' if template['id'] in interaction.POSITIONS else None
+        if field:
+            if field == 'posture' and template['id'] in {'stand', 'crouch', 'lie_down', 'rest_on_desk'}:
+                scene.pop('position', None)
+            if field == 'position' and template['id'] == 'sit_beside':
+                scene['posture'] = {'template': 'sit', 'target': 'beside_character'}
+            scene[field] = {'template': template['id'], 'target': part['target_part']}
     def character_input(part):
         return part.get('actor', 'user') == 'user' and part.get('target', 'character') == 'character'
     selected = [part for part in parts if character_input(part) and part.get('type') == 'action' and part.get('source') == 'user_action']
     # Compatibility for callers already holding a server-validated native part.
     selected += [part for part in parts if character_input(part) and part.get('native_touch') and part not in selected]
-    if not selected:
+    speech = [part for part in parts if part.get('type') == 'text' and part.get('source') == 'user_speech']
+    if not selected and not scene and not speech:
         return None
     catalog = touch_catalog(plugin)
     if not catalog.get('available'):
+        if not selected and not scene:
+            return None
         if any(part.get('native_touch') for part in selected):
             raise ChatExpressionError(catalog.get('reason') or 'TLS触觉未接入')
         return {'state': 'roleplay_input', 'applied': 0, 'scope': 'owned_webchat', 'source': 'user_action',
@@ -113,9 +138,17 @@ def apply_chat_touch(plugin, username, session_id, parts):
     aliases = {part['id']: part['aliases'] for part in catalog['parts']}
     profile = dict(profile, parts=[dict(part, aliases=aliases.get(part.get('id'), part.get('aliases', [])))
                                    for part in profile.get('parts', [])])
-    evs, action_results = [], []
+    # Direct speech may end contact; quotes/references cannot. It never creates
+    # new physical events here: those still require an explicit action selection.
+    stopping_speech = [part for part in speech if events.extract_stops(part.get('text') or '', profile)]
+    selected = [part for part in parts if part in selected or part in stopping_speech]
+    if not selected and not scene:
+        return None
+    evs, action_results, stops = [], [], []
     for part in selected:
-        if part.get('native_touch'):
+        if part in stopping_speech:
+            parsed = []
+        elif part.get('native_touch'):
             value = validate_touch(catalog, part['native_touch'])
             target = next(row for row in catalog['parts'] if row['id'] == value['part'])
             parsed = [event for event in events.extract_events(value['verb'] + target['label'], profile)
@@ -127,24 +160,31 @@ def apply_chat_touch(plugin, username, session_id, parts):
             # Reuse the original parser; unmatched scene actions stay RP input.
             description = part.get('description') or ''
             # The configured role's possessive name is a target, not distance
-            # between verb and part ("戳一下角色的肚皮"). Keep the original
+            # between verb and part ("戳一下德克萨斯的肚皮"). Keep the original
             # quote/negation/question filters and the QQ parser unchanged.
             role_name = catalog.get('name')
             if isinstance(role_name, str) and role_name:
                 description = description.replace(role_name + '的', '')
             parsed = events.extract_events(description, profile)
+        stopped = events.extract_stops(part.get('text') if part in stopping_speech else part.get('description') or '', profile) if not part.get('native_touch') else []
+        # Apply final contact state in message order. The original direct events
+        # remain accountable even when a later fragment ends their contact.
+        stops = [pid for pid in stops if pid not in {event['part'] for event in parsed}]
+        stops.extend(pid for pid in stopped if pid not in stops)
         evs.extend(parsed)
         action_results.append({'fragment_id': part.get('fragment_id'), 'action_id': part.get('action_id'),
-            'state': 'native_touch_applied' if parsed else 'roleplay_input', 'applied': len(parsed),
+            'state': 'native_touch_applied' if parsed else 'contact_ended' if stopped else 'roleplay_input', 'applied': len(parsed),
+            'stopped_parts': stopped,
             'parts': list(dict.fromkeys(event['part'] for event in parsed)),
             'verb': part['native_touch']['verb'] if part.get('native_touch') else None})
-    if not evs:
+    if not evs and not stops and not scene:
         return {'state': 'roleplay_input', 'applied': 0, 'scope': 'owned_webchat', 'source': 'user_action',
                 'results': action_results}
     now = time.time()
     for event in evs:
         event['t'] = now
-    result = plugin._advance_session(catalog['character'], _touch_session(username, session_id), evs, now)
+    result = plugin._advance_session(catalog['character'], _touch_session(username, session_id), evs, now,
+                                     webchat_interaction=dict(scene, stops=stops))
     if result is None:
         raise ChatExpressionError('TLS身体服务正在更新，互动未确认')
     # _advance_session returns only after the original BodyStore save. Read its
@@ -152,10 +192,11 @@ def apply_chat_touch(plugin, username, session_id, parts):
     # necessarily increased a value (cooldowns/phase rules may suppress it).
     load = getattr(plugin._store, 'load', None)
     stored = load(catalog['character'], _touch_session(username, session_id)) if callable(load) else None
-    return {'state': 'native_touch_applied', 'character': catalog['character'], 'applied': len(evs),
+    return {'state': 'native_touch_applied' if evs else 'contact_ended' if stops else 'roleplay_input',
+            'character': catalog['character'], 'applied': len(evs), 'stopped_parts': stops,
             'scope': 'owned_webchat', 'source': 'user_action', 'applied_at': now,
             'body_updated_at': stored.get('updated_at') if isinstance(stored, dict) else None,
-            'results': action_results}
+            'interaction': interaction.snapshot(stored, profile), 'results': action_results}
 
 
 def chat_body_snapshot(plugin, username, session_id):
@@ -173,16 +214,17 @@ def chat_body_snapshot(plugin, username, session_id):
             'value': current.get('value') if current else None,
             'last_event_at': current.get('last_event_at') if current else None,
             'tier': current.get('last_react_tier') if current else None})
+    from .. import interaction
     result = {'available': True, 'initialized': stored is not None, 'character': catalog['character'],
               'name': catalog['name'], 'updated_at': stored.get('updated_at') if stored else None,
-              'parts': parts, 'scope': 'owned_webchat'}
+              'parts': parts, 'scope': 'owned_webchat', 'interaction': interaction.snapshot(stored, profile)}
     for key in ('phase', 'phase_until', 'arousal', 'verbal_arousal', 'tolerance'):
         result[key] = stored.get(key) if stored else None
     return result
 
 
 def chat_touch_context(plugin, username, session_id):
-    from .. import inject
+    from .. import inject, interaction
     catalog = touch_catalog(plugin)
     if not catalog.get('available'):
         return ''
@@ -192,7 +234,8 @@ def chat_touch_context(plugin, username, session_id):
     plugin._advance_session(catalog['character'], _touch_session(username, session_id), [], time.time())
     stored = plugin._store.load(catalog['character'], _touch_session(username, session_id))
     value = inject.render(stored, plugin._profiles[catalog['character']], max_chars=900, show_numbers=False)
-    return '[当前APP对话的TLS原生身体状态，来自用户明确发起的虚构互动；不是现实感知]\n' + value if value else ''
+    body = '[当前APP对话的TLS原生身体状态，来自用户明确发起的虚构互动；不是现实感知]\n' + value if value else ''
+    return '\n'.join(part for part in (body, interaction.render(stored, plugin._profiles[catalog['character']])) if part)
 
 
 class ChatSessionState:
@@ -251,6 +294,12 @@ async def inject_chat_session_context(plugin, event, req):
     if (not isinstance(username, str) or not isinstance(session_id, str)
             or username != str(event.get_sender_id() or '') or not isinstance(payload, dict)):
         return
+    # AstrBot loads this request's history before hooks and assembles provider
+    # messages afterwards. Project only assistant text, retaining the original
+    # conversation/source and user/tool records. Optional assets may be off.
+    from .structured_reply import visible_contexts
+    if hasattr(req, 'contexts'):
+        req.contexts = visible_contexts(req.contexts)
     host = getattr(getattr(plugin, '_presence', None), 'living_host', None)
     runtime = getattr(host, 'runtime', None)
     assets = getattr(runtime, 'expression_assets', None)
@@ -290,7 +339,7 @@ async def inject_chat_session_context(plugin, event, req):
     # Persona. Existing TLS RP/memory assembly remains responsible for its data.
     mode_text = {'chat': '自然日常聊天，回复连贯', 'roleplay': '沿用当前角色进行连续的虚构剧情互动',
                  'technical': '清晰讨论和解释问题，避免无关表情与机械分段'}[state['mode']]
-    block = '[Asteria Chat 当前会话设置，来自用户明确维护]\n' + mode_text
+    block = '[Texas Chat 当前会话设置，来自用户明确维护]\n' + mode_text
     preferences = session_preference_context(state)
     if preferences:
         block += '\n本会话回复偏好（仅影响后续表达）：\n' + preferences
@@ -299,7 +348,7 @@ async def inject_chat_session_context(plugin, event, req):
         block += '\n本会话剧情/讨论简介（用户设定，不是现实观察）：' + json.dumps(state['scene'], ensure_ascii=False)
     from .structured_reply import enabled, PROTOCOL
     if enabled(state):
-        block += '\n[Asteria Chat表达协议，仅规定回复格式，不改变人格与权限]\n' + PROTOCOL
+        block += '\n[Texas Chat表达协议，仅规定回复格式，不改变人格与权限]\n' + PROTOCOL
     # Preserve the Persona's system instructions. This is user-maintained
     # conversational context, carried by the SDK's existing typed user parts.
     req.extra_user_content_parts.append(TextPart(text=block).mark_as_temp())

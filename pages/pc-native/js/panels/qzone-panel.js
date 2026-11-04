@@ -9,6 +9,10 @@ window.PrivateCompanionQzonePanel = (() => {
     loading: false,
     loaded: false,
     page: 1,
+    actionResults: new Map(),
+    unconfirmed: new Set(),
+    publishing: false,
+    pendingComments: new Set(),
     pendingLikes: new Set(),
     pendingDeletes: new Set(),
     deleteConfirmId: "",
@@ -52,17 +56,29 @@ window.PrivateCompanionQzonePanel = (() => {
   }
 
   async function qzonePost(paths, body = {}) {
-    const candidates = Array.isArray(paths) ? paths : [paths];
-    let lastError = null;
-    for (const path of candidates) {
-      try {
-        return await state.context.postJson(path, body);
-      } catch (error) {
-        lastError = error;
-        if (!isRouteMissingError(error)) break;
-      }
+    // The current native owner registers the canonical path. An upstream 404
+    // is not evidence that a write was never dispatched; never replay aliases.
+    return state.context.postJson(Array.isArray(paths) ? paths[0] : paths, body);
+  }
+
+  function recordAction(key, message, tone = "info", detail = "") {
+    state.actionResults.set(key, { message, tone, detail });
+    const node = document.getElementById("qzoneActionResults");
+    if (node) {
+      const e = state.context.escapeHtml;
+      node.hidden = false;
+      node.innerHTML = `<h3>本页操作结果</h3>${Array.from(state.actionResults, ([id, r]) => `<article data-qzone-result="${e(id)}" data-tone="${e(r.tone)}"><b>${e(r.message)}</b>${r.detail ? `<p>${e(r.detail)}</p>` : ""}</article>`).join("")}<p class="muted">仅本页留存，刷新或离页后不保留。结果未确认时先到 QQ 空间核实，刷新动态也不能证明上次操作完成；本页不会自动重交。</p>`;
     }
-    throw lastError || new Error("QQ 空间请求失败");
+    const button = document.querySelector("#qzonePublishForm button[type=submit]");
+    if (button) button.disabled = state.publishing || state.unconfirmed.has("publish");
+    const refresh = document.getElementById("qzoneRefreshCookiesBtn");
+    if (refresh) refresh.disabled = state.unconfirmed.has("cookies") || state.actionResults.get("cookies")?.tone === "pending";
+  }
+
+  function unknownAction(key, label, error) {
+    state.unconfirmed.add(key);
+    recordAction(key, `${label}结果未确认`, "warn", `${key.includes(":") ? `目标 ${key.slice(key.indexOf(":") + 1)} · ` : ""}${error?.message || "返回字段不完整或目标不匹配"}。服务端可能已经执行，请先核实。`);
+    state.context.showToast(`${label}结果未确认，保留输入与原记录，请先核实`, "warn");
   }
 
   async function refreshCookies() {
@@ -96,8 +112,8 @@ window.PrivateCompanionQzonePanel = (() => {
     }
     const accountStatus = document.getElementById("qzoneAccountStatus");
     if (accountStatus) {
-      const tone = !state.status ? "idle" : (summary.enabled ? "ready" : (summary.available ? "warn" : "error"));
-      const label = !state.status ? "同步中" : (summary.enabled ? "已连接" : (summary.available ? "未启用" : "不可用"));
+      const tone = !state.status ? "idle" : (summary.enabled && login.bound ? "ready" : (summary.available ? "warn" : "error"));
+      const label = !state.status ? "同步中" : (!summary.available ? "接口不可用" : !summary.enabled ? "未启用" : login.bound ? "凭据已取得" : "凭据未确认");
       accountStatus.dataset.tone = tone;
       accountStatus.textContent = label;
     }
@@ -105,7 +121,7 @@ window.PrivateCompanionQzonePanel = (() => {
       meta.textContent = !state.status
         ? "正在读取 QQ 空间状态"
         : summary.enabled
-        ? `QQ 空间已启用 · ${summary.last_status || "等待操作"}`
+        ? `QQ 空间已启用 · ${login.bound ? "凭据可解析，动态访问以读取结果为准" : "本次未取得有效登录信息"}`
         : (summary.available ? "QQ 空间模块已加载，但整合开关未开启" : "QQ 空间模块不可用");
     }
     const summaryBox = document.getElementById("qzoneQuickSummary");
@@ -114,7 +130,7 @@ window.PrivateCompanionQzonePanel = (() => {
       const imageNote = summary.last_life_publish_generated_image_note || "";
       const imageLabel = summary.last_life_publish_images > 0
         ? `${summary.last_life_publish_images} 张`
-        : (imageStatus ? imageStatus.replace(/^skipped:/, "跳过:").replace(/^failed:/, "失败:") : `${state.posts.length} 条`);
+        : (imageStatus ? imageStatus.replace(/^skipped:/, "跳过:").replace(/^failed:/, "失败:") : "无留存记录");
       const referenceMeta = summary.last_life_publish_generated_image_reference
         ? `参考图${summary.last_life_publish_generated_image_reference_exists ? "可用" : "不可用"}`
         : "";
@@ -236,9 +252,9 @@ window.PrivateCompanionQzonePanel = (() => {
         <footer>
           ${renderPostMetrics(post)}
           <div class="qzone-post-actions">
-            <button type="button" data-qzone-like="${escapeHtml(post.id)}" ${state.pendingLikes.has(post.id) ? "disabled" : ""}>点赞</button>
+            <button type="button" data-qzone-like="${escapeHtml(post.id)}" ${state.pendingLikes.has(post.id) || state.unconfirmed.has(`like:${post.id}`) ? "disabled" : ""}>点赞</button>
             <button type="button" data-qzone-open="${escapeHtml(post.id)}">评论</button>
-            ${post.can_delete ? `<button type="button" class="danger-outline" data-qzone-delete="${escapeHtml(post.id)}" ${state.pendingDeletes.has(post.id) ? "disabled" : ""}>删除</button>` : ""}
+            ${post.can_delete ? `<button type="button" class="danger-outline" data-qzone-delete="${escapeHtml(post.id)}" ${state.pendingDeletes.has(post.id) || state.unconfirmed.has(`delete:${post.id}`) ? "disabled" : ""}>删除</button>` : ""}
           </div>
         </footer>
       </article>
@@ -259,14 +275,17 @@ window.PrivateCompanionQzonePanel = (() => {
     }
     empty.hidden = true;
     detail.hidden = false;
+    const oldInput = detail.querySelector("#qzoneCommentInput");
+    const draft = detail.dataset.postId === post.id ? (oldInput?.value || "") : "";
+    detail.dataset.postId = post.id;
     const { escapeHtml } = state.context;
     detail.innerHTML = `
       <div class="qzone-detail-card">
         <div class="qzone-detail-head">
           ${renderPostIdentity(post)}
           <div class="qzone-detail-actions">
-            <button type="button" data-qzone-like="${escapeHtml(post.id)}" ${state.pendingLikes.has(post.id) ? "disabled" : ""}>点赞这条</button>
-            ${post.can_delete ? `<button type="button" class="danger-outline" data-qzone-delete="${escapeHtml(post.id)}" ${state.pendingDeletes.has(post.id) ? "disabled" : ""}>删除说说</button>` : ""}
+            <button type="button" data-qzone-like="${escapeHtml(post.id)}" ${state.pendingLikes.has(post.id) || state.unconfirmed.has(`like:${post.id}`) ? "disabled" : ""}>点赞这条</button>
+            ${post.can_delete ? `<button type="button" class="danger-outline" data-qzone-delete="${escapeHtml(post.id)}" ${state.pendingDeletes.has(post.id) || state.unconfirmed.has(`delete:${post.id}`) ? "disabled" : ""}>删除说说</button>` : ""}
           </div>
         </div>
         <p class="qzone-detail-text">${escapeHtml(post.content || "无正文")}</p>
@@ -279,7 +298,7 @@ window.PrivateCompanionQzonePanel = (() => {
       </div>
       <div class="qzone-comment-block">
         <div class="qzone-comment-head">
-          <b>全部评论</b>
+          <b>当前返回的评论</b>
           <span>${escapeHtml(post.comments?.length ?? 0)} 条</span>
         </div>
         <div class="qzone-comment-list">
@@ -288,11 +307,12 @@ window.PrivateCompanionQzonePanel = (() => {
               <b>${escapeHtml(comment.author?.nickname || comment.author?.uin || "QQ空间用户")}</b>
               <p>${escapeHtml(comment.content || "")}</p>
             </article>
-          `).join("") : `<div class="qzone-empty compact"><span>还没有评论。</span></div>`}
+          `).join("") : `<div class="qzone-empty compact"><span>本次未返回评论，不代表全部历史为空。</span></div>`}
         </div>
         <form id="qzoneCommentForm" class="qzone-comment-form">
-          <textarea id="qzoneCommentInput" rows="3" placeholder="写一条公开评论"></textarea>
-          <button type="submit">发送评论</button>
+          <label for="qzoneCommentInput">评论到 QQ ${escapeHtml(post.author?.uin || "未知")} · ${escapeHtml(post.tid || post.id)}</label>
+          <textarea id="qzoneCommentInput" rows="3" placeholder="写一条 QQ 空间评论（最多 120 字）">${escapeHtml(draft)}</textarea>
+          <button type="submit" ${state.pendingComments.has(post.id) || state.unconfirmed.has(`comment:${post.id}`) ? "disabled" : ""}>发送到这条说说</button>
         </form>
       </div>
     `;
@@ -302,7 +322,6 @@ window.PrivateCompanionQzonePanel = (() => {
       const input = document.getElementById("qzoneCommentInput");
       const content = input?.value || "";
       await sendComment(content);
-      if (input) input.value = "";
     });
   }
 
@@ -389,47 +408,42 @@ window.PrivateCompanionQzonePanel = (() => {
   }
 
   async function likePost(id) {
-    const post = postById(id);
-    if (!post) return;
-    state.pendingLikes.add(id);
-    renderFeed();
+    const post = postById(id), key = `like:${id}`;
+    if (!post || state.pendingLikes.has(id) || state.unconfirmed.has(key)) return;
+    state.pendingLikes.add(id); renderFeed();
     try {
-      const payload = await qzonePost(["/qzone/like", "/qzone/post/like"], { id });
-      state.posts = state.posts.map((item) => (
-        item.id === id
-          ? {
-              ...item,
-              liked: Boolean(payload?.liked),
-              stats: {
-                ...(item.stats || {}),
-                likes: Number(item.stats?.likes || 0) + (!item.liked && payload?.liked ? 1 : 0),
-              },
-            }
-          : item
-      ));
-      state.context.showToast(payload?.verified ? "点赞已确认" : (payload?.verify_message || "已发送点赞请求"));
-    } catch (error) {
-      state.context.showToast(`点赞失败：${error.message}`, "error");
-    } finally {
-      state.pendingLikes.delete(id);
-      renderFeed();
-    }
+      const payload = await qzonePost("/qzone/like", { id });
+      if (payload?.id !== id || typeof payload.liked !== "boolean" || typeof payload.verified !== "boolean") throw Error("点赞返回目标或字段不匹配");
+      if (payload.verified) {
+        state.posts = state.posts.map(item => item.id === id ? { ...item, liked: payload.liked } : item);
+        recordAction(key, payload.liked ? "点赞已反查确认" : "反查未确认已点赞", payload.liked ? "success" : "warn", `目标 ${id} · ${payload.verify_message || "点赞数量仍为上次读取值"}`);
+      } else {
+        state.unconfirmed.add(key);
+        recordAction(key, "点赞请求已返回，尚未反查确认", "warn", `目标 ${id} · ${payload.verify_message || "请先到 QQ 空间核实"}`);
+      }
+      state.context.showToast(payload.verified ? "已取得点赞反查结果" : "点赞尚未反查确认", payload.verified ? "success" : "warn");
+    } catch (error) { unknownAction(key, "点赞", error); }
+    finally { state.pendingLikes.delete(id); renderFeed(); }
   }
 
   async function sendComment(content) {
-    const post = postById(state.selectedId);
-    const clean = text(content).trim();
-    if (!post || !clean) return;
+    const post = postById(state.selectedId), value = text(content).trim();
+    if (!post || !value) return;
+    if (Array.from(value).length > 120) { state.context.showToast("评论最多 120 字，请缩短后再发送；当前内容保留", "warn"); return; }
+    const id = post.id, key = `comment:${id}`;
+    if (state.pendingComments.has(id) || state.unconfirmed.has(key)) return;
+    state.pendingComments.add(id); renderDetail();
+    recordAction(key, "正在发送评论", "pending", `目标 ${id}`);
     try {
-      const payload = await qzonePost(["/qzone/comment", "/qzone/post/comment"], { id: post.id, content: clean });
-      if (payload?.post) {
-        state.posts = state.posts.map((item) => (item.id === post.id ? payload.post : item));
-      }
-      state.context.showToast("评论已发送");
-      renderFeed();
-    } catch (error) {
-      state.context.showToast(`评论失败：${error.message}`, "error");
-    }
+      const payload = await qzonePost("/qzone/comment", { id, content: value });
+      if (payload?.post?.id !== id || !Array.isArray(payload.post.comments)) throw Error("评论返回目标或字段不匹配");
+      state.posts = state.posts.map(item => item.id === id ? payload.post : item);
+      const input = document.getElementById("qzoneCommentInput");
+      if (state.selectedId === id && input?.value === content) input.value = "";
+      recordAction(key, "评论发送接口已返回成功", "success", `目标 ${id} · 新评论由服务端在本次结果中补入，非完整评论历史或额外反查证明。`);
+      state.context.showToast("评论发送接口已返回成功");
+    } catch (error) { unknownAction(key, "评论", error); }
+    finally { state.pendingComments.delete(id); renderFeed(); }
   }
 
   function confirmDeletePost(id, button = null) {
@@ -472,7 +486,7 @@ window.PrivateCompanionQzonePanel = (() => {
       state.context.showToast("只能删除当前登录 QQ 自己发布的说说", "error");
       return;
     }
-    if (state.pendingDeletes.has(cleanId)) return;
+    if (state.pendingDeletes.has(cleanId) || state.unconfirmed.has(`delete:${cleanId}`)) return;
     if (!confirmDeletePost(cleanId, button)) return;
     state.deleteConfirmId = "";
     state.deleteConfirmAt = 0;
@@ -480,12 +494,14 @@ window.PrivateCompanionQzonePanel = (() => {
     renderFeed();
     try {
       state.context.showToast("正在删除说说...");
-      await qzonePost(["/qzone/delete", "/qzone/post/delete"], { id: cleanId });
+      const payload = await qzonePost("/qzone/delete", { id: cleanId });
+      if (payload?.deleted !== true || payload.id !== cleanId) throw Error("删除返回目标或字段不匹配");
+      recordAction(`delete:${cleanId}`, "删除接口已返回成功", "success", `目标 ${cleanId} · 删除当前登录 QQ 的这条说说，不是仅移除本页卡片。`);
       state.posts = state.posts.filter((item) => item.id !== cleanId);
       if (state.selectedId === cleanId) state.selectedId = state.posts[0]?.id || "";
       state.context.showToast("说说已删除");
     } catch (error) {
-      state.context.showToast(`删除失败：${error.message}`, "error");
+      unknownAction(`delete:${cleanId}`, "删除", error);
     } finally {
       state.pendingDeletes.delete(cleanId);
       renderAccount();
@@ -494,19 +510,31 @@ window.PrivateCompanionQzonePanel = (() => {
   }
 
   async function publish() {
-    const input = document.getElementById("qzonePublishContent");
-    const content = text(input?.value).trim();
-    if (!content) {
-      state.context.showToast("说说内容不能为空", "error");
-      return;
+    if (state.publishing || state.unconfirmed.has("publish")) return;
+    const input = document.getElementById("qzonePublishContent"), submitted = text(input?.value), content = submitted.trim();
+    if (!content || Array.from(content).length > 300) {
+      state.context.showToast(content ? "说说最多 300 字，请缩短后再发布；当前内容保留" : "说说内容不能为空", "warn"); return;
     }
+    state.publishing = true;
+    recordAction("publish", "正在发布到 QQ 空间", "pending", "沿原配置可能生成配图，请等待当前结果。");
     try {
-      await qzonePost(["/qzone/publish", "/qzone/post/publish", "/qzone/post"], { content });
-      if (input) input.value = "";
-      state.context.showToast("说说已发布");
-      await loadFeed(true);
-    } catch (error) {
-      state.context.showToast(`发布失败：${error.message}`, "error");
+      const payload = await qzonePost("/qzone/publish", { content });
+      if (payload?.success !== true || !text(payload.tid) || !text(payload.uin) || typeof payload.verified !== "boolean") throw Error("发布返回缺少目标或验证结果");
+      const target = `QQ ${payload.uin} · 说说 ${payload.tid}`;
+      if (payload.verified) {
+        if (input?.value === submitted) input.value = "";
+        recordAction("publish", "发布已反查确认", "success", `${target} · ${payload.verify_message || "发布内容已在反查结果中匹配"}${payload.image_fallback ? "；配图失败后按原规则改为纯文字" : ""}`);
+        state.context.showToast("发布已反查确认；可手动刷新动态查看");
+      } else {
+        state.unconfirmed.add("publish");
+        recordAction("publish", "发布接口已返回成功，尚未反查确认", "warn", `${target} · ${payload.verify_message || "请先到 QQ 空间核实"}`);
+        state.context.showToast("发布尚未反查确认，保留输入，请先核实", "warn");
+      }
+    } catch (error) { unknownAction("publish", "发布", error); }
+    finally {
+      state.publishing = false;
+      const button = document.querySelector("#qzonePublishForm button[type=submit]");
+      if (button) button.disabled = state.unconfirmed.has("publish");
     }
   }
 
@@ -613,15 +641,14 @@ window.PrivateCompanionQzonePanel = (() => {
       }
     });
     document.getElementById("qzoneRefreshCookiesBtn")?.addEventListener("click", async () => {
+      if (state.unconfirmed.has("cookies") || state.actionResults.get("cookies")?.tone === "pending") return;
+      recordAction("cookies", "正在刷新登录凭据", "pending");
       try {
         const payload = await refreshCookies();
-        state.context.showToast(`Cookies 已刷新：QQ ${payload?.uin || "未知"}`);
-        await loadStatus(true);
-        await loadFeed(true);
-      } catch (error) {
-        setNotice(`刷新 Cookies 失败：${error.message}`, "error");
-        state.context.showToast(`刷新 Cookies 失败：${error.message}`, "error");
-      }
+        if (payload?.refreshed !== true || !Number(payload.uin) || typeof payload.has_skey !== "boolean" || typeof payload.has_p_skey !== "boolean") throw Error("凭据刷新结果不完整");
+        recordAction("cookies", "登录凭据刷新接口已返回成功", "success", `QQ ${payload.uin} · 尚未证明动态可访问。需要时手动刷新动态，不会自动发布。`);
+        state.context.showToast("凭据刷新已返回，可手动读取动态核实访问");
+      } catch (error) { unknownAction("cookies", "凭据刷新", error); }
     });
     document.getElementById("qzoneAccountAvatar")?.addEventListener("error", (event) => {
       const avatar = event.currentTarget;

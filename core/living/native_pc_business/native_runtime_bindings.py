@@ -1,13 +1,15 @@
 """Use the actual TLS-owned services; never import or start another plugin."""
 from __future__ import annotations
 
+from ....identity import PLUGIN_NAME, LEGACY_PLUGIN_NAME
+
 
 def integrations_for(owner):
     context = getattr(owner, 'context', None)
     try: rows = context.get_all_stars()
     except Exception: return None
     if not isinstance(rows, (list, tuple)) or len(rows) > 256: return None
-    matches = [row for row in rows if getattr(row, 'root_dir_name', None) == 'astrbot_plugin_virtual_body']
+    matches = [row for row in rows if getattr(row, 'root_dir_name', None) in (PLUGIN_NAME, LEGACY_PLUGIN_NAME)]
     if len(matches) != 1 or getattr(matches[0], 'activated', None) is not True: return None
     plugin = getattr(matches[0], 'star_cls', None)
     integrations = getattr(plugin, '_native_server_integrations', None)

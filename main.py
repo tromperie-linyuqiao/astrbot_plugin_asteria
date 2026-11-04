@@ -57,7 +57,7 @@ def _optional_selected_persona_waiting_hook(**options):
     return factory(**options) if callable(factory) else (lambda method: method)
 
 
-PLUGIN_NAME = "astrbot_plugin_virtual_body"
+from .identity import PLUGIN_NAME, data_directory, register_canonical_aliases, ensure_single_instance
 _TICK_IDLE_SKIP = 5
 
 # ---- B4 天气→雨天动线：雨类关键词（中文直配 + 英文小写；识别 weather_ez 若将来落盘的缓存 JSON）----
@@ -140,11 +140,12 @@ def _migrate_legacy_override(builtin_profile: dict[str, Any],
 @register(
     PLUGIN_NAME,
     "tromperie-linyuqiao",
-    "虚拟存在层：为角色维护身体数值与庄园空间状态（位置/移动/家具/体感联动），轮次前注入空间块+身体块。只产出数据与约束，表演交给模型。",
+    "星栖 Asteria：角色生活、记忆、身体互动、日程与陪伴。",
     CONFIG.VERSION,
 )
-class VirtualBodyPlugin(Star):
+class AsteriaPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
+        ensure_single_instance(context)
         super().__init__(context)
         self.context = context
         self.config = config
@@ -183,7 +184,7 @@ class VirtualBodyPlugin(Star):
         try:
             self._presence = PresenceIntegration(self, context)
         except Exception as exc:
-            logger.warning('[VirtualBody] 统一环境接口暂不可用: %s', type(exc).__name__)
+            logger.warning('[Asteria] 统一环境接口暂不可用: %s', type(exc).__name__)
 
     # ---- 配置读取 ----
 
@@ -309,7 +310,7 @@ class VirtualBodyPlugin(Star):
             candidates.insert(0, override)
         # plugin_data 内的 profiles 优先级最高（本地迭代可不改插件目录）
         try:
-            data_dir = StarTools.get_data_dir(PLUGIN_NAME)
+            data_dir = data_directory(StarTools)
             candidates.insert(0, os.path.join(str(data_dir), "profiles"))
         except Exception:
             pass
@@ -317,7 +318,7 @@ class VirtualBodyPlugin(Star):
         sources: dict[str, str] = {}   # pid → 实际加载文件夹（覆盖层代际体检用）
         data_dir = ""
         try:
-            data_dir = str(StarTools.get_data_dir(PLUGIN_NAME))
+            data_dir = str(data_directory(StarTools))
         except Exception:
             pass
         for folder in reversed(candidates):   # 低优先级先处理，后写的覆盖先写的 → plugin_data 最高
@@ -335,9 +336,9 @@ class VirtualBodyPlugin(Star):
                         loaded[pid] = prof
                         sources[pid] = folder
                     elif pid:
-                        logger.warning(f"[VirtualBody] profile id 非法（须小写字母开头，仅小写字母/数字/连字符/下划线）: {name} id={pid}")
+                        logger.warning(f"[Asteria] profile id 非法（须小写字母开头，仅小写字母/数字/连字符/下划线）: {name} id={pid}")
                 except (OSError, ValueError) as exc:
-                    logger.warning(f"[VirtualBody] profile 加载失败 {name}: {exc}")
+                    logger.warning(f"[Asteria] profile 加载失败 {name}: {exc}")
         # 覆盖层代际体检（0.27.9 结构健康轮）：非内置来源的 profile 与内置同 id 基线比对，
         # half_life 小 4 倍以上（旧代固化，0.23.2 时代 τ 形态）→ 数值以内置刷新、用户自定义保留并回写。
         # 无论覆盖层有无 base_version 都跑数值体检（幂等；版本戳只影响 save 端写入）。
@@ -358,8 +359,11 @@ class VirtualBodyPlugin(Star):
                 continue
             try:
                 merged, changed = _migrate_legacy_override(builtin_prof, prof)
+                from .core.interaction import extend_profile_parts
+                merged, added = extend_profile_parts(builtin_prof, merged)
+                changed = changed or added
             except Exception as exc:
-                logger.warning(f"[VirtualBody] 覆盖层代际体检异常 {pid}: {exc}")
+                logger.warning(f"[Asteria] 覆盖层代际体检异常 {pid}: {exc}")
                 continue
             if not changed:
                 continue
@@ -369,10 +373,10 @@ class VirtualBodyPlugin(Star):
                 with open(tmp, "w", encoding="utf-8", newline="") as f:
                     json.dump(merged, f, ensure_ascii=False, indent=1)
                 os.replace(tmp, os.path.join(folder, f"{pid}.json"))
-                logger.warning(f"[VirtualBody] 覆盖层代际迁移：{pid} 部位 half_life 旧代固化，"
-                               "已按内置基线刷新并回写（label/别名/传导等自定义保留）")
+                logger.warning(f"[Asteria] 覆盖层更新：{pid} 已保存兼容修订与新增部位；"
+                               "已有名称、别名、白名单和自定义数值保留")
             except OSError as exc:
-                logger.warning(f"[VirtualBody] 覆盖层代际迁移回写失败 {pid}: {exc}（本次按迁移后内存值继续）")
+                logger.warning(f"[Asteria] 覆盖层代际迁移回写失败 {pid}: {exc}（本次按迁移后内存值继续）")
         enabled = str(self._cfg("vb_enabled_profiles", "") or "").strip()
         if enabled:
             keep = {x.strip() for x in enabled.split(",") if x.strip()}
@@ -385,7 +389,7 @@ class VirtualBodyPlugin(Star):
         if data_dir:
             for pid, prof in self._profiles.items():
                 state_mod.apply_names_overlay(prof, state_mod.load_names_overlay(data_dir, pid))
-        logger.info(f"[VirtualBody] 已加载 profile: {sorted(self._profiles)}")
+        logger.info(f"[Asteria] 已加载 profile: {sorted(self._profiles)}")
 
     def _default_character(self) -> str:
         cid = str(self._cfg("vb_default_character", "") or "").strip()
@@ -408,12 +412,12 @@ class VirtualBodyPlugin(Star):
                 return
             self._manor = merged
             if save_manor_override(self._space_data_dir, merged):
-                logger.warning("[VirtualBody] manor 覆盖层代际迁移：rooms/edges 数值已按内置基线刷新并回写"
+                logger.warning("[Asteria] manor 覆盖层代际迁移：rooms/edges 数值已按内置基线刷新并回写"
                                "（label/氛围/场景词等自定义保留）")
             else:
-                logger.warning("[VirtualBody] manor 覆盖层代际迁移回写失败（本次按迁移后内存值继续）")
+                logger.warning("[Asteria] manor 覆盖层代际迁移回写失败（本次按迁移后内存值继续）")
         except Exception as exc:
-            logger.warning(f"[VirtualBody] manor 覆盖层代际体检异常: {exc}")
+            logger.warning(f"[Asteria] manor 覆盖层代际体检异常: {exc}")
 
     # ---- 生命周期 ----
 
@@ -433,15 +437,21 @@ class VirtualBodyPlugin(Star):
                 memo_tools = getattr(self, '_native_memo_tool_router', None)
                 if memo_tools is not None: memo_tools.stop()
                 self._native_memo_tool_router = None
-                if self._presence is not None:
-                    await self._presence.aclose()
-                await self._cancel_runtime_tasks()
+                core_tools = getattr(self, '_native_core_tools', None)
+                if core_tools is not None: core_tools.stop()
+                self._native_core_tools = None
+                from .identity import close_failed_initialization
+                await close_failed_initialization(self)
                 raise
 
     async def _initialize_runtime(self):
+        # A failed SDK load is unregistered without calling terminate(). Drain
+        # only an exact retained failed predecessor before opening any writer.
+        from .identity import recover_failed_initialization
+        await recover_failed_initialization(self)
         self._lifecycle_epoch += 1
         self._stopping = False
-        data_dir = StarTools.get_data_dir(PLUGIN_NAME)
+        data_dir = data_directory(StarTools)
         self._store = state_mod.StateStore(str(data_dir))
         self._fallback_budget = DailyFallbackBudget(str(data_dir))
         # 时区部署口面板化：vb_tz_utc_offset 配置覆盖 CONFIG 常量（-1=用容器时区）
@@ -464,7 +474,7 @@ class VirtualBodyPlugin(Star):
         if os.path.isdir(legacy_dir):
             migrated = migrate_legacy_manor(legacy_dir, self._space_data_dir, self._default_character())
             if migrated > 0:
-                logger.info("[VirtualBody] 旧庄园数据已回退迁移 %d 个文件（旧文件保留，.migrated 已标记）" % migrated)
+                logger.info("[Asteria] 旧庄园数据已回退迁移 %d 个文件（旧文件保留，.migrated 已标记）" % migrated)
         self._bindings = self._store.load_bindings()
         if self._presence is not None:
             self._presence.start()
@@ -472,9 +482,9 @@ class VirtualBodyPlugin(Star):
                 available = await self._presence.configure_living(str(data_dir))
                 error_type = self._presence.diagnostics().get('living', {}).get('error_type')
                 if not available and error_type:
-                    logger.warning(f'[VirtualBody] 可选生活系统暂不可用: {error_type}')
+                    logger.warning(f'[Asteria] 可选生活系统暂不可用: {error_type}')
             except Exception as exc:
-                logger.warning(f'[VirtualBody] 可选生活系统暂不可用: {type(exc).__name__}')
+                logger.warning(f'[Asteria] 可选生活系统暂不可用: {type(exc).__name__}')
         self._configure_native_core_tools()
         self._configure_native_memo_tools()
         from .core.living.native_server_integrations import NativeServerIntegrations
@@ -488,23 +498,23 @@ class VirtualBodyPlugin(Star):
             logger.warning('TLS session continuation unavailable: %s', type(exc).__name__)
         self._register_web_api_if_available()
         self._tick_task = asyncio.create_task(self._tick_loop())
-        logger.info("[VirtualBody] 初始化完成，tick=%ss tz_offset=%s" % (self._tick_seconds(), tz_off))
+        logger.info("[Asteria] 初始化完成，tick=%ss tz_offset=%s" % (self._tick_seconds(), tz_off))
         # 部署窗口期防护：manor 插件若仍在加载列表（未按安装提示停用），
         # 九指令与空间注入会双份（vb 吸收了 manor 全部功能）——警告提醒而非拒绝启动
         try:
             _peers = [str(getattr(star, "name", "")) for star in (self.context.get_all_stars() or [])]
             if any("astrbot_plugin_virtual_manor" in n for n in _peers):
-                logger.warning("[VirtualBody] 检测到 astrbot_plugin_virtual_manor 仍在加载！"
+                logger.warning("[Asteria] 检测到 astrbot_plugin_virtual_manor 仍在加载！"
                                "空间指令与注入将双份，请在面板停用 manor（安装提示第二节第 3 步）")
         except Exception:
             pass
-        logger.info("[VirtualBody] 空间层已挂载 rooms=%s source=%s" % (
+        logger.info("[Asteria] 空间层已挂载 rooms=%s source=%s" % (
             len(self._manor.get("rooms") or []), self._manor_source))
 
     def _register_web_api_if_available(self) -> None:
         """AstrBot 官方插件拓展页面 API（模式照搬 PC integration_status.py）。"""
         if not hasattr(self.context, "register_web_api"):
-            logger.debug("[VirtualBody] 当前 AstrBot 版本未提供 register_web_api，跳过 WebUI 注册")
+            logger.debug("[Asteria] 当前 AstrBot 版本未提供 register_web_api，跳过 WebUI 注册")
             return
         try:
             from .web_api import VirtualBodyWebApi
@@ -615,7 +625,12 @@ class VirtualBodyPlugin(Star):
             self._memory_strategy_api=NativeMemoryStrategyWebApi(self)
             self._memory_strategy_api.register_routes()
         except Exception as exc:
-            logger.warning(f"[VirtualBody] WebUI API 注册失败: {exc}")
+            logger.warning(f"[Asteria] WebUI API 注册失败: {exc}")
+        finally:
+            try:
+                register_canonical_aliases(self)
+            except Exception as exc:
+                logger.warning('[Asteria] 兼容路由注册未完成: %s', type(exc).__name__)
 
     async def terminate(self):
         async with self._lifecycle_lock:
@@ -624,6 +639,8 @@ class VirtualBodyPlugin(Star):
             self._stopping = True
             self._initialized = False
             self._lifecycle_epoch += 1
+            from .identity import remove_canonical_aliases
+            remove_canonical_aliases(self)
             core_tools=getattr(self,'_native_core_tools',None)
             if core_tools is not None:core_tools.stop()
             self._native_core_tools=None
@@ -793,13 +810,8 @@ class VirtualBodyPlugin(Star):
     async def weather_detail(
         self, event: AstrMessageEvent, city: str = "", source: str = "auto"
     ) -> str:
-        """详细天气查询（多源：实时+7天+10天+预警+生活指数，中国气象局官方源）。用户问天气、气温、下不下雨、未来一周天气、天气预警时调用。
-
-        Args:
-            city(string): 城市级地名，如"东莞""深圳"。注意：镇/区名可能解析错（塘厦要用东莞），用户提镇名时换所属市
-            source(string): auto（默认自动选源）或 help（查看全部可选源）
-        """
-        return "详细天气查询器未随公开版分发。请接入你有权限使用的天气来源；当前未知天气不会被当成真实观测。"
+        """Optional weather source is supplied by the operator."""
+        return "详细天气查询器未随公版分发，请接入有权使用的天气来源。"
 
     # ---- 心绪编排（0.27.0 并入，数据落 data_dir/mood/） ----
 
@@ -863,14 +875,14 @@ class VirtualBodyPlugin(Star):
                     st, bool(info.get("available") and info.get("is_intimate")), now,
                     self._verbal_cfg(profile))
         except Exception as exc:
-            logger.debug(f"[VirtualBody] 语言调情信号异常: {exc}")
+            logger.debug(f"[Asteria] 语言调情信号异常: {exc}")
         try:
             if CONFIG.MOOD_COUPLE_ENABLED and self._cfg_bool("vb_mood_coupling_enabled", True):
                 score = self._mood_score_now(now)
                 if score is not None:
                     decay.apply_mood_coupling(st, score)
         except Exception as exc:
-            logger.debug(f"[VirtualBody] 情绪耦合异常: {exc}")
+            logger.debug(f"[Asteria] 情绪耦合异常: {exc}")
 
     def _maybe_daily_adaptation(self, character: str, session: str, st: dict[str, Any], now: float) -> bool:
         """长期身体记忆（0.30.0）：每日一次（日键防重入，日切走 decay.tz_local_time 统一时区入口）。
@@ -883,10 +895,10 @@ class VirtualBodyPlugin(Star):
         try:
             _, changed = adaptation.daily_adaptation(st, self._profiles.get(str(character)) or {}, now)
             st["longterm_day"] = today
-            logger.info(f"[VirtualBody] 长期适应：{changed} 部位更新（{character}/{session}）")
+            logger.info(f"[Asteria] 长期适应：{changed} 部位更新（{character}/{session}）")
             return True
         except Exception as exc:
-            logger.error(f"[VirtualBody] 长期适应异常 {character}/{session}: {exc}")
+            logger.error(f"[Asteria] 长期适应异常 {character}/{session}: {exc}")
             return False
 
     def _maybe_proactive_intent(self, st: dict[str, Any], profile: dict[str, Any], now: float) -> None:
@@ -903,9 +915,9 @@ class VirtualBodyPlugin(Star):
                 })
             if hint:
                 st["proactive_intent"] = {"ts": decay.iso_ts(now), "hint": hint}
-                logger.debug(f"[VirtualBody] 主动触碰意图: {hint}")
+                logger.debug(f"[Asteria] 主动触碰意图: {hint}")
         except Exception as exc:
-            logger.debug(f"[VirtualBody] 主动意图异常: {exc}")
+            logger.debug(f"[Asteria] 主动意图异常: {exc}")
 
     def _write_body_mood_hint(self, now: float | None = None) -> None:
         """身体→情绪（0.30.0）：overload 进余韵 → mood/body_mood_hint.json {ts,hint:warm}，
@@ -1001,7 +1013,7 @@ class VirtualBodyPlugin(Star):
             mood_store_mod.save_json(self._mood_dir(), CONFIG.MO_LAST_STATE_FILE, snapshot)
         except Exception as exc:
             self._record_runtime_error(exc)
-            logger.error(f"[VirtualBody] 心绪轮询失败: {exc}")
+            logger.error(f"[Asteria] 心绪轮询失败: {exc}")
 
     def _tick_space(self, now: float) -> None:
         """空间推进：落位/日切/RP 过期回落（只更新数据不发消息）。"""
@@ -1036,7 +1048,7 @@ class VirtualBodyPlugin(Star):
                         self._bridge_departure(character, session, st, now)
             except Exception as exc:
                 self._record_runtime_error(exc)
-                logger.error(f"[VirtualBody] 空间 tick 推进失败 {key}: {exc}")
+                logger.error(f"[Asteria] 空间 tick 推进失败 {key}: {exc}")
 
     def _bridge_arrival(self, character: str, session: str, space_st: dict[str, Any], now: float) -> None:
         """L2-B 存在桥（锚点 8）：空间落位/起程 → 身体事件第四来源。
@@ -1055,9 +1067,9 @@ class VirtualBodyPlugin(Star):
                 idle = getattr(self, "_tick_idle", None)
                 if isinstance(idle, dict):
                     idle.pop((str(character), str(session)), None)   # 事件路径唤醒降频会话
-                logger.debug(f"[VirtualBody] 存在桥事件 {character}/{session}: {evs}")
+                logger.debug(f"[Asteria] 存在桥事件 {character}/{session}: {evs}")
         except Exception as exc:
-            logger.error(f"[VirtualBody] 存在桥异常 {character}/{session}: {exc}")
+            logger.error(f"[Asteria] 存在桥异常 {character}/{session}: {exc}")
 
     def _bridge_departure(self, character: str, session: str, space_st: dict[str, Any], now: float) -> None:
         """B7 存在桥对偶：他离开她所在房间 → leave_he 事件（敏感微落 DEPARTURE_FALL=0.02 级，
@@ -1077,9 +1089,9 @@ class VirtualBodyPlugin(Star):
                 idle = getattr(self, "_tick_idle", None)
                 if isinstance(idle, dict):
                     idle.pop((str(character), str(session)), None)   # 事件路径唤醒降频会话
-                logger.debug(f"[VirtualBody] 存在桥离场事件 {character}/{session}: {evs}")
+                logger.debug(f"[Asteria] 存在桥离场事件 {character}/{session}: {evs}")
         except Exception as exc:
-            logger.error(f"[VirtualBody] 存在桥离场异常 {character}/{session}: {exc}")
+            logger.error(f"[Asteria] 存在桥离场异常 {character}/{session}: {exc}")
 
     # ---- tick 定时推进：只更新数据，不发消息 ----
 
@@ -1094,7 +1106,7 @@ class VirtualBodyPlugin(Star):
                 break
             except Exception as exc:
                 self._record_runtime_error(exc)
-                logger.error(f"[VirtualBody] tick 异常: {exc}")
+                logger.error(f"[Asteria] tick 异常: {exc}")
                 await asyncio.sleep(5)
 
     def tick_all(self, now: float | None = None) -> None:
@@ -1143,11 +1155,12 @@ class VirtualBodyPlugin(Star):
                     idle[key] = min(5, idle.get(key, 0) + 1)
             except Exception as exc:
                 self._record_runtime_error(exc)
-                logger.error(f"[VirtualBody] tick 推进失败 {character}/{session}: {exc}")
+                logger.error(f"[Asteria] tick 推进失败 {character}/{session}: {exc}")
         self._tick_mood(now)   # 先衰减离线旧状态，再评估当前心绪；不开新消息入口。
 
     def _advance_session(self, character: str, session: str, evs: list[dict[str, Any]],
-                         now: float | None = None) -> dict[str, Any] | None:
+                         now: float | None = None, *,
+                         webchat_interaction: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """单会话推进+落盘。返回触发摘要；profile 不认识返回 None。
         消耗优化：事件路径会重置 tick 静默计数（唤醒降频会话）。"""
         profile = self._profiles.get(character)
@@ -1158,6 +1171,9 @@ class VirtualBodyPlugin(Star):
             idle.pop((str(character), str(session)), None)
         st = self._store.get_or_create(character, session, profile)
         now_t = float(time.time() if now is None else now)
+        if webchat_interaction is not None:
+            from .core import interaction
+            interaction.apply(st, webchat_interaction, profile, now_t)
         self._apply_signal_couplings(st, profile, now_t)   # 0.30.0：事件路径同样吃语言/情绪信号
         # 0.31.0 持续接触：消息通道延续（本轮直接事件 pid 不叠加）+ 直接事件落账（advance 后覆盖刷新）
         p_evs: list[dict[str, Any]] = []
@@ -1165,8 +1181,10 @@ class VirtualBodyPlugin(Star):
             p_evs = persist_contact.persist_events(st, evs, now_t, self._persist_cfg())
         summary = decay.advance_state(st, profile, (evs or []) + p_evs, now_t,
                                       intimacy_cfg=self._intimacy_cfg(), **self._phase_cfg())
-        if self._persist_on() and not summary.get("overload"):
+        if (self._persist_on() or (st.get('interaction') or {}).get('mode') == 'narrative') and not summary.get("overload"):
             persist_contact.record_contacts(st, evs, now_t)
+        if webchat_interaction is not None:
+            persist_contact.clear_contacts(st, webchat_interaction.get('stops', []))
         if isinstance(summary, dict) and summary.get("overload"):
             self._write_body_mood_hint(now_t)   # 0.30.0：进余韵 → 身体→情绪 warm hint
         self._store.save(character, session, st)
@@ -1214,7 +1232,7 @@ class VirtualBodyPlugin(Star):
         scope, host = self._tls_command_scope(event)
         event.stop_event()
         if scope is None:
-            await event.send(event.plain_result('当前私聊会话尚未获得TLS角色授权，绑定未完成。请先与角色正常聊一句，再重新生成绑定码；若仍失败，请检查TLS角色的会话授权。'))
+            await event.send(event.plain_result('当前私聊会话尚未获得TLS角色授权，绑定未完成。请先与德克萨斯正常聊一句，再重新生成绑定码；若仍失败，请检查TLS角色的会话授权。'))
             return
         tokens = self._cmd_tokens(event)
         if len(tokens) != 2:
@@ -1361,7 +1379,7 @@ class VirtualBodyPlugin(Star):
             self._store.save_bindings(self._bindings)
             yield event.plain_result(f"已切换到 {profile.get('name') or target}。")
         except Exception as exc:
-            logger.error(f"[VirtualBody] /vbody 异常: {exc}")
+            logger.error(f"[Asteria] /vbody 异常: {exc}")
             yield event.plain_result("切换失败，稍后再试。")
 
     # ---- 指令：/vbstatus —— 聊天侧状态查询（白名单私聊） ----
@@ -1402,7 +1420,7 @@ class VirtualBodyPlugin(Star):
                     f"耐受 {float(st.get('tolerance') or 0):.2f}｜今日 {ev_today.get('count') or 0} 次")
             yield event.plain_result(head + ("\n" + "、".join(rows[:8]) if rows else ""))
         except Exception as exc:
-            logger.error(f"[VirtualBody] /vbstatus 异常: {exc}")
+            logger.error(f"[Asteria] /vbstatus 异常: {exc}")
 
     # ---- 指令：/touch 部位 强度 [类型] ----
 
@@ -1459,7 +1477,7 @@ class VirtualBodyPlugin(Star):
                 reply += "（已过载，进入余韵）"
             yield event.plain_result(reply)
         except Exception as exc:
-            logger.error(f"[VirtualBody] /touch 异常: {exc}")
+            logger.error(f"[Asteria] /touch 异常: {exc}")
             yield event.plain_result("记录失败，稍后再试。")
 
     # ---- 空间层指令（存在层合并 P1：manor 六件迁入，会话走 _resolve_space） ----
@@ -1509,7 +1527,7 @@ class VirtualBodyPlugin(Star):
             lines.append(f"今日移动 {ev.get('moves') or 0} 次")
             yield event.plain_result("\n".join(lines))
         except Exception as exc:
-            logger.error(f"[VirtualBody] /where 异常: {exc}")
+            logger.error(f"[Asteria] /where 异常: {exc}")
 
     @filter.command("map", alias={"庄园"})
     async def cmd_map(self, event: AstrMessageEvent):
@@ -1724,7 +1742,7 @@ class VirtualBodyPlugin(Star):
                             # L2-B 桥挂点（锚点 8）：她的首落位/起程离开在此，移动落位由 tick 桥接
                             self._bridge_arrival(character, session, st, now)
                     except Exception as exc:
-                        logger.error(f"[VirtualBody] 空间消息观察异常: {exc}")
+                        logger.error(f"[Asteria] 空间消息观察异常: {exc}")
             if not vb_on:
                 return
             # ---- 身体抽取 ----
@@ -1740,9 +1758,9 @@ class VirtualBodyPlugin(Star):
                     st_c = self._store.get_or_create(character, session, profile)
                     if persist_contact.clear_contacts(st_c, stops):
                         self._store.save(character, session, st_c)
-                        logger.debug(f"[VirtualBody] 持续接触按否定清除 {character}/{session}: {stops}")
+                        logger.debug(f"[Asteria] 持续接触按否定清除 {character}/{session}: {stops}")
                 except Exception as exc:
-                    logger.error(f"[VirtualBody] 持续接触清除异常 {character}/{session}: {exc}")
+                    logger.error(f"[Asteria] 持续接触清除异常 {character}/{session}: {exc}")
                 # 停止保护独立于持续接触开关；不让未完成的抽取再次建立接触。
                 if not evs:
                     return
@@ -1772,7 +1790,7 @@ class VirtualBodyPlugin(Star):
                 task.add_done_callback(lambda _task, t=token: self._fb_stop_guard.finish(t))
                 task.add_done_callback(self._fb_tasks.discard)
         except Exception as exc:
-            logger.error(f"[VirtualBody] 消息观察异常: {exc}")
+            logger.error(f"[Asteria] 消息观察异常: {exc}")
 
     async def _llm_fallback_extract(self, character: str, session: str, text: str, token=None) -> None:
         token = token or self._fb_stop_guard.begin(character, session)
@@ -1795,7 +1813,7 @@ class VirtualBodyPlugin(Star):
                 ev["t"] = time.time()
                 self._advance_session(character, session, [ev])
         except Exception as exc:
-            logger.error(f"[VirtualBody] 兜底抽取异常: {exc}")
+            logger.error(f"[Asteria] 兜底抽取异常: {exc}")
         finally:
             self._fb_stop_guard.finish(token)
 
@@ -1853,7 +1871,7 @@ class VirtualBodyPlugin(Star):
                 provider.text_chat(prompt=prompt, session_id=f"{PLUGIN_NAME}_fallback"),
                 timeout=CONFIG.LLM_FALLBACK_TIMEOUT_SECONDS)
         except Exception as exc:
-            logger.debug(f"[VirtualBody] 兜底抽取调用失败: {exc}")
+            logger.debug(f"[Asteria] 兜底抽取调用失败: {exc}")
             return None
         if getattr(self, "_stopping", False) or epoch != getattr(self, "_lifecycle_epoch", 0):
             return None
@@ -1934,9 +1952,9 @@ class VirtualBodyPlugin(Star):
                     comp.text = cleaned
                     changed = True
             if changed:
-                logger.debug("[VirtualBody] 已清洗出站消息中的存在层标签残留")
+                logger.debug("[Asteria] 已清洗出站消息中的存在层标签残留")
         except Exception as exc:
-            logger.error(f"[VirtualBody] 出站清洗异常: {exc}")
+            logger.error(f"[Asteria] 出站清洗异常: {exc}")
 
     @filter.on_decorating_result(priority=-20001)
     async def decorate_native_expression(self, event: AstrMessageEvent, *args, **kwargs):
@@ -1980,6 +1998,16 @@ class VirtualBodyPlugin(Star):
             await inject_chat_session_context(self, event, req)
         except (RuntimeError, ValueError, OSError) as exc:
             logger.warning('TLS Chat session context unavailable: %s', type(exc).__name__)
+        from .core.living.chat_daily_context import inject_chat_daily_context
+        try:
+            await inject_chat_daily_context(self, event, req)
+        except Exception as exc:
+            logger.warning('Asteria daily context unavailable: %s', type(exc).__name__)
+        from .chat_corpus_web_api import inject_chat_corpus_context
+        try:
+            await inject_chat_corpus_context(self, event, req)
+        except Exception as exc:
+            logger.warning('Asteria reference context unavailable: %s', type(exc).__name__)
 
     @filter.on_agent_begin()
     async def begin_texas_chat_model_route(self, event, run_context):
@@ -2642,7 +2670,7 @@ class VirtualBodyPlugin(Star):
                                         not self._presence.stage_context(event, req, block, 'virtual.space')):
                                     self._emit_block(req, block, use_system)
                     except Exception as exc:
-                        logger.error(f"[VirtualBody] 空间注入异常: {exc}")
+                        logger.error(f"[Asteria] 空间注入异常: {exc}")
             # ---- 身体块 ----
             if not self._cfg_bool("vb_enabled", True) or not self._cfg_bool("vb_inject_enabled", True):
                 return
@@ -2688,7 +2716,7 @@ class VirtualBodyPlugin(Star):
                         not self._presence.stage_context(event, req, block, 'virtual.body')):
                     self._emit_block(req, block, use_system)
         except Exception as exc:
-            logger.error(f"[VirtualBody] 注入异常: {exc}")
+            logger.error(f"[Asteria] 注入异常: {exc}")
 
     @filter.on_llm_request(priority=-20800)
     async def inject_environment_context(self, event: AstrMessageEvent, req: ProviderRequest, *args, **kwargs):
@@ -2704,10 +2732,10 @@ class VirtualBodyPlugin(Star):
                     from .core.living.chat_window_continuity import stage_chat_window_continuity
                     await stage_chat_window_continuity(self, event, req)
                 except Exception as exc:
-                    logger.debug('[VirtualBody] 临时续聊原话不可用: %s', type(exc).__name__)
+                    logger.debug('[Asteria] 临时续聊原话不可用: %s', type(exc).__name__)
                 await self._presence.inject(event, req, TextPart)
         except Exception as exc:
-            logger.warning('[VirtualBody] 环境 Context 暂不可用: %s', type(exc).__name__)
+            logger.warning('[Asteria] 环境 Context 暂不可用: %s', type(exc).__name__)
 
     @filter.llm_tool(name='presence_context_query')
     async def presence_context_query(self, event: AstrMessageEvent, aspect: str = '') -> str:
@@ -2831,7 +2859,7 @@ class VirtualBodyPlugin(Star):
             req.system_prompt = (base + "\n\n" + block) if base else block
             return
         # 终审修复：删除 req.prompt 直拼旧通道（纪律 4 禁令；TextPart 不可用且非 system 位则宁可不注入）
-        logger.warning("[VirtualBody] TextPart 不可用且非 system 位，跳过本轮注入（不再走 req.prompt 落历史通道）")
+        logger.warning("[Asteria] TextPart 不可用且非 system 位，跳过本轮注入（不再走 req.prompt 落历史通道）")
 
     def _configure_native_memo_tools(self):
         old = getattr(self, '_native_memo_tool_router', None)
@@ -2943,3 +2971,7 @@ class VirtualBodyPlugin(Star):
         return await schedule_native_memo(integration, controller, event, title=title,
             due_at=due_at, content=content, repeat=repeat, slot=slot,
             user_requested=user_requested, remind_enabled=remind_enabled)
+
+
+# Import compatibility only; AstrBot registers the canonical Asteria class once.
+VirtualBodyPlugin = AsteriaPlugin

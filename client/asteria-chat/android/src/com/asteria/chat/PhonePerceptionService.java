@@ -38,7 +38,7 @@ public final class PhonePerceptionService extends Service {
     private static final String PREFS = "asteria_chat_perception";
     private static final String START = "com.asteria.chat.PERCEPTION_START";
     private static final String STOP = "com.asteria.chat.PERCEPTION_STOP";
-    private static final String CHANNEL = "asteria-chat-phone-perception";
+    private static final String CHANNEL = "texas-chat-phone-perception";
     private static final int NOTICE = 4600;
     private static final long FAST_MS = 15000L, BASIC_MS = 60000L;
     private static final Object GATE = new Object();
@@ -53,7 +53,7 @@ public final class PhonePerceptionService extends Service {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "asteria-chat-phone-perception");
+        Thread thread = new Thread(runnable, "texas-chat-phone-perception");
         thread.setDaemon(true);
         return thread;
     });
@@ -573,7 +573,7 @@ public final class PhonePerceptionService extends Service {
         PendingIntent open = PendingIntent.getActivity(this, NOTICE, new Intent(this, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(BuildConfig.APP_NAME + " 手机感知").setContentText(notificationText(value, reason))
+                .setContentTitle("Asteria Chat 手机感知").setContentText(notificationText(value, reason))
                 .setOnlyAlertOnce(true).setOngoing(true).setCategory(Notification.CATEGORY_SERVICE).setContentIntent(open)
                 .addAction(new Notification.Action.Builder(android.R.drawable.ic_media_pause, "停止采集", stop).build()).build();
     }

@@ -187,10 +187,14 @@ def summary_plan(rows, *, settings=None):
     No generic prose similarity merges conflicts or deletes manual material.
     """
     values = validate_settings(settings or dict(DEFAULTS))
+    from .structured_reply import visible_timeline_rows
     selected, filtered, deferred, seen = [], {}, [], set()
     domain = None
-    for row in rows:
+    for row in visible_timeline_rows(rows):
         event_id = str(row.get('id') or '')
+        if row.get('event_type') == 'bot_response' and not str(row.get('content') or '').strip():
+            filtered[event_id] = 'assistant_draft_only'
+            continue
         info = metadata(row).get('memory_routing')
         info = info if isinstance(info, dict) and info.get('schema') == VERSION else route(row)
         bucket = info.get('bucket', 'event')

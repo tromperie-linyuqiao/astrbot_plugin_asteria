@@ -257,7 +257,7 @@ class NativeAutonomousLifeWebApi:
             self._same(resources)
             body = dict(ok=True, backend='autonomous_life', scope=scope, result=result,
                 access='authenticated_administrator', evidence_kind='roleplay_event', creates_runtime_lease=False)
-            if route == 'overview':
+            if route in {'overview', 'personal/overview', 'personal/decision'}:
                 coordinator = getattr(resources[1], 'life_coordinator', None)
                 body['runtime'] = coordinator.status(scope, service=service) if coordinator else {'available': False}
             return json_response(body, headers={'Cache-Control': 'no-store'})

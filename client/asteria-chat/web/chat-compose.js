@@ -1,12 +1,12 @@
 'use strict';
 
 /* One composer over the existing chat/session/attachment transport. Assets and
-   both preference sets live on TLS; only unsent composition stays on-device. */
+   both preference sets live on TLS. Local catalog snapshots are read-only until refreshed. */
 window.ChatComposer = (() => {
   const model = { scope: '', serial: 0, epoch: 0, operation: null, actionEditorSerial: 0, preferenceEditorSerial: 0, loaded: false, loading: false, error: '',
-    assets: [], actions: [], actionRevision: undefined, defaultActions: [], selfActions: [], selfSupported: false, actionTarget:'character', actionFilter:'quick', selfVerb:'', selfPart:'', stickers: [], extras: [], order: [], panel: '', filter: 'all', query: '', touchCatalog:null, touchVerb:'', touchPart:'', touchQuick:true, touchUnknown:false,
+    assets: [], actions: [], actionRevision: undefined, defaultActions: [], selfActions: [], selfSupported: false, actionTarget:'character', actionFilter:'quick', selfVerb:'', selfPart:'', stickers: [], extras: [], order: [], panel: '', filter: 'all', query: '', touchCatalog:null, touchVerb:'', touchPart:'', touchQuery:'', touchGroup:'all', touchQuick:true, touchUnknown:false,
     pickMode: 'attach', category: '', selected: null, actionEditing: null, batch: null, batchSerial: 0, defaultsSerial: 0, busy: false,
-    previews: new Map(), nativeViewport: null, watch: null, watchTarget: '', pendingWatch: '', notificationId: null };
+    cachedAssets:false, previews: new Map(), nativeViewport: null, watch: null, watchTarget: '', pendingWatch: '', notificationId: null };
   const node = id => document.getElementById(id);
   const scope = () => state.authenticated && state.activeId
     ? JSON.stringify([state.server, state.username, state.activeId,
@@ -97,14 +97,15 @@ window.ChatComposer = (() => {
   }
   function renderPreview() {
     const list=node('pending-actions');if(!list)return;
+    const previous=new Set([...list.children].map(row=>row.dataset.fragmentId));
     list.replaceChildren();
     const values=parts(node('draft').value.trim());
     const expanded=hasContent() || values.some(v=>['attachment','image','file','record','video'].includes(v.type));
     list.hidden=!expanded;
     if(expanded) for(const [index,value] of values.entries()) {
-      const row=document.createElement('div');row.className='composition-item';
+      const row=document.createElement('div');row.className='composition-item';row.dataset.fragmentId=value.fragment_id;if(!previous.has(value.fragment_id))row.classList.add('composition-enter');
       const names={text:'话语',action:'动作',sticker:'表情',attachment:'附件',image:'图片',file:'文件',record:'语音',video:'视频',reference:'引用'};
-      const label=button((value.type==='action'?(value.target==='self'?'自己的动作':'对伙伴的动作'):names[value.type]||'片段')+' · '+(value.label||value.text||value.filename||value.description||'消息').slice(0,70),()=>{
+      const label=button((value.type==='action'?(value.target==='self'?'自己的动作':'对角色的动作'):names[value.type]||'片段')+' · '+(value.label||value.text||value.filename||value.description||'消息').slice(0,70),()=>{
         if(value.type==='text') {
           const editor=node('compose-text-editor');model.editingText=value.fragment_id;editor.value=value.text;node('compose-text-dialog').showModal();
         } else if(value.type==='action') { const action=model.actions.find(v=>v.id===value.action_id);if(action)editAction(action); }
@@ -143,7 +144,7 @@ window.ChatComposer = (() => {
     for(const value of parts(node('draft').value.trim())){
       const item=document.createElement('article');item.className='composition-preview-fragment';
       if(value.type==='sticker')item.append(renderPart({type:'sticker',asset_id:value.asset_id,name:value.label}));
-      else {const label=document.createElement('small');label.textContent=value.type==='action'?(value.target==='self'?'你描述自己的动作':'你对伙伴的互动'):value.type==='reference'?'引用消息':value.type==='text'?'你的话语':'待发送附件';
+      else {const label=document.createElement('small');label.textContent=value.type==='action'?(value.target==='self'?'你描述自己的动作':'你对角色的互动'):value.type==='reference'?'引用消息':value.type==='text'?'你的话语':'待发送附件';
         const content=document.createElement('p');content.textContent=value.text||value.description||value.filename||value.label||'附件';item.append(label,content);}
       box.append(item);
     }
@@ -218,20 +219,29 @@ window.ChatComposer = (() => {
   async function sync(force = false) {
     flushNotification(); updateWatchTarget();
     const current = scope();
-    if (!current) { if (model.scope) { invalidateOperations();closeActive(); closeBatchActions(); model.serial++; model.scope = ''; model.assets = []; model.actions = []; model.actionRevision=undefined; model.defaultActions=[]; model.touchCatalog=null; model.touchVerb=''; model.touchPart=''; model.loaded = false; clearExpressionSearch(); restore(); } return; }
+    if (!current) { if (model.scope) { invalidateOperations();closeActive(); closeBatchActions(); model.serial++; model.scope = ''; model.assets = []; model.actions = []; model.actionRevision=undefined; model.defaultActions=[]; model.touchCatalog=null; model.touchVerb=''; model.touchPart=''; model.touchQuery=''; model.touchGroup='all'; model.loaded = false; clearExpressionSearch(); restore(); } return; }
     if (model.scope !== current) {
       invalidateOperations();
       closeActive(); closeBatchActions(); model.selected = null; model.actionEditing = null;
       model.serial++; model.scope = current; model.loaded = false; model.loading = false; clearExpressionSearch();
-      model.assets = []; model.actions = []; model.actionRevision=undefined; model.defaultActions=[]; model.selfActions=[]; model.selfSupported=false; model.actionTarget='character'; model.selfVerb=''; model.selfPart=''; model.touchCatalog=null; model.touchVerb=''; model.touchPart=''; model.touchUnknown=false; model.previews.clear(); model.error = ''; restore();
+      model.assets = []; model.actions = []; model.actionRevision=undefined; model.defaultActions=[]; model.selfActions=[]; model.selfSupported=false; model.actionTarget='character'; model.selfVerb=''; model.selfPart=''; model.touchCatalog=null; model.touchVerb=''; model.touchPart=''; model.touchQuery=''; model.touchGroup='all'; model.touchUnknown=false; model.previews.clear(); model.cachedAssets=false; model.error = ''; restore();
     }
     if (model.loading || !force && (model.loaded || model.error)) return;
     model.loading = true; const serial = ++model.serial;
+    const disk=window.ChatMediaCache,owner=disk?.scope(state.server,state.username),generation=disk?.generation();
+    const canCache=state.sessionPersonaConfig?.status==='configured'&&typeof state.sessionPersonaConfig.configuredId==='string'&&!!state.sessionPersonaConfig.configuredId;
+    // Read the saved directory alongside the existing refresh, never as send authority.
+    if(!model.loaded&&canCache)disk?.catalogGet?.(owner,current).then(saved=>{
+      if(!saved||serial!==model.serial||current!==scope()||model.loaded)return;
+      model.assets=saved.items;model.cachedAssets=true;renderAssets();
+    }).catch(()=>{});
     try {
       const [library, actions] = await Promise.all([call('GET', endpoint('expressions')),
         call('GET', endpoint('actions'))]);
       if (model.scope !== scope() || serial !== model.serial) return;
       model.assets = Array.isArray(library.items) ? library.items : [];
+      model.cachedAssets=false;
+      if(canCache&&Array.isArray(library.items))disk?.catalogPut?.(owner,current,{items:library.items},generation);
       model.actions = Array.isArray(actions.items) ? actions.items : [];
       model.actionRevision = Number.isInteger(actions.revision) && actions.revision >= 0 ? actions.revision : undefined;
       model.defaultActions = Array.isArray(actions.defaults) ? actions.defaults : [];
@@ -242,6 +252,10 @@ window.ChatComposer = (() => {
       model.touchCatalog=actions.native_touch||null;if(force)model.touchUnknown=false;
       if(!allowedTouchParts(model.touchVerb).some(part=>part.id===model.touchPart))model.touchPart='';
       model.loaded = true; model.error = '';
+      for (const image of document.querySelectorAll('img[data-sticker-id]')) {
+        const asset = model.assets.find(value => assetId(value) === image.dataset.stickerId);
+        if (asset && image.dataset.stickerVersion !== String(asset.revision)) thumbnail(image, asset);
+      }
     } catch (error) {
       if (serial !== model.serial) return;
       model.error = error && error.status === 404 ? '服务器尚未启用共享表达接口，文字聊天可继续。' : errorText(error);
@@ -249,19 +263,32 @@ window.ChatComposer = (() => {
       if (serial === model.serial) { model.loading = false; renderAssets(); renderActions(); }
     }
   }
+  window.addEventListener('chat-media-cache-cleared', () => {model.previews.clear();if(model.cachedAssets){model.assets=[];model.cachedAssets=false;renderAssets();}});
   function thumbnail(image, asset) {
-    const id = assetId(asset), current = scope();
+    const id = assetId(asset), current = scope(), epoch = chatAuthEpoch;
+    const currentRead = () => current === scope() && epoch === chatAuthEpoch;
     if (!id || !current) return;
-    let pending = model.previews.get(id);
+    const catalog = model.assets.find(value => assetId(value) === id) || asset;
+    const version = Number.isInteger(catalog.revision) ? catalog.revision : null;
+    const cache = window.ChatMediaCache, owner = cache?.scope(state.server, state.username), generation = cache?.generation();
+    const key = JSON.stringify([id, version]);
+    image.dataset.stickerId = id; image.dataset.stickerVersion = String(version);
+    let pending = model.previews.get(key);
     if (!pending) {
-      pending = call('GET', endpoint('expression-preview', { asset_id: id })).then(value => {
+      pending = (async () => {
+        const saved = await cache?.get(owner, 'sticker:'+id, version);
+        if (!currentRead()) throw new Error('账户已切换');
+        if (saved) return saved.data_url;
+        const value = await call('GET', endpoint('expression-preview', { asset_id: id }));
+        if (!currentRead()) throw new Error('账户已切换');
         if (typeof value.data_url !== 'string' || !/^data:image\/(png|jpeg|gif|webp);base64,/.test(value.data_url)) throw new Error('表情图片暂不可用');
+        await cache?.put(owner, 'sticker:'+id, version, value, generation);
         return value.data_url;
-      }); model.previews.set(id, pending);
-      pending.catch(() => { if (model.previews.get(id) === pending) model.previews.delete(id); });
+      })(); model.previews.set(key, pending);
+      pending.catch(() => { if (model.previews.get(key) === pending) model.previews.delete(key); });
     }
-    pending.then(url => { if (current === scope() && image.isConnected) { image.src = url; image.classList.add('loaded'); } })
-      .catch(() => { if (current === scope() && image.isConnected) image.alt = asset.name || '图片暂不可用'; });
+    pending.then(url => { if (currentRead() && image.isConnected && image.dataset.stickerId === id && image.dataset.stickerVersion === String(version)) { image.src = url; image.classList.add('loaded'); delete image.dataset.previewFailed; } })
+      .catch(() => { if (currentRead() && image.isConnected && image.dataset.stickerId === id && image.dataset.stickerVersion === String(version)) { image.alt = asset.name || '图片暂不可用'; image.dataset.previewFailed = '1'; } });
   }
   const searchKey=value=>String(value||'').normalize('NFKC').toLocaleLowerCase();
   const assetTags=value=>Array.isArray(value.tags)?[...new Map(value.tags.filter(tag=>typeof tag==='string'&&tag.trim()).map(tag=>[searchKey(tag.trim()),tag.trim()])).values()]:[];
@@ -311,14 +338,22 @@ window.ChatComposer = (() => {
   }
   function renderAssets() {
     const grid = node('shared-expression-grid'); if (!grid) return;
-    grid.replaceChildren();
-    const info=!scope()?'先打开一个对话，再使用服务器共享素材。':model.loading?'正在读取共享素材…':model.error;
+    grid.classList.toggle('catalog-cached',model.cachedAssets);
+    const info=!scope()?'先打开一个对话，再使用服务器共享素材。':model.cachedAssets?(model.loading?'上次保存的表情 · 正在核对最新目录，暂不能发送或修改':'上次保存的表情 · '+(model.error||'最新目录尚未确认')+'；点击刷新重试'):model.loading?'正在读取共享素材…':model.error;
     const base=expressionBase(),matching=filteredAssets(base);discovery(base,matching,info);
+    // Opening/closing the same drawer must not decode every cached image again.
+    // Scope, returned metadata and explicit cache clearing still invalidate it.
+    const renderKey=JSON.stringify([scope(),matching.length?null:model.loaded,model.query,model.category,window.ChatMediaCache?.generation(),matching]);
+    if(grid._expressionRenderKey===renderKey&&!grid.querySelector('img[data-preview-failed="1"]')){
+      [...grid.children].forEach((card,index)=>{const asset=matching[index];if(!asset)return;const pick=card.querySelector('.expression-pick');if(pick)pick.disabled=model.cachedAssets||asset.enabled===false||actorPref(asset,'user').hidden===true;for(const control of card.querySelectorAll('.expression-controls button'))control.disabled=model.cachedAssets;});
+      return;
+    }
+    grid._expressionRenderKey=renderKey;grid.replaceChildren();
     for (const asset of matching) {
       const card = document.createElement('div'); card.className = 'shared-expression';
       const pick = button('', () => model.pickMode === 'send' || actorPref(asset, 'user').quick_send
         ? sendNow([{ type: 'sticker', asset_id: assetId(asset) }]) : attachAsset(asset), 'expression-pick');
-      pick.disabled = asset.enabled === false || actorPref(asset, 'user').hidden === true;
+      pick.disabled = model.cachedAssets || asset.enabled === false || actorPref(asset, 'user').hidden === true;
       pick.title = [asset.name, asset.meaning, (asset.tags || []).join('、')].filter(Boolean).join(' · ');
       const image = document.createElement('img'); image.alt = asset.name || '表情'; image.width = 84; image.height = 84; pick.append(image);
       const label = document.createElement('span'); label.textContent = asset.name || '表情'; pick.append(label);
@@ -326,7 +361,7 @@ window.ChatComposer = (() => {
       const star = button(actorPref(asset, 'user').favorite ? '★' : '☆', () => savePreference(assetId(asset), 'user', { favorite: !actorPref(asset, 'user').favorite }), 'expression-star');
       star.setAttribute('aria-label', (actorPref(asset,'user').favorite?'取消收藏 ':'收藏 ') + (asset.name || '表情'));
       star.setAttribute('aria-pressed',String(!!actorPref(asset,'user').favorite));
-      const detail = button('偏好', () => openPreference(asset), 'text-button'); controls.append(star, detail);
+      const detail = button('偏好', () => openPreference(asset), 'text-button');star.disabled=detail.disabled=model.cachedAssets;controls.append(star, detail);
       card.append(pick, controls); grid.append(card); thumbnail(image, asset);
     }
     if (!grid.children.length && model.loaded) {
@@ -357,9 +392,13 @@ window.ChatComposer = (() => {
     const list = node('shared-action-list'); if (!list) return;
     list.replaceChildren();
     renderTouchBuilder();
-    setText('action-status', model.loading ? '正在读取动作…' : model.error || (model.actionTarget==='self'?'描述自己的行为，交给伙伴理解和回应；不会触发她的身体状态。':'你对伙伴发起互动，发送后由 TLS 处理。'));
+    setText('action-status', model.loading ? '正在读取动作…' : model.error || (model.actionTarget==='self'?'描述自己的行为，交给角色理解和回应；不会触发她的身体状态。':'你对角色发起互动，发送后由 TLS 处理。'));
     const filters=document.createElement('div');filters.className='action-target-tabs';
     for(const [id,label]of [['quick','常用与全部'],['recent','最近使用']]){const pick=button(label,()=>{model.actionFilter=id;renderActions();},'text-button');pick.setAttribute('aria-pressed',String(model.actionFilter===id));filters.append(pick);}list.append(filters);
+    if(model.actionTarget==='character'&&model.defaultActions.some(value=>value.id==='end_contact'&&value.enabled!==false)){
+      const stop=button('结束接触 · 加入草稿',prepareEndContact,'secondary-button');stop.id='compose-end-contact';stop.disabled=model.busy||model.touchUnknown||!model.loaded;list.append(stop);
+      list.append(Object.assign(document.createElement('p'),{className:'compose-status',textContent:'首次使用会将这个动作存入动作库；加入草稿后，仍需点发送才结束接触。'}));
+    }
     let values = orderedActions().filter(value=>(value.target||'character')===model.actionTarget);
     if(model.actionFilter==='recent')values=values.filter(value=>value.last_used).sort((a,b)=>(b.last_used||0)-(a.last_used||0)).slice(0,12);
     const others = document.createElement('details'); others.className = 'other-actions';
@@ -421,10 +460,10 @@ window.ChatComposer = (() => {
   function renderTouchBuilder(){
     const box=node('native-touch-picker');if(!box)return;box.replaceChildren();
     const targets=document.createElement('div');targets.className='action-target-tabs';targets.setAttribute('aria-label','动作对象');
-    for(const [id,label]of [['character','对伙伴'],['self','描述自己']]){const pick=button(label,()=>{model.actionTarget=id;renderActions();},'touch-choice');pick.setAttribute('aria-pressed',String(model.actionTarget===id));pick.disabled=id==='self'&&!model.selfSupported;targets.append(pick);}box.append(targets);
+    for(const [id,label]of [['character','对角色'],['self','描述自己']]){const pick=button(label,()=>{model.actionTarget=id;renderActions();},'touch-choice');pick.setAttribute('aria-pressed',String(model.actionTarget===id));pick.disabled=id==='self'&&!model.selfSupported;targets.append(pick);}box.append(targets);
     if(model.actionTarget==='self'){renderSelfBuilder(box);return;}
     const catalog=model.touchCatalog;
-    if(!catalog||!catalog.available){box.append(Object.assign(document.createElement('p'),{className:'compose-status',textContent:catalog&&catalog.reason||'正在连接TLS原生动作与部位…'}));return;}
+    if(!catalog||!catalog.available){box.append(Object.assign(document.createElement('p'),{className:'compose-status',textContent:catalog&&catalog.reason||'正在读取角色动作与部位…'}));return;}
     const heading=document.createElement('div');heading.className='touch-path';
     heading.append(button(model.touchVerb||'① 选择动作',()=>{model.touchVerb='';model.touchPart='';renderTouchBuilder();},'touch-breadcrumb'));
     heading.append(Object.assign(document.createElement('span'),{textContent:'›'}),Object.assign(document.createElement('strong'),{textContent:model.touchPart?touchPartLabel(catalog.parts.find(p=>p.id===model.touchPart)||{})||'部位':model.touchVerb?'② 选择部位':'再选部位'}));box.append(heading);
@@ -435,13 +474,19 @@ window.ChatComposer = (() => {
       for(const value of sorted){const pick=button(value.word,()=>{model.touchVerb=value.word;model.touchPart='';renderTouchBuilder();},'touch-choice');pick.disabled=Array.isArray(value.part_ids)&&!value.part_ids.length;choices.append(pick);}
     }else{
       const options=allowedTouchParts(model.touchVerb);
-      for(const part of options){const choice=button(touchPartLabel(part),()=>{model.touchPart=part.id;renderTouchBuilder();},'touch-choice');choice.classList.toggle('selected',part.id===model.touchPart);choices.append(choice);}
-      if(!options.length)choices.append(Object.assign(document.createElement('p'),{className:'compose-status',textContent:'这个动作当前没有已接通的适用部位，请选择其他动作。'}));
+      const partGroup=part=>{const value=part.id+' '+part.label;return /ear|耳/.test(value)?'耳部':/tail|尾/.test(value)?'尾部':/palm|wrist|hand|finger|arm|elbow|手|臂|肘|指/.test(value)?'手与上肢':/head|cheek|face|forehead|chin|temple|头|脸|额|下巴|太阳穴/.test(value)?'头面部':/thigh|knee|calf|ankle|sole|foot|toe|腿|膝|踝|脚/.test(value)?'下肢':'其他部位';};
+      const search=document.createElement('input');search.type='search';search.maxLength=80;search.placeholder='搜索适用部位或别名';search.setAttribute('aria-label','搜索适用部位');search.value=model.touchQuery;search.className='touch-part-search';
+      const filters=document.createElement('div');filters.className='touch-group-filters';filters.setAttribute('aria-label','部位分区');
+      const rows=document.createElement('div');rows.className='touch-part-results';const groups=[...new Set(options.map(partGroup))];
+      if(model.touchGroup!=='all'&&!groups.includes(model.touchGroup))model.touchGroup='all';
+      function drawParts(){rows.replaceChildren();const query=model.touchQuery.trim().toLocaleLowerCase();let count=0;for(const group of groups){if(model.touchGroup!=='all'&&model.touchGroup!==group)continue;const parts=options.filter(part=>partGroup(part)===group&&[part.id,part.label,...(part.aliases||[])].join(' ').toLocaleLowerCase().includes(query));if(!parts.length)continue;const section=document.createElement('section');section.className='touch-part-group';section.append(Object.assign(document.createElement('h4'),{textContent:group}));const picks=document.createElement('div');picks.className='touch-choices';for(const part of parts){const choice=button(touchPartLabel(part),()=>{model.touchPart=part.id;renderTouchBuilder();},'touch-choice');choice.dataset.touchPart=part.id;choice.classList.toggle('selected',part.id===model.touchPart);choice.setAttribute('aria-pressed',String(part.id===model.touchPart));picks.append(choice);count++;}section.append(picks);rows.append(section);}if(!count)rows.append(Object.assign(document.createElement('p'),{className:'compose-status',textContent:options.length?'没有匹配的适用部位。试试其他名称或分区。':'这个动作当前没有已接通的适用部位，请选择其他动作。'}));for(const pick of filters.children)pick.setAttribute('aria-pressed',String(pick.dataset.group===model.touchGroup));}
+      for(const group of ['all',...groups]){const pick=button(group==='all'?'全部':group,()=>{model.touchGroup=group;drawParts();},'touch-choice');pick.dataset.group=group;filters.append(pick);}search.addEventListener('input',()=>{model.touchQuery=search.value;drawParts();});
+      choices.classList.add('touch-part-browser');choices.append(search,filters,rows);drawParts();
     }
     box.append(choices);
     if(model.touchVerb&&model.touchPart){
       const target=allowedTouchParts(model.touchVerb).find(part=>part.id===model.touchPart);if(!target){model.touchPart='';return;}
-      const preview=document.createElement('div');preview.className='touch-selection-preview';preview.append(Object.assign(document.createElement('strong'),{textContent:model.touchVerb+' · '+touchPartLabel(target)}),Object.assign(document.createElement('p'),{textContent:'你发起的互动 → TLS 原生触觉 → 伙伴回应'}));box.append(preview);
+      const preview=document.createElement('div');preview.className='touch-selection-preview';preview.append(Object.assign(document.createElement('strong'),{textContent:model.touchVerb+' · '+touchPartLabel(target)}),Object.assign(document.createElement('p'),{textContent:'你发起的互动 → Asteria 身体状态 → 角色回应'}));box.append(preview);
       const favorite=document.createElement('label');favorite.className='touch-quick-option';const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.checked=model.touchQuick;checkbox.onchange=()=>{model.touchQuick=checkbox.checked;};favorite.append(checkbox,document.createTextNode('新组合保存到常用'));box.append(favorite);
       const controls=document.createElement('div');controls.className='touch-confirm';controls.append(button('加入当前消息',()=>useTouch(false),'secondary-button'),button('预览后直接互动',()=>useTouch(true),'primary-button'));box.append(controls);
     }
@@ -456,7 +501,7 @@ window.ChatComposer = (() => {
     else for(const value of selected.targets||[]){const pick=button(value.label,()=>{model.selfPart=value.id;renderTouchBuilder();},'touch-choice');pick.setAttribute('aria-pressed',String(value.id===model.selfPart));choices.append(pick);}
     box.append(choices);
     if(selected&&target){
-      const preview=document.createElement('div');preview.className='touch-selection-preview';preview.append(Object.assign(document.createElement('strong'),{textContent:selected.label+' · '+target.label}),Object.assign(document.createElement('p'),{textContent:selected.description+' 对象：自己；作为叙事输入，不推进伙伴的身体。'}));box.append(preview);
+      const preview=document.createElement('div');preview.className='touch-selection-preview';preview.append(Object.assign(document.createElement('strong'),{textContent:selected.label+' · '+target.label}),Object.assign(document.createElement('p'),{textContent:selected.description+' 对象：自己；作为叙事输入，不推进角色的身体。'}));box.append(preview);
       const controls=document.createElement('div');controls.className='touch-confirm';controls.append(button('加入当前消息',()=>useSelfAction(false),'secondary-button'),button('直接发送这个动作',()=>useSelfAction(true),'primary-button'));box.append(controls);
     }
   }
@@ -476,6 +521,25 @@ window.ChatComposer = (() => {
       renderActions();
     }catch(error){if(operationCurrent(op)){model.touchUnknown=true;showNotice(errorText(error)+' 请刷新核对已保存动作，不会重复新建。',null,true);}}
     finally{endOperation(op);}
+  }
+  async function prepareEndContact(){
+    if(model.busy||!model.loaded||model.touchUnknown)return;
+    if(interactionBusy()||state.pendingActions.length>=4){showNotice('请先处理当前消息，或移除一个待发送动作。');return;}
+    const sample=model.defaultActions.find(value=>value.id==='end_contact'&&value.enabled!==false);if(!sample)return;
+    const op=beginOperation();if(!op)return;renderActions();
+    try{
+      let action=model.actions.find(value=>value.enabled!==false&&(value.target||'character')==='character'&&value.description===sample.description);
+      if(!action){
+        const record={id:identity('end-contact'),label:sample.label,description:sample.description,actor:'user',target:'character',enabled:true,quick:true,order:model.actions.length};
+        const result=await call('POST','/chat/actions',{session_id:op.sessionId,op:'create',record,request_id:record.id,expected_revision:op.actionRevision});
+        if(!operationCurrent(op))return;
+        const accepted=Array.isArray(result.items)?result.items.find(value=>value.id===record.id):null;
+        if(!accepted||accepted.description!==record.description||accepted.label!==record.label||accepted.enabled===false||(accepted.target||'character')!=='character'||!Number.isInteger(result.revision)||result.revision<=op.actionRevision)throw Error('服务器没有确认结束接触动作。');
+        model.actions=result.items;model.actionRevision=result.revision;action=accepted;
+      }
+      if(!operationCurrent(op))return;endOperation(op);attachAction(action);showNotice('结束接触已加入草稿，点发送后才生效。');
+    }catch(error){if(operationCurrent(op)){model.touchUnknown=true;showNotice(errorText(error)+' 请先刷新核对动作库，不会自动再次创建。',null,true);}}
+    finally{endOperation(op);if(operationCurrent(op))renderActions();}
   }
   async function useTouch(direct){
     if(model.busy||!model.loaded||!model.touchVerb||!model.touchPart)return;
@@ -516,7 +580,7 @@ window.ChatComposer = (() => {
     try{const parsed=JSON.parse(node('action-batch-source').value);const items=Array.isArray(parsed)?parsed:parsed.items;
       if(!Array.isArray(items)||!items.length||items.length>64)throw Error('每批需要1至64项。');
       const ids=new Set();for(const item of items){if(!item||typeof item.id!=='string'||!item.label||!item.description||ids.has(item.id))throw Error('请填写唯一ID、名称和动作说明。');ids.add(item.id);}
-      model.batch={...batch,items};const existing=new Set(model.actions.map(v=>v.id));node('action-batch-preview').textContent=items.map(v=>(existing.has(v.id)?'更新':'新增')+' · '+v.label+(v.target==='self'?' · 描述自己':v.native_touch?' · TLS原生触觉':' · 对伙伴的语义动作')).join('\n');node('action-batch-save').disabled=false;
+      model.batch={...batch,items};const existing=new Set(model.actions.map(v=>v.id));node('action-batch-preview').textContent=items.map(v=>(existing.has(v.id)?'更新':'新增')+' · '+v.label+(v.target==='self'?' · 描述自己':v.native_touch?' · TLS原生触觉':' · 对角色的语义动作')).join('\n');node('action-batch-save').disabled=false;
     }catch(error){model.batch={...batch,items:null};node('action-batch-save').disabled=true;node('action-batch-preview').textContent='未能预览：'+error.message;}
   }
   async function saveBatchActions(){
@@ -533,7 +597,7 @@ window.ChatComposer = (() => {
     try {
       await call('POST', '/chat/expression-preference', { session_id: op.sessionId, asset_id: id, actor, changes });
       if(!operationCurrent(op))return false;await sync(true);
-      if(!operationCurrent(op))return false;showNotice(actor === 'user' ? '你的表情偏好已保存。' : '伙伴的表情偏好已保存。');return true;
+      if(!operationCurrent(op))return false;showNotice(actor === 'user' ? '你的表情偏好已保存。' : '角色的表情偏好已保存。');return true;
     } catch (error) { if(operationCurrent(op))showNotice(errorText(error) + ' 请刷新偏好核对结果，不会自动重复提交。', null, true); return false; }
     finally { endOperation(op); }
   }
@@ -691,10 +755,10 @@ window.ChatComposer = (() => {
     }) : [];
   }
   function renderPart(part) {
-    if(part.type==='reference') {const quote=document.createElement('blockquote');quote.className='typed-reference';quote.textContent=(part.role==='assistant'?'伙伴':'你')+' · '+(part.text||'引用的附件消息');return quote;}
+    if(part.type==='reference') {const quote=document.createElement('blockquote');quote.className='typed-reference';quote.textContent=(part.role==='assistant'?'角色':'你')+' · '+(part.text||'引用的附件消息');return quote;}
     if (part.type === 'action') {
       const action = document.createElement('span'); action.className = 'typed-action';
-      action.textContent = part.source === 'user_self_action' || part.target==='self' ? '你 · '+part.label+'（自己）' : part.source === 'user_action' ? '你 → 伙伴 · ' + part.label : part.description || part.text || part.label;
+      action.textContent = part.source === 'user_self_action' || part.target==='self' ? '你 · '+part.label+'（自己）' : part.source === 'user_action' ? '你 → 角色 · ' + part.label : part.description || part.text || part.label;
       const result=part.native_result;
       if(part.source==='user_action'&&result?.source==='tls.chat.native_touch'){
         const status=document.createElement('small');status.className='typed-action-result';
@@ -713,7 +777,7 @@ window.ChatComposer = (() => {
     const self=node('compose-action-target').value==='self';
     node('compose-action-target-part').closest('label').hidden=!self;
     node('compose-action-native-verb').closest('details').hidden=self;
-    if(self)setText('compose-action-error','描述自己的动作只作为你的叙事输入，不会触发伙伴的身体。');else setText('compose-action-error','');
+    if(self)setText('compose-action-error','描述自己的动作只作为你的叙事输入，不会触发角色的身体。');else setText('compose-action-error','');
   }
   function closeActive() {
     if(node('action-defaults-dialog')?.open){model.defaultsSerial++;node('action-defaults-dialog').close();return true;}
@@ -775,6 +839,13 @@ window.ChatComposer = (() => {
     try { watchChanged(parse(native().setReplyWatch(true, state.activeId, conversationTitle(), lastAssistantId()))); } catch (_) {}
   }
   function historyReceived(sessionId) {
+    // Called only after the original authenticated history path succeeds.
+    // Keep normal login independently of the optional background watch.
+    if(recoveryForeground()&&sessionId===state.activeId&&watchScope()&&typeof native().rememberReplyAccount==='function'){
+      const recent=[...state.messages].reverse().find(row=>row.role==='assistant'&&row.delivery==='confirmed'&&row.serverId!=null);
+      const excerpt=recent?(recent.parts||[]).map(part=>part.text||part.description||(part.type==='sticker'?'[表情]':part.type==='image'?'[图片]':'')).filter(Boolean).join(' ').slice(0,360):'';
+      try{native().rememberReplyAccount(sessionId,conversationTitle(),lastAssistantId(),excerpt);window.ChatNotificationStatus?.refresh();}catch(_){}
+    }
     if (!recoveryForeground() || sessionId !== state.activeId || !model.watch || model.watch.running !== true
         || model.watch.session_id !== sessionId || !watchScope()) return;
     const seen = lastAssistantId();
@@ -822,13 +893,13 @@ window.ChatComposer = (() => {
     const defaults=document.createElement('dialog');defaults.id='action-defaults-dialog';defaults.className='settings-dialog';
     defaults.innerHTML='<div class="settings-form"><div class="dialog-heading"><h2>恢复默认动作组合</h2><button id="action-defaults-close" type="button" class="icon-button" aria-label="关闭默认组合确认">×</button></div><p class="appearance-help">恢复服务器提供的默认动作名称、语义和排序。自定义组合与已发送历史保留；相同默认 ID 的修改将恢复。</p><div class="appearance-actions"><button id="action-defaults-cancel" type="button" class="secondary-button">取消</button><button id="action-defaults-confirm" type="button" class="primary-button">恢复默认组合</button></div></div>';document.body.append(defaults);
     node('action-defaults-close').onclick=node('action-defaults-cancel').onclick=()=>{model.defaultsSerial++;defaults.close();};node('action-defaults-confirm').onclick=restoreDefaults;
-    const batch=document.createElement('dialog');batch.id='action-batch-dialog';batch.className='settings-dialog';batch.innerHTML='<div class="settings-form"><div class="dialog-heading"><h2>批量维护动作组合</h2><button id="action-batch-close" type="button" class="icon-button" aria-label="关闭批量维护">×</button></div><p class="appearance-help">JSON只描述动作，不执行代码。actor固定user；target为character（对伙伴，旧记录默认）或self（描述自己）；target_part可填自身目标。只有character可关联native_touch：character、verb、part，必须来自当前TLS词表。</p><textarea id="action-batch-source" rows="12" spellcheck="false" aria-label="动作组合JSON"></textarea><pre id="action-batch-preview" class="action-batch-preview"></pre><div class="appearance-actions"><button id="action-batch-preview-button" type="button" class="secondary-button">检查并预览</button><button id="action-batch-save" type="button" class="primary-button" disabled>确认批量写入</button></div></div>';document.body.append(batch);
+    const batch=document.createElement('dialog');batch.id='action-batch-dialog';batch.className='settings-dialog';batch.innerHTML='<div class="settings-form"><div class="dialog-heading"><h2>批量维护动作组合</h2><button id="action-batch-close" type="button" class="icon-button" aria-label="关闭批量维护">×</button></div><p class="appearance-help">JSON只描述动作，不执行代码。actor固定user；target为character（对角色，旧记录默认）或self（描述自己）；target_part可填自身目标。只有character可关联native_touch：character、verb、part，必须来自当前TLS词表。</p><textarea id="action-batch-source" rows="12" spellcheck="false" aria-label="动作组合JSON"></textarea><pre id="action-batch-preview" class="action-batch-preview"></pre><div class="appearance-actions"><button id="action-batch-preview-button" type="button" class="secondary-button">检查并预览</button><button id="action-batch-save" type="button" class="primary-button" disabled>确认批量写入</button></div></div>';document.body.append(batch);
     node('action-batch-close').onclick=closeBatchActions;node('action-batch-preview-button').onclick=previewBatchActions;node('action-batch-save').onclick=saveBatchActions;
     batch.addEventListener('close',()=>{if(model.batch)closeBatchActions();});
     node('action-batch-source').oninput=()=>{if(batchCurrent(model.batch))model.batch={...model.batch,epoch:++model.batchSerial,items:null};node('action-batch-save').disabled=true;};
     node('compose-choose-file').addEventListener('click', chooseAttachment);
     node('compose-action-form').addEventListener('submit', saveAction);
-    const targets=document.createElement('section');targets.className='action-editor-target';targets.innerHTML='<label>动作对象<select id="compose-action-target"><option value="character">你 → 伙伴</option><option value="self">你 → 自己</option></select></label><label hidden>自身部位或目标<input id="compose-action-target-part" maxlength="80" placeholder="例如眼睛、抱枕或椅背，可留空"></label>';
+    const targets=document.createElement('section');targets.className='action-editor-target';targets.innerHTML='<label>动作对象<select id="compose-action-target"><option value="character">你 → 角色</option><option value="self">你 → 自己</option></select></label><label hidden>自身部位或目标<input id="compose-action-target-part" maxlength="80" placeholder="例如眼睛、抱枕或椅背，可留空"></label>';
     document.querySelector('label[for="compose-action-description"]').before(targets);
     node('compose-action-target').onchange=editorTargetChanged;
     const binding=document.createElement('details');binding.className='other-actions';binding.innerHTML='<summary>关联原生触觉（可选）</summary><p class="compose-status">可以固定动作和部位；未绑定时按动作说明识别，无法识别的动作由角色剧情回应。</p><label>动作<select id="compose-action-native-verb"></select></label><label>部位<select id="compose-action-native-part"></select></label>';node('compose-action-error').before(binding);

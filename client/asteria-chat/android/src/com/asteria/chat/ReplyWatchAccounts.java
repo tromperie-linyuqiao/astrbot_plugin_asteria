@@ -16,7 +16,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import org.json.JSONObject;
 
-/** Native-only credentials for explicitly enabled watches; never serialize these records to JS/Intents. */
+/** Native-only saved logins and independently enabled watches; never serialize these records to JS/Intents. */
 final class ReplyWatchAccounts {
     private static final String PREFS = "asteria_chat_reply_watch_accounts_v1";
     private static final String ALIAS = "asteria_chat_reply_watch_accounts_v1";
@@ -159,7 +159,7 @@ final class ReplyWatchAccounts {
         String username = account(token);
         session = AttachmentPolicy.session(session);
         title = title == null ? "" : title.trim().replace('\r', ' ').replace('\n', ' ');
-        if (title.isEmpty()) title = BuildConfig.APP_NAME;
+        if (title.isEmpty()) title = "Asteria Chat";
         if (title.length() > 40) title = title.substring(0, 40);
         baseline = baseline == null ? "" : baseline;
         if (baseline.length() > 2048 || baseline.matches("(?s).*[\\x00-\\x1f\\x7f].*"))

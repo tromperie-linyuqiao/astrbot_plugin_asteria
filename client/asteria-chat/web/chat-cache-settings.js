@@ -41,6 +41,13 @@ window.ChatCacheSettings = (() => {
       get('chat-cache-attachment-state').textContent = attachmentError;
       get('chat-cache-attachment-clear').disabled = true;
     }
+    const owner = window.ChatMediaCache?.scope(state.server, state.username);
+    window.ChatMediaCache?.status(owner).then(value => {
+      if (owner !== window.ChatMediaCache.scope(state.server, state.username)) return;
+      get('chat-cache-media-state').textContent = value.ok
+        ? value.count+' 张已看过的表情与图片 · '+size(value.bytes)+'；本机最多256张、64 MB，保留30天，按最近使用淘汰。'
+        : value.error;
+    });
     const error = [status.error, attachmentError].filter(Boolean).join(' ');
     get('chat-cache-error').textContent = error; get('chat-cache-error').hidden = !error;
   }
@@ -50,18 +57,28 @@ window.ChatCacheSettings = (() => {
     refresh();
     say(result.ok ? '当前账户的本机记录缓存已清理。草稿、外观和服务器记录保留。' : '缓存清理未完成，请查看上方提示后重试。');
   }
-  function clearAttachments() {
+  async function clearPreviews(){
+    if(state.attaching||state.sending||!state.authenticated)return;
+    const owner=window.ChatMediaCache?.scope(state.server,state.username),result=await window.ChatMediaCache?.clear(owner);
+    window.dispatchEvent(new Event('chat-media-cache-cleared'));
+    if(owner===window.ChatMediaCache?.scope(state.server,state.username)){state.mediaCache.clear();refresh();say(result?.ok?'已清理当前账户的图片预览。消息、草稿与其他账户保留。':'图片预览未清理完成，请重试。');}
+  }
+  async function clearAttachments() {
     if (state.attaching || state.sending) return;
     try {
       const result = nativeCache('clearRecoverableAttachmentCache');
       if (!result) { say('当前客户端尚不支持清理附件缓存。'); return; }
-      state.mediaCache.clear(); state.previewElements = []; renderMessages();
+      const previews = await window.ChatMediaCache?.clear();
+      window.dispatchEvent(new Event('chat-media-cache-cleared'));
+      state.mediaCache.clear(); // Keep displayed images; do not immediately refill a cache the user just cleared.
+      if (previews?.ok === false) { say('附件已清理，图片预览缓存暂未清理完成。'); refresh(); return; }
       refresh();
       say(result.ok === true ? '已清理 ' + (result.removed || 0) + ' 个本机下载副本。原文件保留。'
         : '已清理 ' + (result.removed || 0) + ' 个副本，部分文件尚未清理，请稍后重试。');
     } catch (_) { say('附件缓存清理未完成，请稍后重试。'); }
   }
   document.addEventListener('DOMContentLoaded', () => {
+    get('chat-cache-media-clear').addEventListener('click',clearPreviews);
     get('chat-cache-refresh').addEventListener('click', () => { say(''); refresh(); });
     get('chat-cache-history-clear').addEventListener('click', clearHistory);
     get('chat-cache-attachment-clear').addEventListener('click', clearAttachments);

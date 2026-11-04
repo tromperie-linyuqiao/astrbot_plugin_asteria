@@ -53,6 +53,20 @@ def _old_owner_active(context):
                ('astrbot_plugin_phone_perception','astrbot_plugin_dialogue_flow'))
 
 
+def _native_plugin(context):
+    """Select one active Asteria registration, retaining the old name in place."""
+    names=('astrbot_plugin_asteria','astrbot_plugin_virtual_body')
+    reader=getattr(context,'get_all_stars',None)
+    if callable(reader):
+        rows=[row for row in reader() if getattr(row,'name',None) in names]
+    else:
+        getter=getattr(context,'get_registered_star',None)
+        rows=[getter(name) for name in names] if callable(getter) else []
+    active=[row for row in rows if getattr(row,'activated',False) is True]
+    if len(active)!=1:return None
+    return getattr(active[0],'star_cls',None)
+
+
 def _native_ready(context,service):
     from ..native_phone_service.runtime import NativePhoneService
     if (not isinstance(service,NativePhoneService) or service.context is not context
@@ -60,9 +74,7 @@ def _native_ready(context,service):
             or not isinstance(service.dialogue_flow,NativePhoneFlow)
             or service.dialogue_flow._active is not True):
         return False
-    getter=getattr(context,'get_registered_star',None)
-    metadata=getter('astrbot_plugin_virtual_body') if callable(getter) else None
-    plugin=getattr(metadata,'star_cls',None) if getattr(metadata,'activated',False) is True else None
+    plugin=_native_plugin(context)
     return getattr(plugin,'_native_phone_service',None) is service
 
 
@@ -168,12 +180,9 @@ def install_legacy_forwarders(context,native_service):
 
 
 async def send_with_flow(context, umo, event_key, chain):
-    getter=getattr(context,'get_registered_star',None)
-    metadata=getter('astrbot_plugin_virtual_body') if callable(getter) else None
-    plugin=getattr(metadata,'star_cls',None) if getattr(metadata,'activated',False) is True else None
+    plugin=_native_plugin(context)
     phone=getattr(plugin,'_native_phone_service',None)
     flow=getattr(phone,'dialogue_flow',None)
-    if (getattr(phone,'_active',False) is not True or not isinstance(flow,NativePhoneFlow)
-            or flow._active is not True):
+    if not _native_ready(context,phone):
         return {'sent':False,'reason':'unavailable'}
     return await flow.send_proactive(umo,event_key,chain)

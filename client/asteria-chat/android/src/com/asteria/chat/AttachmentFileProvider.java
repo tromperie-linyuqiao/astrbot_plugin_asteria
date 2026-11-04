@@ -14,8 +14,6 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.Comparator;
 import org.json.JSONObject;
 
 /** Zero-dependency FileProvider for this app's downloaded cache, with read-only URI grants. */
@@ -47,7 +45,7 @@ public final class AttachmentFileProvider extends ContentProvider {
         try (FileOutputStream output = new FileOutputStream(new File(root, actual.getName() + ".meta"))) {
             output.write(metadata.toString().getBytes(StandardCharsets.UTF_8));
         }
-        trimCache(root, actual);
+        AttachmentCache.trim(context, root, actual);
         return new Uri.Builder().scheme("content").authority(AUTHORITY)
                 .appendPath("attachments").appendPath(actual.getName()).build();
     }
@@ -106,23 +104,4 @@ public final class AttachmentFileProvider extends ContentProvider {
     @Override public int update(Uri uri, ContentValues values, String where, String[] args) { throw new UnsupportedOperationException("Read only"); }
     @Override public int delete(Uri uri, String where, String[] args) { throw new UnsupportedOperationException("Read only"); }
 
-    private static void trimCache(File root, File current) {
-        File[] files = root.listFiles(file -> file.isFile() && opaque(file.getName()));
-        if (files == null) return;
-        Arrays.sort(files, Comparator.comparingLong(File::lastModified));
-        long total = 0;
-        for (File file : files) total += file.length();
-        int count = files.length;
-        for (File file : files) {
-            if (file.equals(current)) continue;
-            if (count <= 16 && total <= 64L * 1024 * 1024
-                    && System.currentTimeMillis() - file.lastModified() <= 24L * 60 * 60 * 1000) continue;
-            long length = file.length();
-            if (file.delete()) {
-                new File(root, file.getName() + ".meta").delete();
-                total -= length;
-                count--;
-            }
-        }
-    }
 }

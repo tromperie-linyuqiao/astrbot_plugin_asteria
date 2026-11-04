@@ -2,6 +2,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from astrbot.api.web import request, json_response, error_response
+from .core.living.native_mc_full_owner import NativeMCLifecyclePending
 
 PREFIX='/astrbot_plugin_virtual_body/page/server-integration'
 
@@ -13,6 +14,7 @@ class NativeServerIntegrationWebApi:
         self.plugin.context.register_web_api(PREFIX+'/business-links', self.business_links, ['GET'], 'TLS actual business connections and execution ownership')
         self.plugin.context.register_web_api(PREFIX+'/mc/summary/status', self.summary_status, ['GET'], 'TLS summary algorithm current ownership')
         self.plugin.context.register_web_api(PREFIX+'/mc/summary/inspect', self.inspect_mc_summary, ['GET'], 'TLS bounded summary source and inflight inspection')
+        self.plugin.context.register_web_api(PREFIX+'/mc/full/inspect', self.inspect_mc_full, ['GET'], 'TLS read-only stopped native predecessor inspection')
         for route, handler in [('insight/activate', self.activate_insight), ('insight/stop', self.stop_insight),
                                ('phone/prepare', self.prepare_phone), ('phone/activate', self.activate_phone),
                                ('phone/stop', self.stop_phone),('phone/restore-helpers',self.restore_phone_helpers),
@@ -37,13 +39,23 @@ class NativeServerIntegrationWebApi:
                                ('proactive/full/stop',self.stop_proactive_full),
                                ('proactive/full/restore',self.restore_proactive_full),
                                ('mc/restore',self.restore_mc),('pc/activate',self.activate_pc),('pc/stop',self.stop_pc)]:
-            self.plugin.context.register_web_api(PREFIX+'/'+route, handler, ['POST'], 'TLS native service ownership operation')
+            self.plugin.context.register_web_api(PREFIX+'/'+route, self.retired_operation, ['POST'], 'Retired migration operation; no runtime mutation')
+    async def retired_operation(self):
+        try:
+            self._service()
+        except PermissionError:
+            return error_response('请登录AstrBot管理后台', status_code=401)
+        except RuntimeError:
+            return error_response('系统服务暂不可用', status_code=503)
+        return error_response('旧插件接管与恢复入口已停用。Asteria 使用自身服务与配置，不再托管或重新启用其他插件。', status_code=410)
+
     def _service(self):
         try: username=getattr(request,'username',None)
         except RuntimeError: username=None
         if not isinstance(username,str) or not username.strip(): raise PermissionError('native dashboard authentication required')
         service=getattr(self.plugin,'_native_server_integrations',None)
-        if service is None or service._closed: raise RuntimeError('integrations unavailable')
+        if service is None or service._closed or getattr(self.plugin,'_stopping',False):
+            raise RuntimeError('integrations unavailable')
         return service
     async def status(self):
         try: return json_response(self._service().status(),headers={'Cache-Control':'no-store'})
@@ -117,13 +129,27 @@ class NativeServerIntegrationWebApi:
         try:return json_response(await self._service().inspect_mc_summary(),headers={'Cache-Control':'no-store'})
         except PermissionError:return error_response('请登录AstrBot管理后台',status_code=401)
         except RuntimeError:return error_response('当前MC实例或来源不可用',status_code=409)
+    async def inspect_mc_full(self):
+        try:
+            owner = self._service()._mc_full_owner
+            if owner is None: raise RuntimeError('native owner unavailable')
+            return json_response(owner.inspect_predecessors(),headers={'Cache-Control':'no-store'})
+        except PermissionError:return error_response('请登录AstrBot管理后台',status_code=401)
+        except RuntimeError:return error_response('当前记忆实例暂不可核对',status_code=409)
     async def _operation(self,name):
         try:
             service=self._service()
             body=await request.json(default=None)
             if body not in ({},None): return error_response('此操作不接受额外参数',status_code=400)
+            # A queued request body may finish after shutdown or replacement.
+            # Recheck the same source; never redirect an old action to its successor.
+            if self._service() is not service: raise RuntimeError('integrations changed during request')
             return json_response(await getattr(service,name)(),headers={'Cache-Control':'no-store'})
         except PermissionError: return error_response('请登录AstrBot管理后台',status_code=401)
+        except NativeMCLifecyclePending as exc:
+            return json_response({**service.status(), 'native_operation': {
+                'name':name, 'state':'blocked', 'code':str(exc), 'automatic_retry':False}},
+                headers={'Cache-Control':'no-store'})
         except (RuntimeError,ValueError,TypeError):
             return error_response('旧服务尚未完成退出，或状态已变化；请核对接管状态',status_code=409)
         except Exception:

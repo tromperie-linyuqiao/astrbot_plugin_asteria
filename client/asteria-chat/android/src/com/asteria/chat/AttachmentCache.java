@@ -14,9 +14,9 @@ import org.json.JSONObject;
 
 /** Reuses the existing private attachment directory; token digests never grant server access. */
 final class AttachmentCache {
-    static final long TTL = 24L * 60 * 60 * 1000;
-    static final long MAX_TOTAL = 64L * 1024 * 1024;
-    static final int MAX_COUNT = 16;
+    static final long TTL = 30L * 24 * 60 * 60 * 1000;
+    static final long MAX_TOTAL = 128L * 1024 * 1024;
+    static final int MAX_COUNT = 256;
     private static long generation;
     static synchronized long generation() { return generation; }
     static String key(String server, String token, String path) {
@@ -77,7 +77,7 @@ final class AttachmentCache {
         } catch (Exception failed) { file.delete(); throw failed; }
         finally { partial.delete(); }
     }
-    private static void trim(Context context, File root, File keep) {
+    static synchronized void trim(Context context, File root, File keep) {
         File[] files = root.listFiles(file -> file.isFile() && AttachmentPolicy.cacheName(file.getName()));
         if (files == null) return;
         java.util.Arrays.sort(files, Comparator.comparingLong(File::lastModified));
@@ -115,6 +115,6 @@ final class AttachmentCache {
         File[] files = AttachmentFileProvider.directory(context).listFiles();
         if (files != null) for (File file : files) if (AttachmentPolicy.cacheName(file.getName())) { bytes += file.length(); count++; }
         return new JSONObject().put("ok", true).put("bytes", bytes).put("count", count)
-                .put("max_bytes", MAX_TOTAL).put("max_count", MAX_COUNT).put("ttl_hours", 24);
+                .put("max_bytes", MAX_TOTAL).put("max_count", MAX_COUNT).put("ttl_hours", TTL / (60 * 60 * 1000));
     }
 }

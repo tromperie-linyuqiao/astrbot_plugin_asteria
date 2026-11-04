@@ -8,8 +8,13 @@ def native_companion(context, *, memory_service=None):
         rows = context.get_all_stars()
         if not isinstance(rows, (list, tuple)) or len(rows) > 256:
             return False, None, None
-        matches = [row for row in rows if getattr(row, 'root_dir_name', None) == 'astrbot_plugin_virtual_body']
-        if len(matches) != 1 or getattr(matches[0], 'activated', None) is not True:
+        from ....identity import PLUGIN_NAME, LEGACY_PLUGIN_NAME
+        matches = [row for row in rows if getattr(row, 'root_dir_name', None) in (PLUGIN_NAME, LEGACY_PLUGIN_NAME)
+                   or getattr(row, 'name', None) == PLUGIN_NAME]
+        matches = [row for row in matches if getattr(row, 'activated', None) is True]
+        if len(matches) > 1:
+            return True, None, None
+        if not matches:
             return False, None, None
         plugin = getattr(matches[0], 'star_cls', None)
         integrations = getattr(plugin, '_native_server_integrations', None)

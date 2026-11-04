@@ -4,7 +4,7 @@
 window.ChatLife = (() => {
   let dialog, body, note, refresh, back, tabs, heading, searchForm, searchInput, searchGo;
   let owner = '', session = '', ownerAuth = null, epoch = 0, serial = 0, busy = false;
-  let overview = null, detail = null, view = 'recent', selection = null, editor = null;
+  let overview = null, detail = null, view = 'today', selection = null, editor = null;
   let searchData = null, listStale = false, restorePosition = null;
   const positions = new Map(), trail = [];
   const pending = new Map(); // Only unfinished user corrections, never ledger data.
@@ -49,7 +49,7 @@ window.ChatLife = (() => {
     heading = make('h2', '生活档案'); heading.id = 'life-title'; const close = button('×', closeActive, 'icon-button'); close.id = 'life-close'; close.setAttribute('aria-label', '关闭生活档案'); top.append(back, heading, close);
     const intro = make('p', '她的近况、熟悉的人和未完的故事', 'life-intro'); intro.append(make('small', '角色虚构生活档案', 'life-origin')); intro.append(button('私人空间与兴趣',()=>window.ChatPersonalSpace?.open(),'text-button')); form.append(top, intro);
     tabs = make('nav', undefined, 'life-tabs'); tabs.setAttribute('aria-label', '生活档案分类');
-    for (const [id, label] of [['recent', '近期'], ['ongoing', '进行中'], ['people', '人物']]) { const n = button(label, () => { rememberList(); view = id; searchData = selection = editor = null; searchInput.value = ''; if (overview && !listStale) renderOverview(); else void read(); }, 'life-tab'); n.dataset.lifeTab = id; tabs.append(n); }
+    for (const [id, label] of [['today', '今日'], ['recent', '近期'], ['ongoing', '进行中'], ['people', '人物']]) { const n = button(label, () => { rememberList(); view = id; searchData = selection = editor = null; searchInput.value = ''; if (overview && !listStale) renderOverview(); else void read(); }, 'life-tab'); n.dataset.lifeTab = id; tabs.append(n); }
     searchForm = make('form', undefined, 'life-search'); searchForm.setAttribute('role', 'search');
     searchInput = make('input'); searchInput.id = 'life-search'; searchInput.type = 'search'; searchInput.maxLength = 120; searchInput.placeholder = '搜索经历、人物或未完事项'; searchInput.setAttribute('aria-label', '搜索生活档案');
     searchGo = make('button', '搜索', 'text-button'); searchGo.type = 'submit';
@@ -146,12 +146,47 @@ window.ChatLife = (() => {
     if (Array.isArray(policy.muted_topics) && policy.muted_topics.length) card.append(make('small', '减少分享的话题：' + policy.muted_topics.join('、')));
     return card;
   }
+  function dailyOverview() {
+    const schedule=overview.schedule;let zone=typeof schedule?.timezone==='string'?schedule.timezone:'',offset=null;
+    const fixed=/^UTC([+-])(\d{2}):(\d{2})$/.exec(zone);
+    if(fixed&&Number(fixed[2])<=14&&Number(fixed[3])<60&&(Number(fixed[2])<14||Number(fixed[3])===0))offset=(Number(fixed[2])*60+Number(fixed[3]))*(fixed[1]==='-'?-1:1);
+    else if(zone){try{new Intl.DateTimeFormat('zh-CN',{timeZone:zone}).format();}catch(_){zone='';}}
+    const scheduleTime=value=>{if(value==null||value===0)return '未记录';const date=new Date(typeof value==='number'?value*1000:value);if(!Number.isFinite(date.getTime()))return '时间未记录';return offset!==null?new Date(date.getTime()+offset*60000).toLocaleString('zh-CN',{hour12:false,timeZone:'UTC'}):date.toLocaleString('zh-CN',{hour12:false,...(zone?{timeZone:zone}:{})});};
+    const brief=overview.daily_brief||{},saved=overview.current_state||{},box=card('近况快读','life-brief');
+    box.append(make('p',brief.summary||saved.summary||(brief.current||brief.next?'尚无近况摘要，下面显示已有记录。':'还没有可用的近况记录。')));
+    const stamp=brief.as_of||saved.updated_at;
+    box.append(make('small','记录更新：'+scheduleTime(stamp)));
+    const labels=[['current','目前记录'],['next','接下来安排']];
+    for(const [key,label]of labels){const value=brief[key];if(value){const text=typeof value==='string'?value:value.title||value.summary;if(text)box.append(make('p',label+'：'+text,'life-brief-line'));}}
+    if(validId(saved.latest_event_id))box.append(button('查看最近关联经历',()=>openEvent(saved.latest_event_id),'life-link'));
+    body.append(box);
+    const section=make('section',undefined,'life-schedule');section.setAttribute('aria-label','角色日程');
+    section.append(make('h3',schedule?.date?'日程 · '+schedule.date:'角色日程'));
+    if(!schedule||!Array.isArray(schedule.items)){section.append(make('p','此服务器尚未提供角色日程投影；已有生活档案仍可查阅。','life-empty'));body.append(section);return;}
+    section.append(make('small',zone?'日程时区：'+zone:'日程时间按设备时区显示','life-muted'));
+    section.append(make('small','日程记录更新：'+scheduleTime(schedule.updated_at),'life-muted'));
+    const states={planned:'计划中',ongoing:'进行中',completed:'已完成',cancelled:'已取消'};
+    const rows=[...schedule.items].filter(row=>row&&typeof row.title==='string').sort((a,b)=>(Number(a.start_at)||0)-(Number(b.start_at)||0));
+    if(!rows.length)section.append(make('p',schedule.reason||(schedule.available===false?'当前日程服务尚不可用。':'当前没有已记录的日程安排。'),'life-empty'));
+    for(const value of rows){const row=make('article',undefined,'life-schedule-row');row.dataset.scheduleId=String(value.id||'');row.dataset.status=Object.hasOwn(states,value.status)?value.status:'unknown';
+      const when=make('div',undefined,'life-schedule-time');when.append(make('span',scheduleTime(value.start_at)),make('small',states[value.status]||'状态未提供','life-schedule-status'));row.append(when);
+      const detail=make('div',undefined,'life-schedule-detail');detail.append(make('strong',value.title));if(value.end_at)detail.append(make('small','计划结束：'+scheduleTime(value.end_at)));if(value.detail)detail.append(make('p',value.detail));
+      if(validId(value.event_id))detail.append(button('查看关联经历',()=>openEvent(value.event_id),'life-link'));
+      detail.append(button('问问这件事',()=>{
+        const input=document.getElementById('draft');if(input.disabled||busy)return;const question='想问问你日程里“'+value.title+'”这件事。',text=input.value?input.value+'\n\n'+question:question;
+        if(text.length>(input.maxLength>0?input.maxLength:16000)){say('草稿过长，请先整理当前输入。');return;}input.value=text;saveDraft();input.dispatchEvent(new Event('input',{bubbles:true}));closeActive();input.focus();showNotice('问题已加入草稿，可编辑后再发送。');
+      },'life-link'));row.append(detail);section.append(row);
+    }
+    section.append(make('p','状态按服务器记录显示；到达计划时间不会自动标记完成。','life-muted'));body.append(section);
+  }
   function renderOverview() {
     detail = selection = editor = null; heading.textContent = '生活档案'; tabs.hidden = searchForm.hidden = false; back.hidden = true; body.replaceChildren(); body.dataset.listKey = view;
     for (const n of tabs.querySelectorAll('button')) n.setAttribute('aria-pressed', String(n.dataset.lifeTab === view));
     if (!overview) { body.append(make('p', '重新读取服务器生活档案。', 'life-muted')); controls(); return; }
-    body.append(stateCard());
-    if (view === 'recent') {
+    if(view==='today')dailyOverview();
+    const runtime=make('details',undefined,'life-runtime');runtime.append(make('summary','生活推进与记录状态'),stateCard());body.append(runtime);
+    if (view === 'today') { /* Current record and schedule are above. */
+    } else if (view === 'recent') {
       const rows = overview.events.filter(row => validId(row?.id));
       timeline(rows);
       if (!rows.length) body.append(make('p', '近期没有新的生活事件。平静的日常也可以不产生新故事。', 'life-empty'));
@@ -316,7 +351,7 @@ window.ChatLife = (() => {
     const linked = !!parameter(targetKind) && validId(targetId);
     if (!state.authenticated || !state.activeId) { showNotice('请先打开自己的聊天会话。'); return; }
     setup(); if (dialog.open && owner === scope() && ownerAuth === auth() && !linked) return;
-    closeActive(); owner = scope(); session = state.activeId; ownerAuth = auth(); epoch++; serial++; view = 'recent'; overview = detail = editor = selection = searchData = restorePosition = null; searchInput.value = ''; listStale = false; positions.clear(); trail.length = 0; busy = false;
+    closeActive(); owner = scope(); session = state.activeId; ownerAuth = auth(); epoch++; serial++; view = 'today'; overview = detail = editor = selection = searchData = restorePosition = null; searchInput.value = ''; listStale = false; positions.clear(); trail.length = 0; busy = false;
     window.ChatPersonalSpace?.closeActive(); window.ChatSettingsHub?.close(); window.ChatExperience?.close(); dialog.showModal(); if(linked){selection={kind:targetKind,id:targetId};tabs.hidden=searchForm.hidden=true;back.hidden=false;body.replaceChildren(make('p','正在读取来源档案…'));}else renderOverview(); void read();
   }
   function init() {

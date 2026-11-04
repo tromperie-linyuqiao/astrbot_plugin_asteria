@@ -1,70 +1,74 @@
-# 星栖 · Asteria Chat
+# 星栖 · Asteria Chat
+
+面向 AstrBot 上 Asteria Living 的 Android 长期角色聊天客户端。复用 AstrBot 的认证、角色和 ChatService，不在客户端保存密码或独立实现角色大脑。
+
+默认不配置任何服务器、私人证书 pin、账号、角色卡、素材或签名密钥。首次打开时，请在设置填写你部署的 HTTPS API 地址、AstrBot 用户名和密码。API 前缀与反向代理配置由服务端仓库说明决定。
+
+当前公开版本：**2.7.0 / code 78**，配套服务端 **0.75.2**。
+
+## 本轮新增
 
-面向 AstrBot 上 Asteria Living 的 Android 长期角色聊天客户端。复用 AstrBot 的认证、角色和 ChatService，不在客户端保存密码或独立实现角色大脑。
+今日近况与计划时间线、细分部位搜索、互动状态和明确结束接触、通用语料与明确偏好管理、轻量动效与减少动态。动作和追问加入草稿后由原发送入口提交，不自动发出。
 
-默认不配置任何服务器、私人证书 pin、账号、角色卡、素材或签名密钥。首次打开时，请在设置填写你部署的 HTTPS API 地址、AstrBot 用户名和密码。API 前缀与反向代理配置由服务端仓库说明决定。
-
-当前公开版本：**2.4.1 / code 62**，配套服务端 **0.74.2**。
-
-## 当前能力
-
-- 文本、历史记录、附件、结构化互动、授权共享表情库。
-- 按账号与会话隔离的记录和附件缓存、投递中心、接收回执、通知偏好。
-- 消息关联记忆、记忆搜索与修订，以及会话模型路由。
-- 生活时间线、私人数字档案和收藏资源；图片任务状态与结果查看。
-- 多账号通知与连接切换、前后台接续；声音档案、设备朗读与可选云端朗读。
-- 当前角色的独立头像、背景与会话设置；应用图标通过下方构建工具单独定制。
-- 经服务端授权的日程、记忆详情与修订历史、主动状态、手机感知入口。
-- 用户主动开启的 Android 回复检查和通知状态诊断。它是本机后台检查，不是可靠服务器推送；系统勿扰、渠道和厂商后台限制仍会影响通知。
-
-部分高级入口要求相应版本的 Asteria Living 服务器。角色、音乐、感知和长期资料来自你的服务器，不随源码附送。
-
-## 自定义真实 APP 名称与图标
-
-```sh
-python client/asteria-chat/configure_brand.py --name "我的伙伴" --icon "/path/to/my-square-icon.png"
-```
-
-请使用你有权使用的方形 PNG（48–4096 像素、最多8MiB），先自行裁好头像。工具直接复制图像字节到原生 launcher 资源和 APP 品牌入口，不重绘、不修改原图、不改变聊天双方头像。完成后重新构建并用同一签名升级，Android 桌面图标与应用名称才会更新。
-
-这不是任意替换已安装 APP 图标的运行时能力。Android 的动态会话快捷方式只用于通知关联，不能冒充 launcher 图标替换。
-
-恢复原创星形图标：
-
-```sh
-python client/asteria-chat/configure_brand.py --reset-icon
-```
-
-## 离线构建
-
-需要自行安装 JDK17、Android SDK35，以及 build-tools35.0.0。构建器不下载工具、不安装软件、不连接服务器、不生成签名密钥。Windows 和其他系统均可通过 `--sdk`、`--jdk` 明确指定工具路径；发布页已提供实际构建并签名的安装包；实体手机与长期后台表现仍需实际设备验证。
-
-使用你自行管理的现有签名文件。设置 `ASTERIA_CHAT_SIGNING_DIR` 为该目录，默认读取 `asteria-chat.p12` 和 `storepass.private.txt`，默认 alias `asteria-chat`。也可通过 `ASTERIA_CHAT_KEYSTORE`、`ASTERIA_CHAT_STOREPASS_FILE` 与 `ASTERIA_CHAT_KEY_ALIAS` 指定现有文件/alias。不要把目录、密码或私钥提交到仓库。
-
-```sh
-python client/asteria-chat/build_apk.py --inspect-web
-# 将输出的 web_sha256 填入下一行；SDK、JDK路径换成你自己的。
-python client/asteria-chat/build_apk.py --sdk "/path/to/sdk" --jdk "/path/to/jdk17" --expected-web-sha "输出的SHA" --run-id my-build-1
-```
-
-可选 `--server "https://example.com/your-chat-api"` 预置你自己的 API 前缀；默认留空。可选 `--certificate-sha256` 仅对精确编译默认服务器设置叶证书 pin。其余地址使用系统信任，绝不启用 trust-all。公开版不会指向原作者私人服务器。
-
-公开应用 ID 为 `com.asteria.chat`，与原私人客户端隔离。此公开版不能覆盖升级原私人应用，也不自动带入原账号或资料。后续发布前请提升构建脚本中的版本号和 `VERSION_CODE`，保持你自己的签名以保留本地登录与设置。
-
-## 隐私与授权
-
-手机感知默认关闭，用户在系统中授权后才启用原采集适配器。仅声明现有7项权限，不申请全盘访问或默认定位。JWT 在 AndroidKeyStore 保护下加密保存；密码不落盘。QQ身份共享仍需真实私聊绑定与明确查阅授权，同名或管理员登录不会获得 QQ 私密资料权限。
-
-发布包不包含他人的贴纸、角色照片、历史聊天、课表、生日、服务器运行数据或签名证书私钥。默认星形 APP 标识和中性角色占位图为本次代码绘制。
-
-## 声音与云端朗读
-
-在当前会话的声音设置中，可选择设备实际提供的音色。系统语音输入只把识别结果填入草稿，不自动发送聊天。语速、语言、音高和引擎可用性以设备实际支持为准。
-
-云端朗读默认关闭。在服务端 `voice_cloud` 中配置自己的 Fish 兼容 HTTPS `/v1` 地址、专用 API Key、默认模型和允许模型列表，再明确启用。该适配器使用 `POST /tts` 和 `model` 请求头，不是 OpenAI `/audio/speech` 接口。选择云端音色后，用户主动朗读的文本会发送给所配置服务；它可能产生费用，失败或结果不明时不会自动重复付费调用。
-
-云端音频通过已认证的会话接口播放，密钥不会发给 APP。描述性的声音方向不会被当作已实现的声音克隆或情绪合成能力。
-
-## 客户端回归检查
-
+## 当前能力
+
+- 文本、历史记录、附件、结构化互动、授权共享表情库。
+- 按账号与会话隔离的记录和附件缓存、投递中心、接收回执、通知偏好。
+- 消息关联记忆、记忆搜索与修订，以及会话模型路由。
+- 生活时间线、私人数字档案和收藏资源；图片任务状态与结果查看。
+- 多账号通知与连接切换、前后台接续；声音档案、设备朗读与可选云端朗读。
+- 当前角色的独立头像、背景与会话设置；应用图标通过下方构建工具单独定制。
+- 经服务端授权的日程、记忆详情与修订历史、主动状态、手机感知入口。
+- 用户主动开启的 Android 回复检查和通知状态诊断。它是本机后台检查，不是可靠服务器推送；系统勿扰、渠道和厂商后台限制仍会影响通知。
+
+部分高级入口要求相应版本的 Asteria Living 服务器。角色、音乐、感知和长期资料来自你的服务器，不随源码附送。
+
+## 自定义真实 APP 名称与图标
+
+```sh
+python client/asteria-chat/configure_brand.py --name "我的伙伴" --icon "/path/to/my-square-icon.png"
+```
+
+请使用你有权使用的方形 PNG（48–4096 像素、最多8MiB），先自行裁好头像。工具直接复制图像字节到原生 launcher 资源和 APP 品牌入口，不重绘、不修改原图、不改变聊天双方头像。完成后重新构建并用同一签名升级，Android 桌面图标与应用名称才会更新。
+
+这不是任意替换已安装 APP 图标的运行时能力。Android 的动态会话快捷方式只用于通知关联，不能冒充 launcher 图标替换。
+
+恢复原创星形图标：
+
+```sh
+python client/asteria-chat/configure_brand.py --reset-icon
+```
+
+## 离线构建
+
+需要自行安装 JDK17、Android SDK35，以及 build-tools35.0.0。构建器不下载工具、不安装软件、不连接服务器、不生成签名密钥。Windows 和其他系统均可通过 `--sdk`、`--jdk` 明确指定工具路径；本轮发布源码，历史发布页安装包保持其原版本；实体手机与长期后台表现由使用者验证。
+
+使用你自行管理的现有签名文件。设置 `ASTERIA_CHAT_SIGNING_DIR` 为该目录，默认读取 `asteria-chat.p12` 和 `storepass.private.txt`，默认 alias `asteria-chat`。也可通过 `ASTERIA_CHAT_KEYSTORE`、`ASTERIA_CHAT_STOREPASS_FILE` 与 `ASTERIA_CHAT_KEY_ALIAS` 指定现有文件/alias。不要把目录、密码或私钥提交到仓库。
+
+```sh
+python client/asteria-chat/build_apk.py --inspect-web
+# 将输出的 web_sha256 填入下一行；SDK、JDK路径换成你自己的。
+python client/asteria-chat/build_apk.py --sdk "/path/to/sdk" --jdk "/path/to/jdk17" --expected-web-sha "输出的SHA" --run-id my-build-1
+```
+
+可选 `--server "https://example.com/your-chat-api"` 预置你自己的 API 前缀；默认留空。可选 `--certificate-sha256` 仅对精确编译默认服务器设置叶证书 pin。其余地址使用系统信任，绝不启用 trust-all。公开版不会指向原作者私人服务器。
+
+公开应用 ID 为 `com.asteria.chat`，与原私人客户端隔离。此公开版不能覆盖升级原私人应用，也不自动带入原账号或资料。后续发布前请提升构建脚本中的版本号和 `VERSION_CODE`，保持你自己的签名以保留本地登录与设置。
+
+## 隐私与授权
+
+手机感知默认关闭，用户在系统中授权后才启用原采集适配器。仅声明现有7项权限，不申请全盘访问或默认定位。JWT 在 AndroidKeyStore 保护下加密保存；密码不落盘。QQ身份共享仍需真实私聊绑定与明确查阅授权，同名或管理员登录不会获得 QQ 私密资料权限。
+
+发布包不包含他人的贴纸、角色照片、历史聊天、课表、生日、服务器运行数据或签名证书私钥。默认星形 APP 标识和中性角色占位图为本次代码绘制。
+
+## 声音与云端朗读
+
+在当前会话的声音设置中，可选择设备实际提供的音色。系统语音输入只把识别结果填入草稿，不自动发送聊天。语速、语言、音高和引擎可用性以设备实际支持为准。
+
+云端朗读默认关闭。在服务端 `voice_cloud` 中配置自己的 Fish 兼容 HTTPS `/v1` 地址、专用 API Key、默认模型和允许模型列表，再明确启用。该适配器使用 `POST /tts` 和 `model` 请求头，不是 OpenAI `/audio/speech` 接口。选择云端音色后，用户主动朗读的文本会发送给所配置服务；它可能产生费用，失败或结果不明时不会自动重复付费调用。
+
+云端音频通过已认证的会话接口播放，密钥不会发给 APP。描述性的声音方向不会被当作已实现的声音克隆或情绪合成能力。
+
+## 客户端回归检查
+
 `tests/` 的浏览器检查使用 Playwright 与隔离数据。安装开发依赖后，可用 `ASTERIA_CHROME_PATH` 指定本机 Chrome；测试不需要生产服务器或模型密钥。输出写入源码根目录的 `.runtime/`，不应提交。

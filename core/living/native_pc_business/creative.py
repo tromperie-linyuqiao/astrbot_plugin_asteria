@@ -1017,6 +1017,13 @@ class CreativeMixin:
         self, project_id: str, edit_type: str, edit_content: str,
         edit_title: str = "", chunk_index: int = -1,
     ) -> dict[str, Any]:
+        # Preserve the body layout; reject oversized edits before touching project data.
+        if _single_line(edit_type, 24) == "chunk_text":
+            edit_content = str(edit_content or "").strip()
+            if not edit_content:
+                return {"success": False, "error": "正文不能为空"}
+            if len(edit_content) > 5000:
+                return {"success": False, "error": "正文片段最多 5000 字，未保存；请先缩短内容"}
         async with self._data_lock:
             projects = self._creative_projects()
             project = next((p for p in projects if p.get("id") == project_id), None)
@@ -1049,7 +1056,7 @@ class CreativeMixin:
             pool = self._get_or_create_memory_pool(project)
             if normalized_type == "chunk_text":
                 chunks = project.get("draft_chunks") if isinstance(project.get("draft_chunks"), list) else []
-                chunks[chunk_index]["text"] = _single_line(edit_content, 5000)
+                chunks[chunk_index]["text"] = edit_content
                 chunks[chunk_index]["chars"] = len(chunks[chunk_index]["text"])
                 chunks[chunk_index]["manually_edited"] = True
                 project["current_chars"] = sum(

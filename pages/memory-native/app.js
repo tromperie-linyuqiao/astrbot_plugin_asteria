@@ -1,4 +1,4 @@
-const API = "/astrbot_plugin_virtual_body/page/native-memory";
+const API = "/astrbot_plugin_asteria/page/native-memory";
 const PAGE_ENDPOINT_PREFIX = "page/native-memory";
 const UI_CONTRACT_VERSION = "memory.page.ui.v2";
 const UI_DYNAMIC_ENDPOINTS = new Set([
@@ -11,10 +11,10 @@ const TRANSPARENT_IMAGE = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAA
 const VIEWS = {
   objects: { title: "知识图谱", hint: "查看关系边、跨窗口线程、时间线、记忆节点和互动协同概览。" },
   film: { title: "群聊记忆", hint: "查看群聊范围内可召回、可管理的结构化记忆。顶部开关作用于所有群聊窗口；单个窗口请到权限拓扑设置。" },
-  microscope: { title: "记忆显微镜", hint: "对比全库管理检索与指定会话中的实际召回和过滤。" },
+  microscope: { title: "检索与召回", hint: "对比全库管理检索与指定会话中的实际召回和过滤。" },
   relations: { title: "用户档案与记忆", hint: "按用户统一查看私聊、画像、偏好、称呼和关系记忆。顶部开关作用于所有私聊窗口；单个窗口请到权限拓扑设置。" },
   review: { title: "个人记忆", hint: "查看 Bot 自身的每日生活日程、相册、主观记忆和细化片段。" },
-  archive: { title: "维护 / 迁移 / 配置", hint: "执行维护、迁移、清理和导入修复。" },
+  archive: { title: "维护与配置", hint: "先选择维护任务或配置领域；编辑和审核继续使用当前记忆库。" },
   maintain: { title: "私聊记忆", hint: "查看私聊范围内的对话、偏好、事实和稳定记忆。顶部开关作用于所有私聊窗口；单个窗口请到权限拓扑设置。" },
 };
 
@@ -26,7 +26,7 @@ const PERSONAL_MEMORY_VIEW = {
   },
   unavailable: {
     title: "个人记忆不可用",
-    hint: "TLS 原生陪伴服务尚未提供当前范围的日程与细化，请在原生接管中心查看运行状态。",
+    hint: "TLS 原生陪伴服务尚未提供当前范围的日程与细化，请在系统服务查看运行状态。",
     small: "等待原生陪伴",
   },
   error: {
@@ -40,8 +40,10 @@ const SECONDARY_NAV = {
   objects: [
     { id: "overview", label: "图谱总览", sublabel: "关系、线程与时间线", badge: "总览" },
     { id: "relations", label: "图谱边", sublabel: "人物、话题、事实与记忆关联", badge: "图谱" },
+    { id: "identity-relations", label: "身份关系", sublabel: "关系声明与原始依据", badge: "关系" },
     { id: "threads", label: "跨窗口线程", sublabel: "不同私聊/群聊之间的待办线索", badge: "线程" },
     { id: "timeline", label: "时间线", sublabel: "最近记录的事件节点", badge: "时间" },
+    { id: "logs", label: "注入记录", sublabel: "当时选中资料与过滤原因", badge: "记录" },
     { id: "persona", label: "互动协同", sublabel: "表达权威 · 记忆触动 · 情绪连续性", badge: "协同" },
   ],
   microscope: [
@@ -52,7 +54,7 @@ const SECONDARY_NAV = {
   archive: [
     { id: "maintenance", label: "维护 / 迁移 / 清理", sublabel: "维护、修复、导入与清理", badge: "维护" },
     { id: "conversation-import", label: "历史聊天导入", sublabel: "QQ 直读、文件与最近任务", badge: "导入" },
-    { id: "core-memory", label: "核心记忆", sublabel: "常驻规则、边界、偏好与事实", badge: "核心" },
+    { id: "core-memory", label: "长期约定与旧核心", sublabel: "当前维护入口 · 旧记录只读", badge: "资料" },
     { id: "config:core_memory", label: "核心记忆参数", sublabel: "启用状态、块数与字数预算", badge: "参数" },
     { id: "config:memory_capture", label: "记忆捕获", sublabel: "记录用户消息与稳定事实", badge: "捕获" },
     { id: "config:memory_summary", label: "长期总结", sublabel: "私聊 / 群聊模型与阈值", badge: "总结" },
@@ -199,6 +201,12 @@ const state = {
   historicalChatPreview: null,
   historicalChatPreviewSource: "",
   historicalChatBatchId: "",
+  historicalChatBatches: [],
+  historicalChatBatchQuery: "",
+  historicalChatBatchFilter: "all",
+  historicalChatBatchPage: 0,
+  historicalChatBatchView: null,
+  historicalChatOutcomes: new Map(),
   historicalChatTargetContextId: "",
   historicalChatTargetBuckets: [],
   historicalChatPollTimer: 0,
@@ -209,6 +217,7 @@ const state = {
   qqHistoryCapabilities: null,
   qqHistoryCapabilitiesLoading: false,
   memoryAuditBatch: null,
+  memoryAuditUnconfirmedBatchId: "",
   coreMemoryBlocks: [],
   scopeControl: {
     private_capture_enabled: true,
@@ -562,10 +571,16 @@ function normalizeTheme(theme) {
   return THEME_OPTIONS.includes(value) ? value : (THEME_ALIASES[value] || DEFAULT_THEME);
 }
 
-function applyTheme(theme) {
+function applyTheme(theme, { explicit = false } = {}) {
   const next = normalizeTheme(theme);
   document.documentElement.dataset.theme = next;
   $("#app")?.setAttribute("data-theme", next);
+  if (explicit) {
+    const url = new URL(location.href);
+    url.searchParams.delete("theme");
+    history.replaceState(history.state, "", url);
+  }
+  if (!new URLSearchParams(location.search).has("theme")) document.documentElement.dataset.adminTheme = "custom";
 }
 
 async function loadConfiguredTheme() {
@@ -966,7 +981,12 @@ function renderSecondaryNav(view = state.activeView, immediate = false) {
   if (railTitle) railTitle.textContent = view === "archive" ? "维护与配置" : "二级导航";
   if (clearButton) clearButton.textContent = view === "archive" ? "回到顶部" : "默认";
   const renderItems = secondaryNavRenderItems(view);
+  const archiveGroups = {
+    maintenance: "资料维护", "core-memory": "采集与整理", retrieval: "检索与上下文",
+    "config:visibility": "权限与关联", "config:maintenance": "运行与外观",
+  };
   $("#bucketList").innerHTML = renderItems.map((item) => `
+    ${view === "archive" && archiveGroups[item.id] ? `<h3 class="aw-secondary-heading">${archiveGroups[item.id]}</h3>` : ""}
     <button class="bucket secondary-nav-item${item.isActiveLoopItem ? " is-active" : ""}" data-secondary-nav="${escapeHtml(item.id)}" data-loop-key="${escapeHtml(item.renderKey)}" type="button" aria-current="${item.isActiveLoopItem ? "true" : "false"}">
       <b>${escapeHtml(item.label)}</b>
       <small>${escapeHtml(item.sublabel)}</small>
@@ -988,6 +1008,7 @@ async function selectSecondaryNav(id) {
   const prevActive = state.secondaryNav[view];
   if (prevActive === id || state.secondaryNavSwitching) return;
   state.secondaryNav[view] = id;
+  syncNativeMemoryNavigation(view);
   try {
     state.secondaryNavSwitching = true;
     const list = $("#bucketList");
@@ -1018,6 +1039,14 @@ function moveSecondaryNavToStandard(immediate = false) {
   const items = Array.from(list.querySelectorAll(".secondary-nav-item"));
   const active = list.querySelector(".secondary-nav-item.is-active");
   if (!active || !items.length) return;
+  if (document.documentElement.dataset.nativeWorkspace) {
+    const box = rail.getBoundingClientRect();
+    const selected = active.getBoundingClientRect();
+    if (selected.top < box.top || selected.bottom > box.bottom) {
+      rail.scrollTop += selected.top - box.top - 12;
+    }
+    return;
+  }
   const currentShift = parseFloat(getComputedStyle(app).getPropertyValue("--secondary-nav-shift")) || 0;
   const standard = items[Math.min(1, items.length - 1)];
   const activeTop = active.getBoundingClientRect().top - currentShift;
@@ -1709,6 +1738,7 @@ function centerActiveBucket() {
 }
 
 function requestRailCoverflow() {
+  if (document.documentElement.dataset.nativeWorkspace) return;
   const rail = document.querySelector(".object-rail");
   if (
     state.activeView === "review"
@@ -1973,6 +2003,7 @@ async function openView(view, { preserveBucket = false } = {}) {
   if (view !== "review") removeRailMountedScheduleFilm();
   state.personalEntranceRevealRequested = enteringPersonalMemory;
   state.activeView = view;
+  syncNativeMemoryNavigation(view);
   if (view !== "review" && !preserveBucket) state.activeBucketId = "all";
   app.classList.add("is-workspace");
   app.classList.toggle("is-workspace-entering", !wasWorkspace);
@@ -2037,6 +2068,7 @@ async function returnHome() {
   app.classList.remove("is-scoped-view-switching", "is-scoped-view-exiting", "is-scoped-view-entering");
   app.style.removeProperty("--secondary-nav-shift");
   delete app.dataset.workspaceView;
+  syncNativeMemoryNavigation("overview");
   if (cinemaMotion) prepareOverviewStripReturn();
   $("#backHomeBtn").classList.add("hidden");
   $("#backHomeBtn").disabled = false;
@@ -2092,6 +2124,36 @@ function renderViewError(error) {
   if (retry) retry.addEventListener("click", () => loadActiveView());
 }
 
+
+function memoryFieldLabel(field, value) {
+  const labels = {
+    memory_type: {conversation_summary: "对话摘要", explicit_memory: "明确记住", user_profile: "用户画像", user_preference: "偏好", relationship_claim: "关系信息", fact: "事实", event: "经历", core_memory: "核心记忆"},
+    validity_status: {active: "有效", superseded: "已被替代", expired: "已过期", archived: "已归档", quarantined: "隔离待确认"},
+    visibility: {private_pair: "私聊可见", group_public: "群聊可见", bot_self: "自我档案", internal: "内部", shareable: "可共享"},
+    lifecycle: {stable_memory: "稳定记忆", raw_event: "原始事件", archived: "归档"},
+    reality_level: {real: "现实", rp: "角色扮演", fictional: "虚构", uncertain: "待确认"},
+    scope: {private: "私聊", group: "群聊", self: "角色自身", global: "全局"},
+  };
+  return labels[field]?.[value] || value || "未标记";
+}
+
+function memorySourceSummary(memory) {
+  const person = (item) => item?.name ? `${item.name}${item.id ? ` · ${item.id}` : ""}` : item?.id || "未标记";
+  return `<section class="memory-source-summary" aria-label="来源与有效范围">
+    <h4>来源与有效范围</h4>
+    <dl>
+      <div><dt>记录来源</dt><dd>${escapeHtml(memory.source_plugin || "未标记来源")}</dd></div>
+      <div><dt>所属范围</dt><dd>${escapeHtml(memoryFieldLabel("scope", memory.scope))}${memory.group_id ? ` · ${escapeHtml(memory.group_id)}` : ""}</dd></div>
+      <div><dt>主体</dt><dd>${escapeHtml(person(memory.subject))}</dd></div>
+      <div><dt>关联对象</dt><dd>${escapeHtml(person(memory.object))}</dd></div>
+      <div><dt>生效时间</dt><dd>${escapeHtml(memory.valid_from ? formatTime(memory.valid_from) : "未设置")}</dd></div>
+      <div><dt>失效时间</dt><dd>${escapeHtml(memory.valid_to ? formatTime(memory.valid_to) : "未设置截止")}</dd></div>
+      ${memory.import_batch_id ? `<div><dt>导入批次</dt><dd>${escapeHtml(memory.import_batch_id)}</dd></div>` : ""}
+    </dl>
+    <p class="item-meta">来源名称保留原记录，不表示该旧插件仍在运行。实际召回还取决于有效期、权限与当前会话。</p>
+  </section>`;
+}
+
 function memoryRow(memory) {
   const content = compact(memory.content, "(空内容)");
   const canonical = compact(memory.canonical_summary, "");
@@ -2117,9 +2179,11 @@ function memoryRow(memory) {
           ${preview ? `<p class="memory-preview">${escapeHtml(preview)}</p>` : ""}
         </div>
         <div class="badges">
-          <span class="badge teal">${escapeHtml(memory.memory_type)}</span>
-          <span class="badge blue">${escapeHtml(memory.visibility)}</span>
-          <span class="badge gold">${escapeHtml(memory.reality_level)}</span>
+          <span class="badge teal">${escapeHtml(memoryFieldLabel("memory_type", memory.memory_type))}</span>
+          <span class="badge blue">${escapeHtml(memoryFieldLabel("visibility", memory.visibility))}</span>
+          <span class="badge gold">${escapeHtml(memoryFieldLabel("reality_level", memory.reality_level))}</span>
+          <span class="badge">${escapeHtml(memoryFieldLabel("validity_status", memory.validity_status))}</span>
+          <span class="badge">来源 · ${escapeHtml(memory.source_plugin || "未标记")}</span>
           ${memorySignalBadges(memory, 3)}
           ${topicTags.map((tag) => `<span class="badge blue">${escapeHtml(tag)}</span>`).join("")}
         </div>
@@ -2163,69 +2227,57 @@ function scopedMemoryParams(scope, extra = {}) {
   return { params, incompatible: false };
 }
 
-const MEMORY_RENDER_BATCH = 20;
+const MEMORY_PAGE_SIZE = 12;
 
-function renderMemoryList(selector, memories, emptyText) {
+function renderMemoryList(selector, memories, emptyText, windowLimit = 120) {
   const target = $(selector);
   if (!target) return;
-  target.className = "row-list";
-  if (!memories.length) {
-    target.innerHTML = `<div class="empty-state">${escapeHtml(emptyText)}</div>`;
-    return;
-  }
-  // Progressive rendering: render first batch, then load more on scroll
-  let renderedCount = 0;
-  target.innerHTML = "";
-  // Event delegation: single click listener on container
-  target.onclick = (event) => {
-    const row = event.target.closest("[data-memory-id]");
-    if (row && target.contains(row)) {
-      showMemory(row.dataset.memoryId);
-    }
+  target.className = "row-list memory-browser";
+  let page = 0;
+  const filter = {status: "", source: "", order: "recent"};
+  const openMemory = async (id) => {
+    await showMemory(id);
+    if (state.activeMemoryId === id) $("#detailDrawer").scrollIntoView({block: "start"});
   };
-
-  const sentinel = document.createElement("div");
-  sentinel.className = "progressive-sentinel";
-  sentinel.style.minHeight = "1px";
-
-  function renderBatch() {
-    const end = Math.min(renderedCount + MEMORY_RENDER_BATCH, memories.length);
-    const html = memories.slice(renderedCount, end).map(memoryRow).join("");
-    if (renderedCount === 0) {
-      target.innerHTML = html;
-    } else {
-      target.insertAdjacentHTML("beforeend", html);
-    }
-    renderedCount = end;
-    // Add or remove sentinel
-    if (renderedCount < memories.length) {
-      if (!target.contains(sentinel)) {
-        target.appendChild(sentinel);
-      }
-    } else if (target.contains(sentinel)) {
-      sentinel.remove();
-    }
-  }
-
-  renderBatch();
-
-  // Observe sentinel to load more when scrolled into view
-  if (renderedCount < memories.length) {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting) && renderedCount < memories.length) {
-          renderBatch();
-        }
-      },
-      { rootMargin: "200px" },
-    );
-    observer.observe(sentinel);
-    // Store observer for cleanup
-    target._progressiveObserver = observer;
-  } else if (target._progressiveObserver) {
-    target._progressiveObserver.disconnect();
-    target._progressiveObserver = null;
-  }
+  const sources = [...new Set(memories.map(item => item.source_plugin || ""))];
+  const statuses = [...new Set(memories.map(item => item.validity_status || ""))];
+  target.innerHTML = `<div class="memory-browser-tools">
+    <p>当前范围最近最多 ${windowLimit} 条非待审核记录，本次分类 ${memories.length} 条。筛选、排序和分页仅作用于这批结果；查找更早内容请使用顶部搜索。</p>
+    <div class="memory-browser-filters">
+      <label>记录状态<select data-memory-filter="status"><option value="">全部状态</option>${statuses.filter(Boolean).map(value => memoryOption(value, memoryFieldLabel("validity_status", value), "")).join("")}</select></label>
+      <label>来源<select data-memory-filter="source"><option value="">全部来源</option>${sources.filter(Boolean).map(value => memoryOption(value, value, "")).join("")}</select></label>
+      <label>顺序<select data-memory-filter="order"><option value="recent">最近在前</option><option value="oldest">较早在前</option><option value="importance">重要度优先</option></select></label>
+    </div>
+    <p class="memory-browser-count" role="status"></p>
+  </div><div class="memory-browser-rows"></div><nav class="memory-browser-pages" aria-label="本批记忆分页"></nav>`;
+  const render = () => {
+    let rows = memories.filter(item => (!filter.status || item.validity_status === filter.status) && (!filter.source || item.source_plugin === filter.source));
+    if (filter.order === "oldest") rows.reverse();
+    if (filter.order === "importance") rows.sort((a, b) => Number(b.importance || 0) - Number(a.importance || 0));
+    const pages = Math.max(1, Math.ceil(rows.length / MEMORY_PAGE_SIZE));
+    page = Math.max(0, Math.min(page, pages - 1));
+    target.querySelector(".memory-browser-count").textContent = `筛选后 ${rows.length} 条 · 第 ${page + 1} / ${pages} 页`;
+    const list = target.querySelector(".memory-browser-rows");
+    list.innerHTML = rows.length ? rows.slice(page * MEMORY_PAGE_SIZE, (page + 1) * MEMORY_PAGE_SIZE).map(memoryRow).join("") : `<div class="empty-state">${escapeHtml(memories.length ? "当前筛选没有匹配记录，可调整状态或来源。" : emptyText)}</div>`;
+    list.querySelectorAll("[data-memory-id]").forEach(row => { row.tabIndex = 0; row.setAttribute("role", "button"); row.setAttribute("aria-label", `查看记忆 ${row.textContent.trim()}`); });
+    target.querySelector(".memory-browser-pages").innerHTML = `<button type="button" data-memory-page="previous"${page === 0 ? " disabled" : ""}>上一页</button><span>${page + 1} / ${pages}</span><button type="button" data-memory-page="next"${page + 1 >= pages ? " disabled" : ""}>下一页</button>`;
+  };
+  target.onchange = (event) => {
+    const name = event.target.dataset.memoryFilter;
+    if (!Object.prototype.hasOwnProperty.call(filter, name)) return;
+    filter[name] = event.target.value; page = 0; render();
+  };
+  target.onclick = (event) => {
+    const button = event.target.closest("[data-memory-page]");
+    if (button && target.contains(button)) { page += button.dataset.memoryPage === "next" ? 1 : -1; render(); target.querySelector(".memory-browser-count").scrollIntoView({block: "nearest"}); return; }
+    const row = event.target.closest("[data-memory-id]");
+    if (row && target.contains(row)) openMemory(row.dataset.memoryId);
+  };
+  target.onkeydown = (event) => {
+    if (!["Enter", " "].includes(event.key) || !event.target.matches("[data-memory-id]")) return;
+    event.preventDefault(); openMemory(event.target.dataset.memoryId);
+  };
+  render();
 }
 
 function relationTypesForSecondary() {
@@ -2300,235 +2352,181 @@ function isPersonalMemory(memory) {
     );
 }
 
-async function loadContextPanel() {
+const KNOWLEDGE_SECTIONS = {
+  relations: { title: "图谱边", path: "/graph", note: "保存的节点关联与来源依据；存在关联不代表来源当前可用或实际召回。", range: "按当前范围、会话和群标识查询；用户标识不单独过滤图谱边。" },
+  "identity-relations": { title: "身份关系", path: "/relations", note: "已记录的关系声明；阅读原依据后再判断，不将推断当作确认事实。", range: "按当前对象、范围、会话和群标识查询。" },
+  threads: { title: "跨窗口线程", path: "/threads", note: "阅读待续线索，按需标记完成或重新打开。状态只维护此条记录，不代表发送、撤回消息或取消后台任务。", range: "按起点或终点会话查询；未指定会话时返回近期线程，不按单个用户或群标识筛选。" },
+  timeline: { title: "时间线", path: "/timeline", note: "原消息、事件与整理记录按记录时间排列；记录本身不等于长期记忆。", range: "按当前对象、范围和会话查询。" },
+  logs: { title: "注入记录", path: "/logs", note: "查看当时查询、选中记忆和过滤原因；日志不证明模型已经使用或采纳资料。", range: "按当前范围和会话查询，不按单个用户或群标识筛选。" },
+};
+let knowledgeReadSerial = 0;
+let knowledgeBrowse = null;
+
+function knowledgeScopeKey() { return contextParams({}).toString(); }
+function knowledgeCurrent(view) {
+  return knowledgeBrowse === view && state.activeView === "objects"
+    && activeSecondaryNav("objects") === view.section && knowledgeScopeKey() === view.scope;
+}
+
+async function loadContextPanel(options = {}) {
   const target = $("#contextPanel");
-  if (!target) return;
+  if (!target) return false;
+  const section = activeSecondaryNav("objects"), scope = knowledgeScopeKey();
+  const serial = ++knowledgeReadSerial;
+  const prior = options.preserve && knowledgeBrowse?.section === section && knowledgeBrowse?.scope === scope ? knowledgeBrowse : null;
+  const current = () => serial === knowledgeReadSerial && state.activeView === "objects" && activeSecondaryNav("objects") === section && knowledgeScopeKey() === scope;
   target.className = "page-panel-stack";
-  const section = activeSecondaryNav("objects");
-  target.innerHTML = loadingState("正在读取知识图谱...");
-  const params = contextParams({ limit: section === "overview" ? 8 : 60 });
-  if (section === "relations") {
-    const data = await apiGet(`/graph?${params.toString()}`);
-    target.innerHTML = renderKnowledgeGraphEdges(data.items || []);
-  } else if (section === "threads") {
-    params.set("status", "all");
-    const data = await apiGet(`/threads?${params.toString()}`);
-    target.innerHTML = renderKnowledgeThreads(data.items || []);
-  } else if (section === "timeline") {
-    const data = await apiGet(`/timeline?${params.toString()}`);
-    target.innerHTML = renderKnowledgeTimeline(data.items || []);
-  } else if (section === "persona") {
+  if (!prior) target.innerHTML = loadingState("正在读取知识关联...");
+  if (section === "persona") {
+    knowledgeBrowse = null;
     target.innerHTML = `<div id="personaStatePanel" class="persona-state-panel"></div>`;
     await loadPersonaState();
-  } else {
-    const results = await Promise.allSettled([
-      apiGet(`/graph?${params.toString()}`),
-      apiGet(`/relations?${params.toString()}`),
-      apiGet(`/threads?${new URLSearchParams({ ...Object.fromEntries(params), status: "all" }).toString()}`),
-      apiGet(`/timeline?${params.toString()}`),
-      apiGet(`/logs?${params.toString()}`),
-    ]);
-    const settled = (idx) => {
-      const result = results[idx];
-      if (result.status === "fulfilled") {
-        return { items: Array.isArray(result.value?.items) ? result.value.items : [], error: "" };
-      }
-      return { items: [], error: result.reason?.message || "读取失败，请稍后重试" };
-    };
-    const sections = results.map((_, idx) => settled(idx));
-    const failures = sections.filter((item) => item.error);
-    if (failures.length === results.length) {
-      throw results[0].reason || new Error("所有知识图谱 API 请求失败");
-    }
-    target.innerHTML = renderKnowledgeOverview({
-      graph: sections[0].items,
-      relations: sections[1].items,
-      threads: sections[2].items,
-      timeline: sections[3].items,
-      logs: sections[4].items,
-      errors: {
-        graph: sections[0].error,
-        relations: sections[1].error,
-        threads: sections[2].error,
-        timeline: sections[3].error,
-        logs: sections[4].error,
-      },
-    });
-    if (failures.length > 0) {
-      const failedNames = ["图谱边", "身份关系", "跨窗口线程", "时间线", "注入日志"].filter((_, i) => sections[i].error);
-      showToast(`${failedNames.join("、")}加载失败，已显示可用数据`, "error");
-    }
+    return true;
   }
-  bindKnowledgeGraphRows(target);
+  const params = contextParams({ limit: section === "overview" ? 8 : 60 });
+  const read = async (key) => {
+    const query = new URLSearchParams(params);
+    if (key === "threads") query.set("status", "all");
+    const data = await apiGet(`${KNOWLEDGE_SECTIONS[key].path}?${query.toString()}`);
+    return Array.isArray(data.items) ? data.items : [];
+  };
+  try {
+    if (section === "overview") {
+      const keys = Object.keys(KNOWLEDGE_SECTIONS);
+      const results = await Promise.allSettled(keys.map(read));
+      if (!current()) return false;
+      knowledgeBrowse = null;
+      target.innerHTML = `<section class="knowledge-workspace knowledge-overview"><h4>知识关联概览</h4>
+        <p class="knowledge-note">每类最多 8 条近期记录，是本次读取窗口，不是全库数量。进入分类后可查看来源、查找记录。</p>
+        <div class="knowledge-categories">${keys.map((key, i) => {
+          const info = KNOWLEDGE_SECTIONS[key], result = results[i];
+          return `<button type="button" data-knowledge-section="${key}"><b>${info.title}</b><strong>${result.status === "fulfilled" ? `本次 ${result.value.length} 条` : "未读取"}</strong>
+            <span>${escapeHtml(result.status === "fulfilled" ? info.note : result.reason?.message || "读取失败")}</span><small>查看此类记录 →</small></button>`;
+        }).join("")}</div><p class="knowledge-note">各类沿用原查询范围；范围与会话限制在分类内单独说明。互动协同保留在原入口。</p></section>`;
+      target.querySelectorAll("[data-knowledge-section]").forEach(button => button.addEventListener("click", () => selectSecondaryNav(button.dataset.knowledgeSection)));
+      return true;
+    }
+    const items = await read(section);
+    if (!current()) return false;
+    knowledgeBrowse = { section, scope, items, query: prior?.query || "", filter: prior?.filter || "", page: prior?.page || 1,
+      notice: options.notice || "", blocked: false, busy: false, reading: false };
+    renderKnowledgeWorkspace();
+    return true;
+  } catch (error) {
+    if (!current()) return false;
+    if (prior) {
+      prior.reading = false;
+      prior.notice = `${options.failurePrefix || "列表读取失败"}：${error.message}。保留上次读取的记录，请先只读核对。`;
+      prior.blocked = true;
+      renderKnowledgeWorkspace();
+    } else {
+      knowledgeBrowse = null;
+      target.innerHTML = `<section class="knowledge-workspace"><h4>记录读取失败</h4><p class="knowledge-note">${escapeHtml(error.message)}</p><button type="button" data-knowledge-retry>重新读取</button></section>`;
+      target.querySelector("[data-knowledge-retry]").addEventListener("click", () => loadContextPanel());
+    }
+    return false;
+  }
 }
 
-function bindKnowledgeGraphRows(target) {
-  target.querySelectorAll("[data-thread-id]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      withButton(button, "更新中", () => updateThreadStatus(button.dataset.threadId, button.dataset.threadNextStatus));
-    });
+function knowledgeType(section, item) {
+  if (section === "threads") return item.status || "open";
+  if (section === "timeline") return item.event_type || "未分类";
+  if (section === "logs") return item.scope || "未记录范围";
+  return item.relation_type || "未分类";
+}
+function knowledgeTypeLabel(value) { return ({ open: "待续", closed: "已完成" })[value] || value; }
+function knowledgeTitle(section, item) {
+  if (section === "relations") return `${item.source_label || "未知节点"} → ${item.target_label || "未知节点"}`;
+  if (section === "identity-relations") return `${item.subject_name || item.subject_id || "未知对象"} → ${item.object_name || item.object_id || "未知对象"}`;
+  if (section === "threads") return item.topic || "未命名线程";
+  if (section === "timeline") return compact(item.content, "空时间线记录");
+  return item.query || "未记录查询文本";
+}
+function knowledgeFields(item) {
+  const labels = { id: "记录标识", scope: "范围", session_id: "会话", group_id: "群标识", entity_id: "对象标识", source_type: "起点类型", target_type: "终点类型",
+    subject_id: "主体标识", object_id: "关联对象", source_memory_id: "来源记忆", from_session: "起点会话", to_session: "终点会话", visibility: "可见性标记",
+    confidence: "记录置信度", review_status: "审核标记", occurred_at: "发生时间", created_at: "记录时间", updated_at: "更新时间" };
+  return `<dl class="knowledge-fields">${Object.entries(labels).filter(([key]) => item[key] !== undefined && item[key] !== null && item[key] !== "")
+    .map(([key, label]) => `<div><dt>${label}</dt><dd>${escapeHtml(String(item[key]))}</dd></div>`).join("")}</dl>`;
+}
+function knowledgeRecord(view, item) {
+  const type = knowledgeType(view.section, item), title = knowledgeTitle(view.section, item);
+  const body = view.section === "threads" || view.section === "timeline" ? item.content : view.section === "logs" ? item.query : item.evidence;
+  return `<details class="knowledge-record" data-knowledge-row><summary><b>${escapeHtml(title)}</b><span>${escapeHtml(knowledgeTypeLabel(type))} · ${escapeHtml(formatTime(item.occurred_at || item.updated_at || item.created_at))}</span></summary>
+    <div class="knowledge-reading"><p>${escapeHtml(body || "没有记录正文或依据")}</p>${knowledgeFields(item)}
+      ${item.source_memory_id ? `<button type="button" data-knowledge-source="${escapeHtml(item.source_memory_id)}">查看当前来源记忆</button><p class="knowledge-note">打开当前版本；来源若已删除或无权读取，会显示原接口结果。历史关联仍保留。</p>` : ""}
+      ${view.section === "logs" ? `<button type="button" data-knowledge-log="${escapeHtml(item.id)}">查看选中资料与过滤原因</button>` : ""}
+      ${view.section === "threads" ? `<details class="knowledge-maintenance" data-knowledge-maintenance><summary>维护这条线程</summary>
+        <p class="knowledge-note">只改变此记录的完成状态，保留内容、来源和会话关联；不发送或撤回消息，不取消后台任务。</p>
+        <button type="button" data-thread-id="${escapeHtml(item.id)}" data-thread-next-status="${item.status === "closed" ? "open" : "closed"}"${view.busy || view.blocked || view.reading ? " disabled" : ""}>${item.status === "closed" ? "重新打开" : "标记完成"}</button></details>` : ""}
+      <details class="knowledge-raw"><summary>原始记录与附加字段</summary><pre>${escapeHtml(JSON.stringify(item, null, 2))}</pre></details>
+    </div></details>`;
+}
+
+function renderKnowledgeWorkspace() {
+  const view = knowledgeBrowse, target = $("#contextPanel");
+  if (!view || !target || !knowledgeCurrent(view)) return;
+  const info = KNOWLEDGE_SECTIONS[view.section];
+  target.innerHTML = `<section class="knowledge-workspace"><header class="knowledge-head"><h4>${info.title}</h4><button type="button" data-knowledge-refresh${view.busy || view.reading ? " disabled" : ""}>${view.reading ? "读取中…" : view.blocked ? "只读核对" : "刷新记录"}</button></header>
+    <p class="knowledge-note">${info.note}</p><p class="knowledge-note">原查询最多 60 条近期记录，本次 ${view.items.length} 条；搜索、分类和分页仅作用于本次窗口。${info.range}</p>
+    <p class="knowledge-status" data-knowledge-status role="status">${escapeHtml(view.notice)}</p>
+    <div class="knowledge-filters"><label>查找本次记录<input type="search" data-knowledge-query value="${escapeHtml(view.query)}" placeholder="内容、标识、来源或会话" /></label><label>${view.section === "threads" ? "完成状态" : "记录分类"}<select data-knowledge-filter><option value="">全部</option>${Array.from(new Set(view.items.map(item => knowledgeType(view.section, item)))).sort().map(value => `<option value="${escapeHtml(value)}"${view.filter === value ? " selected" : ""}>${escapeHtml(knowledgeTypeLabel(value))}</option>`).join("")}</select></label></div>
+    <div data-knowledge-results></div></section>`;
+  target.querySelector("[data-knowledge-query]").addEventListener("input", event => { view.query = event.target.value; view.page = 1; renderKnowledgeResults(view); });
+  target.querySelector("[data-knowledge-filter]").addEventListener("change", event => { view.filter = event.target.value; view.page = 1; renderKnowledgeResults(view); });
+  target.querySelector("[data-knowledge-refresh]").addEventListener("click", () => {
+    if (view.busy || view.reading) return;
+    view.reading = true;
+    renderKnowledgeWorkspace();
+    loadContextPanel({ preserve: true, notice: "列表已重新读取，请按当前记录核对结果。" });
   });
-  target.querySelectorAll("[data-raw]").forEach((row) => {
-    row.addEventListener("click", () => {
-      const title = row.dataset.detailTitle || "图谱节点";
-      showGenericDetail(title, JSON.parse(row.dataset.raw || "{}"));
-    });
-  });
+  renderKnowledgeResults(view);
 }
 
-async function updateThreadStatus(id, status) {
-  const result = await apiPost("/thread/status", { id, status });
-  if (!result.updated) throw new Error("线程不存在或状态未更新");
-  showToast(status === "closed" ? "线程已标记完成" : "线程已重新打开");
-  await loadContextPanel();
+function renderKnowledgeResults(view) {
+  if (!knowledgeCurrent(view)) return;
+  const target = $("#contextPanel [data-knowledge-results]");
+  if (!target) return;
+  const query = view.query.trim().toLocaleLowerCase();
+  const items = view.items.filter(item => (!view.filter || knowledgeType(view.section, item) === view.filter) && (!query || JSON.stringify(item).toLocaleLowerCase().includes(query)));
+  const pages = Math.max(1, Math.ceil(items.length / 12));
+  view.page = Math.min(pages, Math.max(1, view.page));
+  target.innerHTML = `<p class="knowledge-note">匹配 ${items.length} / ${view.items.length} 条</p><div class="knowledge-records">${items.length ? items.slice((view.page - 1) * 12, view.page * 12).map(item => knowledgeRecord(view, item)).join("") : `<p class="empty-state">${view.items.length ? "本次窗口没有匹配记录，可调整查找条件。" : "本次查询没有返回记录。"}</p>`}</div>
+    <div class="knowledge-pages"><button type="button" data-knowledge-page="prev"${view.page === 1 ? " disabled" : ""}>上一页</button><span>${view.page} / ${pages} 页 · 每页 12 条</span><button type="button" data-knowledge-page="next"${view.page === pages ? " disabled" : ""}>下一页</button></div>`;
+  target.querySelectorAll("[data-knowledge-page]").forEach(button => button.addEventListener("click", () => { view.page += button.dataset.knowledgePage === "next" ? 1 : -1; renderKnowledgeResults(view); }));
+  target.querySelectorAll("[data-knowledge-source]").forEach(button => button.addEventListener("click", () => withButton(button, "读取中", () => showMemory(button.dataset.knowledgeSource))));
+  target.querySelectorAll("[data-knowledge-log]").forEach(button => button.addEventListener("click", () => showInjectionLogDetail(view.items.find(item => String(item.id) === button.dataset.knowledgeLog))));
+  target.querySelectorAll("[data-thread-id]").forEach(button => button.addEventListener("click", () => updateThreadStatus(button.dataset.threadId, button.dataset.threadNextStatus, view)));
 }
 
-function rawAttr(value) {
-  return escapeHtml(JSON.stringify(value || {}));
-}
-
-function renderContextPanelErrors(errors = {}) {
-  const labels = { graph: "图谱边", relations: "身份关系", threads: "跨窗口线程", timeline: "时间线", logs: "注入日志" };
-  const rows = Object.entries(errors)
-    .filter(([, message]) => message)
-    .map(([key, message]) => `<div class="empty-state error-state"><b>${escapeHtml(labels[key] || key)}读取失败</b><span>${escapeHtml(message)}</span></div>`)
-    .join("");
-  return rows ? `<section class="context-section film-panel"><h4>部分数据暂不可用</h4>${rows}</section>` : "";
-}
-
-function renderKnowledgeOverview({ graph = [], relations = [], threads = [], timeline = [], logs = [], errors = {} } = {}) {
-  const activeThreads = threads.filter((item) => (item.status || "open") === "open").length;
-  return `
-    <section class="context-section film-panel">
-      <h4>知识图谱总览</h4>
-      <div class="config-grid">
-        ${configCard("图谱边", `${graph.length} 条`, "从阶段性记忆抽出的节点关联", "teal", "图谱")}
-        ${configCard("身份关系", `${relations.length} 条`, "明确关系声明和身份边界", "violet", "关系")}
-        ${configCard("开放线程", `${activeThreads} 条`, "需要跨私聊/群聊承接的线索", "gold", "线程")}
-        ${configCard("时间线节点", `${timeline.length} 条`, "最近记录的事件、消息和整理结果", "blue", "时间")}
-      </div>
-    </section>
-    ${renderContextPanelErrors(errors)}
-    ${renderKnowledgeGraphEdges(graph, "最近图谱边")}
-    ${renderKnowledgeRelations(relations, "最近身份关系")}
-    ${renderKnowledgeThreads(threads, "最近跨窗口线程")}
-    ${renderKnowledgeTimeline(timeline, "最近时间线")}
-    ${renderContextLogs(logs)}
-  `;
-}
-
-function renderKnowledgeGraphEdges(items, title = "图谱边") {
-  return `
-    <section class="context-section film-panel">
-      <h4>${escapeHtml(title)}</h4>
-      <div class="row-list compact">
-        ${items.length ? items.map((item) => `
-          <article class="row-item memory-frame" data-raw="${rawAttr(item)}" data-detail-title="知识图谱边详情">
-            <div class="memory-frame-time">
-              <b>${escapeHtml(formatTime(item.updated_at || item.created_at))}</b>
-              <span>${escapeHtml(shortId(item.id))}</span>
-            </div>
-            <div class="memory-frame-main">
-              <span class="item-title">${escapeHtml(compact(item.source_label, "未知节点"))} -> ${escapeHtml(compact(item.target_label, "未知节点"))}</span>
-              <p>${escapeHtml(compact(item.evidence, "暂无证据文本"))}</p>
-              <div class="badges">
-                <span class="badge teal">${escapeHtml(compact(item.relation_type, "edge"))}</span>
-                <span class="badge blue">${escapeHtml(compact(item.source_type, "node"))} -> ${escapeHtml(compact(item.target_type, "node"))}</span>
-                <span class="badge gold">置信 ${escapeHtml(Math.round(Number(item.confidence || 0) * 100))}%</span>
-              </div>
-            </div>
-          </article>
-        `).join("") : `<div class="empty-state">当前范围还没有图谱边。阶段性总结生成后会自动建立。</div>`}
-      </div>
-    </section>
-  `;
-}
-
-function renderKnowledgeRelations(items, title = "关系边") {
-  return `
-    <section class="context-section film-panel">
-      <h4>${escapeHtml(title)}</h4>
-      <div class="row-list compact">
-        ${items.length ? items.map((item) => `
-          <article class="row-item memory-frame" data-raw="${rawAttr(item)}" data-detail-title="关系边详情">
-            <div class="memory-frame-time">
-              <b>${escapeHtml(formatTime(item.updated_at || item.created_at))}</b>
-              <span>${escapeHtml(shortId(item.id))}</span>
-            </div>
-            <div class="memory-frame-main">
-              <span class="item-title">${escapeHtml(compact(item.subject_name || item.subject_id, "未知对象"))} -> ${escapeHtml(compact(item.object_name || item.object_id, "未知对象"))}</span>
-              <p>${escapeHtml(compact(item.evidence, "暂无证据文本"))}</p>
-              <div class="badges">
-                <span class="badge teal">${escapeHtml(compact(item.relation_type, "relation"))}</span>
-                <span class="badge blue">${escapeHtml(compact(item.scope, "scope"))}</span>
-                <span class="badge gold">置信 ${escapeHtml(Math.round(Number(item.confidence || 0) * 100))}%</span>
-              </div>
-            </div>
-          </article>
-        `).join("") : `<div class="empty-state">当前范围还没有关系边。</div>`}
-      </div>
-    </section>
-  `;
-}
-
-function renderKnowledgeThreads(items, title = "跨窗口线程") {
-  return `
-    <section class="context-section film-panel">
-      <h4>${escapeHtml(title)}</h4>
-      <div class="row-list compact">
-        ${items.length ? items.map((item) => `
-          <article class="row-item memory-frame" data-raw="${rawAttr(item)}" data-detail-title="跨窗口线程详情">
-            <div class="memory-frame-time">
-              <b>${escapeHtml(formatTime(item.updated_at || item.created_at))}</b>
-              <span>${escapeHtml(shortId(item.id))}</span>
-            </div>
-            <div class="memory-frame-main">
-              <span class="item-title">${escapeHtml(compact(item.topic, "未命名线程"))}</span>
-              <p>${escapeHtml(compact(item.content, "暂无线程内容"))}</p>
-              <div class="badges">
-                <span class="badge ${item.status === "closed" ? "violet" : "teal"}">${escapeHtml(item.status || "open")}</span>
-                <span class="badge blue">${escapeHtml(shortId(item.from_session))} -> ${escapeHtml(shortId(item.to_session))}</span>
-                <span class="badge gold">${escapeHtml(item.visibility || "shareable")}</span>
-              </div>
-              <div class="thread-actions">
-                <button class="subtle" data-thread-id="${escapeHtml(item.id)}" data-thread-next-status="${item.status === "closed" ? "open" : "closed"}" type="button">
-                  ${item.status === "closed" ? "重新打开" : "标记完成"}
-                </button>
-              </div>
-            </div>
-          </article>
-        `).join("") : `<div class="empty-state">当前范围还没有跨窗口线程。</div>`}
-      </div>
-    </section>
-  `;
-}
-
-function renderKnowledgeTimeline(items, title = "时间线") {
-  return `
-    <section class="context-section film-panel">
-      <h4>${escapeHtml(title)}</h4>
-      <div class="row-list compact">
-        ${items.length ? items.map((item) => `
-          <article class="row-item memory-frame" data-raw="${rawAttr(item)}" data-detail-title="时间线节点详情">
-            <div class="memory-frame-time">
-              <b>${escapeHtml(formatTime(item.occurred_at || item.created_at))}</b>
-              <span>${escapeHtml(shortId(item.id))}</span>
-            </div>
-            <div class="memory-frame-main">
-              <span class="item-title">${escapeHtml(compact(item.content, "空时间线节点"))}</span>
-              <div class="badges">
-                <span class="badge teal">${escapeHtml(compact(item.event_type, "event"))}</span>
-                <span class="badge blue">${escapeHtml(compact(item.scope, "scope"))}</span>
-                <span class="badge gold">${escapeHtml(shortId(item.session_id))}</span>
-              </div>
-            </div>
-          </article>
-        `).join("") : `<div class="empty-state">当前范围还没有时间线节点。</div>`}
-      </div>
-    </section>
-  `;
+async function updateThreadStatus(id, status, view = knowledgeBrowse) {
+  if (!view || !knowledgeCurrent(view) || view.section !== "threads" || view.busy || view.reading || view.blocked) return;
+  view.busy = true;
+  view.notice = "正在更新这条线程…";
+  renderKnowledgeWorkspace();
+  let result;
+  try { result = await apiPost("/thread/status", { id, status }); }
+  catch (error) {
+    if (!knowledgeCurrent(view)) return;
+    view.busy = false;
+    view.blocked = true;
+    view.notice = `结果未确认：${error.message}。请先只读核对，不自动重复提交。`;
+    renderKnowledgeWorkspace();
+    return;
+  }
+  if (!knowledgeCurrent(view)) return;
+  view.busy = false;
+  if (result.updated !== true) {
+    view.notice = "未确认更新：线程可能已不存在或未更新。保留原记录，请只读核对。";
+    view.blocked = true;
+    renderKnowledgeWorkspace();
+    return;
+  }
+  const action = status === "closed" ? "已标记完成" : "已重新打开";
+  view.notice = `${action}，正在重新读取列表…`;
+  view.reading = true;
+  renderKnowledgeWorkspace();
+  await loadContextPanel({ preserve: true, notice: `${action}，列表已重新读取。`, failurePrefix: `${action}，列表回读失败` });
 }
 
 function boolLabel(value) {
@@ -2708,134 +2706,221 @@ async function loadUserMemory() {
   if (state.userMemoryFilter === 'private') {
     memories = allMemories.filter((memory) => memory.scope === 'private');
   }
-  renderMemoryList("#relationList", memories, "当前用户在这个分类下还没有记忆。");
+  renderMemoryList("#relationList", memories, "当前用户在这个分类下还没有记忆。", 180);
 }
 
+// These filters and request counters live only in the current page.
+const portraitBrowse = {query: "", mode: "", page: 0, factQuery: "", factStatus: "", factPage: 0, expanded: false};
+let portraitListRequest = 0;
+let portraitDetailRequest = 0;
+
 function portraitModeText(value) {
-  return {
-    disabled: "关闭",
-    use_existing: "仅使用已有",
-    learn_and_use: "学习并使用",
-  }[String(value || "")] || "关闭";
+  return {disabled: "关闭", use_existing: "仅使用已有", learn_and_use: "学习并使用"}[String(value || "")] || value || "未提供模式";
+}
+
+function portraitValueLabel(value) {
+  return {active: "有效记录", archived: "已归档", exact: "精确身份", unknown: "未确认身份", base: "基础画像", intelligent: "综合画像", explicit: "明确表达", inferred: "推断", low: "低敏", medium: "中敏", high: "高敏", source_only: "仅原来源", self_low_global: "本人低敏范围", reconfirmation_pending: "等待重新确认", revoked: "已撤销", superseded: "已替代", expired: "已过期", administrator_temporary_freeze: "管理员暂时冻结", administrator_delete_or_forget: "管理员停止使用", reconfirmation_requested: "要求重新确认"}[value] || value || "未标记";
+}
+
+function portraitPageButtons(page, pages, attribute) {
+  return `<nav class="portrait-pages" aria-label="当前结果分页"><button type="button" ${attribute}="previous"${page === 0 ? " disabled" : ""}>上一页</button><span>${page + 1} / ${pages}</span><button type="button" ${attribute}="next"${page + 1 >= pages ? " disabled" : ""}>下一页</button></nav>`;
 }
 
 function renderPortraitProfileList(items) {
-  if (!items.length) return '<p class="persona-empty">尚无已同步的统一画像。画像不会从昵称猜测创建，需由 Companion 提供精确身份投影。</p>';
-  return `<div class="row-list compact portrait-profile-list">${items.map((item) => {
-    const selected = String(item.person_id || "") === state.selectedPortraitPersonId;
-    const capabilities = item.capability_summary && typeof item.capability_summary === "object" ? item.capability_summary : {};
-    return `<button type="button" class="memory-row ${selected ? "is-selected" : ""}" aria-pressed="${selected ? "true" : "false"}" data-portrait-person="${escapeHtml(item.person_id || "")}"><div><b>${escapeHtml(shortId(item.person_id || ""))}</b><small>身份 ${escapeHtml(item.identity_assurance || "unknown")} · 同步 ${escapeHtml(formatTime(item.last_synced_at || ""))}</small></div><span class="memory-type-pill">事实 ${number(item.fact_count || 0)} · 证据 ${number(item.evidence_count || 0)} · ${escapeHtml(portraitModeText(capabilities.portrait_mode))}</span></button>`;
-  }).join("")}</div>`;
+  const query = portraitBrowse.query.trim().toLowerCase();
+  const filtered = items.filter(item => (!query || String(item.person_id || "").toLowerCase().includes(query)) && (!portraitBrowse.mode || item.capability_summary?.portrait_mode === portraitBrowse.mode));
+  const pages = Math.max(1, Math.ceil(filtered.length / 8));
+  portraitBrowse.page = Math.max(0, Math.min(portraitBrowse.page, pages - 1));
+  const outside = state.selectedPortraitPersonId && !filtered.some(item => item.person_id === state.selectedPortraitPersonId);
+  return `<p class="portrait-window-note">当前最多 100 人 · 筛选后 ${filtered.length} 人${outside ? " · 当前详情在筛选外，继续保留" : ""}</p>
+    <div class="portrait-profile-list">${filtered.slice(portraitBrowse.page * 8, (portraitBrowse.page + 1) * 8).map(item => {
+      const selected = String(item.person_id || "") === state.selectedPortraitPersonId;
+      return `<button type="button" class="portrait-person${selected ? " is-selected" : ""}" aria-pressed="${selected}" data-portrait-person="${escapeHtml(item.person_id || "")}">
+        <b>${escapeHtml(item.person_id || "未标记")}</b><small>${escapeHtml(portraitValueLabel(item.identity_assurance))} · ${escapeHtml(portraitValueLabel(item.profile_status))}</small>
+        <span>事实记录 ${number(item.fact_count || 0)} · 证据 ${number(item.evidence_count || 0)} · ${escapeHtml(portraitModeText(item.capability_summary?.portrait_mode))}</span>
+        <small>同步 ${escapeHtml(formatTime(item.last_synced_at || ""))}</small></button>`;
+    }).join("") || '<p class="persona-empty">当前筛选没有匹配画像。</p>'}</div>${portraitPageButtons(portraitBrowse.page, pages, "data-portrait-page")}`;
 }
 
 function renderPortraitModeNotice(items) {
-  if (!items.length || !items.every((item) => item?.capability_summary?.portrait_mode === "disabled")) return "";
-  return '<p class="portrait-mode-notice" role="status">当前同步结果显示统一画像能力全部关闭。这不影响私聊记忆；请在 Companion 配置中将“全局智能画像模式”设为“学习并使用”或“仅使用已有”，保存后等待下一次身份同步。</p>';
+  if (!items.length || !items.every(item => item?.capability_summary?.portrait_mode === "disabled")) return "";
+  return '<p class="portrait-mode-notice" role="status">当前同步结果显示统一画像能力全部关闭，不影响普通私聊记忆。模式仍由原陪伴设置的“全局智能画像模式”维护；保存后需等待身份同步。</p>';
+}
+
+function portraitFactMarkup(fact, markers) {
+  const linked = markers.filter(item => item.dimension === fact.dimension && item.normalized_claim_hash === fact.normalized_claim_hash && (!item.scope || item.scope === fact.source_scope));
+  const field = (label, value) => `<div><dt>${label}</dt><dd>${escapeHtml(value || "未标记")}</dd></div>`;
+  return `<article class="portrait-fact">
+    <b>${escapeHtml(fact.claim_summary || fact.dimension || "未命名结论")}</b>
+    <div class="portrait-tags"><span>${escapeHtml(portraitValueLabel(fact.epistemic_status))}</span><span>${escapeHtml(portraitValueLabel(fact.portrait_tier))}</span><span>${escapeHtml(portraitValueLabel(fact.status))}</span>${linked.length ? `<span>有关联治理标记 ${linked.length} 条</span>` : ""}</div>
+    <details><summary data-portrait-fact-detail>来源与依据</summary><dl class="portrait-fields">
+      ${field("结论编号", fact.id)}${field("维度", fact.dimension)}${field("来源范围", fact.source_scope)}${field("可用范围", portraitValueLabel(fact.usable_scope))}
+      ${field("产生方式", fact.producer_kind)}${field("推导方式", fact.derivation_kind)}${field("敏感程度", portraitValueLabel(fact.sensitivity))}${field("置信度", Number(fact.confidence || 0).toFixed(2))}
+      ${field("最早证据", formatTime(fact.first_evidence_at))}${field("最近证据", formatTime(fact.last_evidence_at))}${field("结论期限", fact.expires_at ? formatTime(fact.expires_at) : "未设置截止")}${field("修订", `r${fact.revision || 0}`)}
+    </dl>${linked.length ? `<p class="portrait-window-note">关联治理标记包含历史。请结合下方标记状态与期限查看；记录仍存在不代表当前可用于对话。</p>` : ""}</details>
+    <details class="portrait-maintenance"><summary data-portrait-maintenance>维护这条结论</summary>
+      <p>冻结会暂停使用 7 天；停止使用（忘记）添加无截止的抑制标记。同来源同结论的已有标记会按本次操作更新，请先查看标记与期限。原结论与证据保留以便溯源，不会删除聊天记录。</p>
+      <div class="portrait-actions"><button type="button" data-portrait-govern="freeze" data-portrait-fact-id="${escapeHtml(fact.id || "")}">冻结 7 天</button><button type="button" class="danger" data-portrait-govern="suppress" data-portrait-fact-id="${escapeHtml(fact.id || "")}">停止使用（忘记）</button></div>
+    </details>
+  </article>`;
+}
+
+function renderPortraitFacts() {
+  const host = $("#portraitGovernance .portrait-fact-list");
+  if (!host) return;
+  const detail = state.portraitGovernanceDetail;
+  const query = portraitBrowse.factQuery.trim().toLowerCase();
+  const rows = (detail?.facts || []).filter(item => (!query || [item.claim_summary, item.dimension, item.id, item.source_scope].join(" ").toLowerCase().includes(query)) && (!portraitBrowse.factStatus || item.status === portraitBrowse.factStatus));
+  const pages = Math.max(1, Math.ceil(rows.length / 12));
+  portraitBrowse.factPage = Math.max(0, Math.min(portraitBrowse.factPage, pages - 1));
+  host.innerHTML = rows.slice(portraitBrowse.factPage * 12, (portraitBrowse.factPage + 1) * 12).map(item => portraitFactMarkup(item, detail.suppressions || [])).join("") || '<p class="persona-empty">当前筛选暂无结论记录。</p>';
+  $("#portraitGovernance .portrait-fact-count").textContent = `本次返回 ${(detail.facts || []).length} 条 · 筛选后 ${rows.length} 条`;
+  $("#portraitGovernance .portrait-fact-pages").innerHTML = portraitPageButtons(portraitBrowse.factPage, pages, "data-portrait-fact-page");
+  bindPortraitGovernanceActions(host);
 }
 
 function renderPortraitGovernanceDetail(detail, loading = false) {
-  if (loading) return '<div class="portrait-governance-detail-slot" aria-live="polite"><div class="empty-state">正在读取画像详情...</div></div>';
-  if (!detail?.ok) {
-    const message = detail
-      ? `画像详情读取失败：${detail.code === "bridge_unavailable" ? "统一画像服务不可用" : (detail.code || "未知错误")}`
-      : "选择画像后可查看脱敏事实摘要、证据计数和抑制记录。";
-    return `<div class="portrait-governance-detail-slot" aria-live="polite"><p class="persona-empty">${escapeHtml(message)}</p></div>`;
-  }
-  const facts = Array.isArray(detail.facts) ? detail.facts : [];
-  const suppressions = Array.isArray(detail.suppressions) ? detail.suppressions : [];
-  const person = detail.person && typeof detail.person === "object" ? detail.person : {};
-  return `
-    <section class="context-section film-panel portrait-governance-detail">
-      <div class="section-head compact"><div><h4>画像治理</h4><p>管理员可冻结或忘记一条结论。操作立即在写入和读取前生效，不保存聊天正文。</p></div><span class="memory-type-pill">r${escapeHtml(person.portrait_revision || 0)}</span></div>
-      <div class="config-grid">
-        ${configCard("低敏事实", `${facts.filter((item) => item.sensitivity === "low").length} 条`, "事实与推断分层保留", "teal", "画像")}
-        ${configCard("抑制标记", `${suppressions.length} 条`, "删除和否认优先于旧证据", "violet", "治理")}
-      </div>
-      <div class="row-list compact portrait-fact-list">
-        ${facts.length ? facts.map((fact) => `<article class="memory-row"><div><b>${escapeHtml(fact.claim_summary || fact.dimension || "未命名结论")}</b><small>${escapeHtml(fact.portrait_tier || "")} · ${escapeHtml(fact.epistemic_status || "")} · ${escapeHtml(fact.source_scope || "source_only")} · 置信 ${escapeHtml(Number(fact.confidence || 0).toFixed(2))}</small></div><div class="memory-row-actions"><button type="button" class="danger subtle" data-portrait-govern="suppress" data-portrait-fact-id="${escapeHtml(fact.id || "")}">忘记</button><button type="button" class="subtle" data-portrait-govern="freeze" data-portrait-fact-id="${escapeHtml(fact.id || "")}">冻结 7 天</button></div></article>`).join("") : '<p class="persona-empty">暂无画像事实。</p>'}
-      </div>
-      <details class="context-section"><summary>抑制与待确认记录 ${escapeHtml(suppressions.length)}</summary><div class="row-list compact">${suppressions.map((item) => `<article class="memory-row"><div><b>${escapeHtml(item.dimension || "结论")}</b><small>${escapeHtml(item.status || "active")} · ${escapeHtml(item.reason || "")} · ${escapeHtml(formatTime(item.updated_at || ""))}</small></div></article>`).join("") || '<p class="persona-empty">暂无抑制记录。</p>'}</div></details>
-    </section>`;
+  const id = state.selectedPortraitPersonId;
+  if (loading) return '<div class="portrait-governance-detail-slot" aria-live="polite"><p>正在读取画像详情...</p></div>';
+  if (!detail?.ok) return `<div class="portrait-governance-detail-slot" aria-live="polite"><p>${escapeHtml(detail ? `画像详情暂未读取：${detail.code === "bridge_unavailable" ? "统一画像服务不可用" : detail.code || "未知错误"}` : "选择一个精确画像标识，查看结论来源与维护记录。")}</p>${id ? '<button type="button" data-portrait-refresh>重新读取当前画像</button>' : ""}</div>`;
+  const person = detail.person || {};
+  const facts = detail.facts || [];
+  const markers = detail.suppressions || [];
+  const statuses = [...new Set(facts.map(item => item.status).filter(Boolean))];
+  return `<section class="portrait-governance-detail" data-portrait-detail-person="${escapeHtml(person.person_id)}">
+    <div class="portrait-detail-head"><div><h4>当前画像 · r${escapeHtml(person.portrait_revision || 0)}</h4><p>${escapeHtml(person.person_id)}</p></div><div class="portrait-actions"><button type="button" data-portrait-back>返回画像列表</button><button type="button" data-portrait-refresh>刷新此画像</button></div></div>
+    <p class="portrait-window-note">${escapeHtml(portraitValueLabel(person.identity_assurance))} · ${escapeHtml(portraitValueLabel(person.profile_status))} · ${escapeHtml(portraitModeText(person.capability_summary?.portrait_mode))} · 同步 ${escapeHtml(formatTime(person.last_synced_at))}</p>
+    <p class="portrait-window-note">原接口最近最多 200 条结论、200 条治理标记。这里只展示摘要和来源信息，不提供原聊天正文；实际使用仍需通过权限、有效期和抑制校验。</p>
+    <div class="portrait-filters"><label>查找结论<input type="search" data-portrait-fact-query value="${escapeHtml(portraitBrowse.factQuery)}" placeholder="摘要、维度、来源范围或编号" /></label><label>结论记录状态<select data-portrait-fact-status><option value="">全部状态</option>${statuses.map(value => memoryOption(value, portraitValueLabel(value), portraitBrowse.factStatus)).join("")}</select></label></div>
+    <p class="portrait-fact-count" role="status"></p><div class="portrait-fact-list"></div><div class="portrait-fact-pages"></div>
+    <details class="portrait-markers"><summary data-portrait-markers>治理标记与期限 · ${markers.length} 条</summary><p class="portrait-window-note">这些是原接口返回的标记，包含历史状态；当前是否生效仍由后端校验。本页沿原接口维护标记，不删除原聊天记录。</p>
+      <div class="portrait-marker-list">${markers.map(item => `<article><b>${escapeHtml(portraitValueLabel(item.reason))}</b><p>${escapeHtml(item.dimension || "未标记维度")} · ${escapeHtml(portraitValueLabel(item.status))}</p><p>来源范围：${escapeHtml(item.scope || "全部匹配范围")}</p><p>期限：${escapeHtml(item.expires_at ? formatTime(item.expires_at) : "未设置截止")} · 更新 ${escapeHtml(formatTime(item.updated_at))}</p></article>`).join("") || '<p>暂无治理标记。</p>'}</div>
+    </details>
+  </section>`;
+}
+
+function bindPortraitDetailControls() {
+  const target = $("#portraitGovernance");
+  target.querySelectorAll("[data-portrait-refresh]").forEach(button => button.addEventListener("click", () => loadPortraitGovernanceDetail()));
+  target.querySelector("[data-portrait-back]")?.addEventListener("click", () => target.querySelector(".portrait-filters").scrollIntoView({block: "start"}));
+  const query = target.querySelector("[data-portrait-fact-query]");
+  query?.addEventListener("input", () => { portraitBrowse.factQuery = query.value; portraitBrowse.factPage = 0; renderPortraitFacts(); });
+  const status = target.querySelector("[data-portrait-fact-status]");
+  status?.addEventListener("change", () => { portraitBrowse.factStatus = status.value; portraitBrowse.factPage = 0; renderPortraitFacts(); });
+  const pager = target.querySelector(".portrait-fact-pages");
+  pager?.addEventListener("click", event => { const button = event.target.closest("[data-portrait-fact-page]"); if (!button) return; portraitBrowse.factPage += button.dataset.portraitFactPage === "next" ? 1 : -1; renderPortraitFacts(); });
+  if (target.querySelector(".portrait-fact-list")) renderPortraitFacts();
+}
+
+function renderPortraitDetailPanel() {
+  const current = $("#portraitGovernance .portrait-governance-detail, #portraitGovernance .portrait-governance-detail-slot");
+  if (!current) return;
+  current.outerHTML = renderPortraitGovernanceDetail(state.portraitGovernanceDetail, state.portraitGovernanceLoading);
+  bindPortraitDetailControls();
+}
+
+function updatePortraitProfileList() {
+  const host = $("#portraitGovernance .portrait-profile-results");
+  if (!host) return;
+  host.innerHTML = renderPortraitProfileList(state.portraitProfiles);
+  host.querySelectorAll("[data-portrait-person]").forEach(button => button.addEventListener("click", () => {
+    state.selectedPortraitPersonId = button.dataset.portraitPerson;
+    portraitBrowse.factQuery = ""; portraitBrowse.factStatus = ""; portraitBrowse.factPage = 0;
+    updatePortraitProfileList(); loadPortraitGovernanceDetail(true);
+  }));
+  host.querySelectorAll("[data-portrait-page]").forEach(button => button.addEventListener("click", () => { portraitBrowse.page += button.dataset.portraitPage === "next" ? 1 : -1; updatePortraitProfileList(); }));
 }
 
 async function loadPortraitGovernance() {
   const target = $("#portraitGovernance");
   if (!target) return;
-  target.innerHTML = loadingState("正在读取统一画像治理状态...");
+  const ticket = ++portraitListRequest;
+  target.innerHTML = loadingState("正在读取统一画像状态...");
   try {
     const data = await apiGet("/portrait/profiles?limit=100");
+    if (ticket !== portraitListRequest) return;
+    if (data.state === "bridge_unavailable") throw new Error("统一画像服务尚未连接；这不表示资料为空。");
     const items = Array.isArray(data.items) ? data.items : [];
     state.portraitProfiles = items;
-    if (state.selectedPortraitPersonId && !items.some((item) => String(item.person_id || "") === state.selectedPortraitPersonId)) {
-      state.selectedPortraitPersonId = "";
-      state.portraitGovernanceDetail = null;
+    if (state.selectedPortraitPersonId && !items.some(item => item.person_id === state.selectedPortraitPersonId)) {
+      state.selectedPortraitPersonId = ""; state.portraitGovernanceDetail = null; state.portraitGovernanceLoading = false; portraitDetailRequest++;
     }
-    target.innerHTML = `<section class="context-section film-panel"><div class="section-head compact"><div><h4>统一用户画像</h4><p>事实、证据、敏感等级、作用域、纠错和遗忘由 Memory 管理；关系和私聊权限仍由 Companion 管理。</p></div><span class="memory-type-pill">${escapeHtml(items.length)} 人</span></div>${renderPortraitModeNotice(items)}${renderPortraitGovernanceDetail(state.portraitGovernanceDetail, state.portraitGovernanceLoading)}${renderPortraitProfileList(items)}</section>`;
-    target.querySelectorAll("[data-portrait-person]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        state.selectedPortraitPersonId = String(button.dataset.portraitPerson || "");
-        state.portraitGovernanceDetail = null;
-        state.portraitGovernanceLoading = true;
-        target.querySelectorAll("[data-portrait-person]").forEach((item) => {
-          const selected = item === button;
-          item.classList.toggle("is-selected", selected);
-          item.setAttribute("aria-pressed", selected ? "true" : "false");
-        });
-        const slot = target.querySelector(".portrait-governance-detail-slot");
-        if (slot) slot.outerHTML = renderPortraitGovernanceDetail(null, true);
-        await loadPortraitGovernanceDetail();
-      });
-    });
-    bindPortraitGovernanceActions(target);
+    target.innerHTML = `<details class="portrait-workspace" data-portrait-workspace${portraitBrowse.expanded ? " open" : ""}><summary>统一用户画像 · 本次 ${items.length} 人</summary>
+      <p class="portrait-window-note">按精确画像标识维护，与左侧普通记忆范围分别查看。画像来自原陪伴身份同步，不通过昵称猜测新建。记忆模块维护结论与证据，陪伴模块保留关系和私聊权限。</p>
+      ${renderPortraitModeNotice(items)}${items.length ? "" : '<p class="persona-empty">尚无已同步的统一画像。</p>'}
+      <div class="portrait-filters"><label>查找画像<input type="search" data-portrait-query value="${escapeHtml(portraitBrowse.query)}" placeholder="输入精确画像标识或其中一段" /></label><label>同步的画像模式<select data-portrait-mode><option value="">全部模式</option>${["disabled","use_existing","learn_and_use"].map(value => memoryOption(value, portraitModeText(value), portraitBrowse.mode)).join("")}</select></label></div>
+      <div class="portrait-profile-results"></div>${renderPortraitGovernanceDetail(state.portraitGovernanceDetail, state.portraitGovernanceLoading)}
+    </details>`;
+    target.querySelector("[data-portrait-workspace]").addEventListener("toggle", event => { portraitBrowse.expanded = event.currentTarget.open; });
+    const query = target.querySelector("[data-portrait-query]");
+    query.addEventListener("input", () => { portraitBrowse.query = query.value; portraitBrowse.page = 0; updatePortraitProfileList(); });
+    const mode = target.querySelector("[data-portrait-mode]");
+    mode.addEventListener("change", () => { portraitBrowse.mode = mode.value; portraitBrowse.page = 0; updatePortraitProfileList(); });
+    updatePortraitProfileList(); bindPortraitDetailControls();
   } catch (error) {
-    target.innerHTML = `<div class="empty-state error-state"><b>统一画像暂不可用</b><span>${escapeHtml(error?.message || "bridge_unavailable")}</span></div>`;
+    if (ticket !== portraitListRequest) return;
+    target.innerHTML = `<div class="empty-state error-state"><b>统一画像服务暂不可用</b><span>${escapeHtml(error?.message || "bridge_unavailable")}</span><button type="button" data-portrait-list-retry>重新读取画像列表</button></div>`;
+    target.querySelector("[data-portrait-list-retry]").addEventListener("click", () => loadPortraitGovernance());
   }
 }
 
-async function loadPortraitGovernanceDetail() {
-  if (!state.selectedPortraitPersonId) return;
-  const target = $("#portraitGovernance");
+async function loadPortraitGovernanceDetail(focus = false) {
+  const personId = state.selectedPortraitPersonId;
+  if (!personId) return false;
+  const ticket = ++portraitDetailRequest;
+  const current = () => ticket === portraitDetailRequest && personId === state.selectedPortraitPersonId;
+  state.portraitGovernanceDetail = null; state.portraitGovernanceLoading = true;
+  renderPortraitDetailPanel();
   try {
-    const data = await apiGet(`/portrait/profile?person_id=${encodeURIComponent(state.selectedPortraitPersonId)}`);
-    state.portraitGovernanceDetail = data.result || null;
+    const data = await apiGet(`/portrait/profile?person_id=${encodeURIComponent(personId)}`);
+    if (!current()) return false;
+    const detail = data.result;
+    if (detail?.ok && detail.person?.person_id !== personId) throw new Error("画像归属不匹配，请重新读取");
+    state.portraitGovernanceDetail = detail || {ok: false, code: "未返回画像结果"};
   } catch (error) {
-    state.portraitGovernanceDetail = { ok: false, code: error?.message || "bridge_unavailable" };
-  } finally {
-    state.portraitGovernanceLoading = false;
+    if (!current()) return false;
+    state.portraitGovernanceDetail = {ok: false, code: error?.message || "bridge_unavailable"};
   }
-  await loadPortraitGovernance();
-  target?.querySelector(".portrait-governance-detail, .portrait-governance-detail-slot")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (!current()) return false;
+  state.portraitGovernanceLoading = false; renderPortraitDetailPanel();
+  if (focus) $("#portraitGovernance .portrait-governance-detail, #portraitGovernance .portrait-governance-detail-slot")?.scrollIntoView({block: "start"});
+  return Boolean(state.portraitGovernanceDetail?.ok);
 }
 
 function bindPortraitGovernanceActions(target) {
-  target.querySelectorAll("[data-portrait-govern]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const action = String(button.dataset.portraitGovern || "");
-      const factId = String(button.dataset.portraitFactId || "");
-      if (!factId || !state.selectedPortraitPersonId) return;
-      if (action === "suppress" && button.dataset.portraitConfirmed !== "1") {
-        button.dataset.portraitConfirmed = "1";
-        button.textContent = "再次确认忘记";
-        return;
-      }
-      button.disabled = true;
-      try {
-        const result = await apiPost("/portrait/govern", {
-          person_id: state.selectedPortraitPersonId,
-          fact_id: factId,
-          action,
-          operation_id: `portrait.page:${Date.now()}:${factId.slice(-12)}`,
-          expires_at: action === "freeze" ? new Date(Date.now() + 7 * 86400000).toISOString() : "",
-        });
-        if (!result?.result?.ok) throw new Error(result?.result?.code || "操作未完成");
-        showToast(action === "freeze" ? "已冻结该画像结论 7 天" : "已抑制该画像结论");
-        await loadPortraitGovernanceDetail();
-      } catch (error) {
-        button.disabled = false;
-        showToast(error?.message || "画像治理失败", "error");
-      }
+  target.querySelectorAll("[data-portrait-govern]").forEach(button => button.addEventListener("click", () => {
+    const host = button.closest("[data-portrait-detail-person]");
+    const personId = host?.dataset.portraitDetailPerson;
+    const action = button.dataset.portraitGovern;
+    const factId = button.dataset.portraitFactId;
+    const current = () => state.activeView === "relations" && state.selectedPortraitPersonId === personId && state.portraitGovernanceDetail?.person?.person_id === personId;
+    if (!current() || !state.portraitGovernanceDetail.facts.some(item => item.id === factId)) return;
+    const label = action === "freeze" ? "冻结 7 天" : "停止使用（忘记）";
+    showInlineConfirmation({host, title: `${label}这条画像结论`,
+      message: action === "freeze" ? "将在原服务中写入 7 天抑制标记，同来源同结论的已有标记按本次操作更新。原结论与证据仍保留；到期后能否使用仍由权限与其他规则决定。" : "将写入无截止的停止使用标记，同来源同结论的已有标记按本次操作更新。阻止该结论继续被使用或旧证据重新写回，原结论与聊天记录不会被删除。",
+      confirmLabel: `确认${label}`, busyText: "正在更新画像维护标记...", dangerous: action === "suppress",
+      onCancel: () => renderPortraitDetailPanel(),
+      onConfirm: async () => {
+        if (!current()) return;
+        let result;
+        try {
+          result = await apiPost("/portrait/govern", {person_id: personId, fact_id: factId, action, operation_id: `portrait.page:${Date.now()}:${factId.slice(-12)}`, expires_at: action === "freeze" ? new Date(Date.now() + 7 * 86400000).toISOString() : ""});
+        } catch (error) {
+          if (current()) { state.portraitGovernanceDetail = {ok: false, code: `操作结果未确认，请先重新读取。${error?.message || "请求失败"}`}; renderPortraitDetailPanel(); }
+          showToast("画像操作结果未确认，请先读取核对，不要重复提交。", "error"); return;
+        }
+        if (!result?.result?.ok) {
+          if (current()) renderPortraitDetailPanel();
+          showToast(result?.result?.code === "portrait_fact_not_found" ? "该画像结论已不存在，请刷新后再维护。" : result?.result?.code || "操作未完成", "error"); return;
+        }
+        const done = action === "freeze" ? "已冻结该画像结论 7 天" : "已停止使用该画像结论，原记录保留";
+        showToast(done);
+        if (!current()) return;
+        const loaded = await loadPortraitGovernanceDetail();
+        if (!loaded && state.selectedPortraitPersonId === personId) showToast(`${done}，但详情暂未读取，请手动刷新。`, "error");
+      },
     });
-  });
+  }));
 }
 
 async function loadPersonalMemory() {
@@ -4323,7 +4408,7 @@ function renderSchemaConfigModule(data = {}, module = "") {
       <section class="context-form-section">
         <div class="context-form-section-head">
           <b>${escapeHtml(schema.description || module)}</b>
-          <span>${escapeHtml(schema.hint || "按官方配置 schema 渲染，保存后写入插件配置文件。")}</span>
+          <span>${escapeHtml(schema.hint || "沿原配置定义显示，保存到当前 TLS 原生记忆配置。")}</span>
         </div>
         ${renderConfigInlineGuide(module)}
         ${fields}
@@ -4336,9 +4421,10 @@ function renderSchemaConfigModule(data = {}, module = "") {
         </details>
       ` : ""}
       <div class="context-form-actions">
-        <span>${advancedFields ? "保存当前模块及其折叠高级参数；其他模块不会被改动。" : "只保存当前模块；其他模块不会被改动。"}</span>
+        <span>${advancedFields ? "普通参数与高级参数分别保存。若后一步失败，前一步不会自动回滚。" : "只提交当前模块，沿原配置来源保存。"} 输入仅保留在当前页面，切换或刷新前请确认结果。</span>
         <button type="submit">保存${escapeHtml(schema.description || "配置")}</button>
       </div>
+      <section class="config-save-result" data-config-save-result aria-live="polite" hidden></section>
     </form>
   `;
 }
@@ -4406,27 +4492,108 @@ function bindSchemaConfigForm(root, schemaData = {}) {
     const input = form.querySelector(`[name='${select.dataset.configProviderSelect}']`);
     bindProviderPicker(select, input);
   });
-  form.addEventListener("submit", (event) => {
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    withButton(form.querySelector("button[type='submit']"), "保存中", () => saveSchemaConfigModule(form, schemaData));
+    if (form._configSaveReceipt?.busy || form._configSaveReceipt?.steps.some(step => step.status === "unknown")) return;
+    await withButton(form.querySelector("button[type='submit']"), "保存中", () => saveSchemaConfigModule(form, schemaData));
+    // The shared button helper restores its original state; an unconfirmed write stays blocked here.
+    if (form._configSaveReceipt?.steps.some(step => step.status === "unknown")) {
+      const button = form.querySelector("button[type='submit']");
+      button.disabled = true;
+      button.textContent = "结果未确认，请先核对";
+    }
   });
 }
 
+function completeSchemaConfigValues(values, schema = {}) {
+  if (!values || typeof values !== "object" || Array.isArray(values)) return false;
+  return Object.entries(schema).every(([key, item]) => {
+    const value = values[key], type = item?.type || "string";
+    if (type === "bool") return typeof value === "boolean";
+    if (type === "int") return Number.isInteger(value);
+    if (type === "float") return typeof value === "number" && Number.isFinite(value);
+    return typeof value === "string";
+  });
+}
+
+function renderSchemaConfigReceipt(form, receipt) {
+  if (!form.isConnected || form._configSaveReceipt !== receipt) return;
+  const host = form.querySelector("[data-config-save-result]");
+  const confirmed = receipt.steps.filter(step => step.status === "confirmed").length;
+  const unknown = receipt.steps.some(step => step.status === "unknown");
+  const title = receipt.busy ? "正在分别保存" : confirmed === receipt.steps.length ? "保存已确认" : confirmed ? "部分保存已确认" : "保存结果未确认";
+  const fieldValue = value => value === undefined ? "尚未读取" : typeof value === "boolean" ? (value ? "开启" : "关闭") : value === "" ? "（空）" : String(value);
+  host.hidden = false;
+  host.innerHTML = `<h4>${title}</h4>
+    <p>输入已保留，保存期间继续修改的输入也不会被回读覆盖。以下结果对应点击保存时的内容。</p>
+    <ol>${receipt.steps.map(step => `<li data-config-step="${escapeHtml(step.module)}">
+      <div><b>${escapeHtml(step.label)}</b><strong>${({confirmed:"已确认保存",unknown:"结果未确认",sending:"等待保存响应",pending:"未提交"})[step.status]}</strong></div>
+      ${step.error ? `<p>${escapeHtml(step.error)}</p>` : ""}
+      ${step.current ? `<p>${Object.keys(step.schema).every(key => step.current[key] === (step.returned || step.submitted)[key]) ? "当前读取与" + (step.returned ? "已确认返回一致" : "本次提交一致") : "当前读取与" + (step.returned ? "已确认返回不同" : "本次提交不同")}</p>` : ""}
+      <details class="config-result-values"><summary>本次提交${step.returned ? " / 服务端确认" : ""}${step.current ? " / 当前读取" : ""} · ${Object.keys(step.schema).length} 项</summary>
+        <dl>${Object.entries(step.schema).map(([key, item]) => `<div><dt>${escapeHtml(item.description || key)}</dt><dd>提交：${escapeHtml(fieldValue(step.submitted[key]))}${step.returned ? `<br>确认：${escapeHtml(fieldValue(step.returned[key]))}` : ""}${step.current ? `<br>当前：${escapeHtml(fieldValue(step.current[key]))}` : ""}</dd></div>`).join("")}</dl>
+      </details></li>`).join("")}</ol>
+    ${unknown ? `<p class="config-result-warning">未确认的操作可能已开始。请先核对当前值，不要重复提交；核对不证明未确认的保存已经完成或写入磁盘，也不会补交未提交的模块。</p>` : ""}
+    ${receipt.reading ? "<p>正在读取当前配置…</p>" : receipt.readError ? `<p class="config-result-warning">配置回读失败：${escapeHtml(receipt.readError)}。已确认的保存结果仍保留。</p>` : ""}
+    <button type="button" data-config-readback${receipt.busy || receipt.reading ? " disabled" : ""}>仅核对当前值</button>`;
+  host.querySelector("[data-config-readback]").addEventListener("click", () => readSchemaConfigReceipt(form, receipt));
+}
+
+async function readSchemaConfigReceipt(form, receipt) {
+  if (receipt.reading || receipt.busy || !form.isConnected || form._configSaveReceipt !== receipt) return;
+  receipt.reading = true;
+  receipt.readError = "";
+  // A prior read is not a new observation when the following GET fails.
+  receipt.steps.forEach(step => { step.current = null; });
+  renderSchemaConfigReceipt(form, receipt);
+  try {
+    const data = await apiGet("/config/schema");
+    if (!receipt.steps.every(step => completeSchemaConfigValues(data.values?.[step.module], step.schema))) {
+      throw new Error("返回的模块字段不完整，无法核对当前配置");
+    }
+    receipt.steps.forEach(step => { step.current = data.values[step.module]; });
+  } catch (error) {
+    receipt.readError = error.message || String(error);
+  } finally {
+    receipt.reading = false;
+    renderSchemaConfigReceipt(form, receipt);
+  }
+}
+
 async function saveSchemaConfigModule(form, schemaData = {}) {
-  const module = form.dataset.configModule || "";
-  const advancedModule = form.dataset.configAdvancedModule || "";
   const data = new FormData(form);
-  const values = schemaValuesFromForm(data, schemaData.schema?.[module]?.items || {});
-  await apiPost("/config/module/update", { module, values });
-  if (advancedModule) {
-    const advancedValues = schemaValuesFromForm(data, schemaData.schema?.[advancedModule]?.items || {});
-    await apiPost("/config/module/update", { module: advancedModule, values: advancedValues });
+  const steps = [form.dataset.configModule, form.dataset.configAdvancedModule].filter(Boolean).map(module => ({
+    module, label: schemaData.schema?.[module]?.description || module,
+    schema: schemaData.schema?.[module]?.items || {},
+    submitted: schemaValuesFromForm(data, schemaData.schema?.[module]?.items || {}), status: "pending",
+  }));
+  const receipt = { steps, busy: true, reading: false, readError: "" };
+  form._configSaveReceipt = receipt;
+  for (const step of steps) {
+    step.status = "sending";
+    renderSchemaConfigReceipt(form, receipt);
+    try {
+      const result = await apiPost("/config/module/update", { module: step.module, values: step.submitted });
+      if (result.module !== step.module || !completeSchemaConfigValues(result.values, step.schema)) {
+        throw new Error("保存返回的模块或字段不完整，后续模块未继续提交");
+      }
+      step.returned = result.values;
+      step.status = "confirmed";
+      if (step.module === "appearance" && form.isConnected) applyTheme(result.values.theme, { explicit: true });
+    } catch (error) {
+      step.status = "unknown";
+      step.error = error.message || String(error);
+      break;
+    }
   }
-  if (module === "appearance") {
-    applyTheme(values.theme);
+  receipt.busy = false;
+  renderSchemaConfigReceipt(form, receipt);
+  if (steps.every(step => step.status === "confirmed")) {
+    await readSchemaConfigReceipt(form, receipt);
   }
-  showToast("配置模块已保存");
-  await loadArchive();
+  if (form.isConnected) showToast(steps.every(step => step.status === "confirmed")
+    ? (receipt.readError ? "保存已确认，配置回读失败" : "保存已确认，请查看各模块结果")
+    : (steps.some(step => step.status === "confirmed") ? "部分保存已确认，其余结果请核对" : "保存结果未确认，请先核对"));
 }
 
 function schemaValuesFromForm(data, schema = {}) {
@@ -4797,13 +4964,15 @@ async function saveRetrievalConfig(form) {
 
 async function showMemory(id) {
   state.activeMemoryId = id;
-  $("#detailDrawer").className = "detail-drawer";
+  $("#detailDrawer").className = "detail-drawer memory-record-detail";
   $("#detailDrawer").innerHTML = loadingState("正在展开详情...");
   let memory;
   try {
     const data = await apiGet(`/memory?id=${encodeURIComponent(id)}`);
     memory = data.memory;
+    if (state.activeMemoryId !== id) return;
   } catch (error) {
+    if (state.activeMemoryId !== id) return;
     $("#detailDrawer").innerHTML = panelError(error, "重新读取");
     const retry = $("#detailDrawer [data-retry-active]");
     if (retry) retry.addEventListener("click", () => showMemory(id));
@@ -4814,19 +4983,23 @@ async function showMemory(id) {
   $("#detailDrawer").innerHTML = `
     <div class="memory-manage-head">
       <div>
-        <h3>${escapeHtml(memory.memory_type)}</h3>
+        <h3>${escapeHtml(memoryFieldLabel("memory_type", memory.memory_type))}</h3>
+        <button type="button" data-memory-back>返回当前列表</button>
         <p class="item-meta">${escapeHtml(memory.id)} · ${escapeHtml(formatTime(memory.occurred_at || memory.created_at))}</p>
       </div>
       <div class="badges">
-        <span class="badge teal">${escapeHtml(memory.visibility)}</span>
-        <span class="badge blue">${escapeHtml(memory.reality_level)}</span>
-        <span class="badge gold">${escapeHtml(memory.lifecycle)}</span>
-        <span class="badge ${memory.validity_status === "active" ? "teal" : "violet"}">${escapeHtml(memory.validity_status || "active")}</span>
+        <span class="badge teal">${escapeHtml(memoryFieldLabel("visibility", memory.visibility))}</span>
+        <span class="badge blue">${escapeHtml(memoryFieldLabel("reality_level", memory.reality_level))}</span>
+        <span class="badge gold">${escapeHtml(memoryFieldLabel("lifecycle", memory.lifecycle))}</span>
+        <span class="badge ${memory.validity_status === "active" ? "teal" : "violet"}">${escapeHtml(memoryFieldLabel("validity_status", memory.validity_status))}</span>
       </div>
     </div>
     ${memory.source_plugin === "livingmemory" && isNumericOnlyContent(memory.content) ? `<div class="empty-state error-state"><b>导入内容未修复</b><span>这条记录目前只有旧库编号，请先在维护工具中执行“修复 LivingMemory 内容”。</span></div>` : ""}
-    ${renderMemoryStructuredMetadata(memory)}
-    <section class="memory-atom-panel" aria-label="Memory Atom v2">
+    <section class="memory-reading" aria-label="当前记忆正文"><h4>当前正文</h4><p>${escapeHtml(memory.content || "（空内容）")}</p></section>
+    ${memorySourceSummary(memory)}
+    <details class="memory-record-section"><summary>证据与关联摘要</summary><p class="memory-evidence">${escapeHtml(memory.evidence || "未记录证据文本")}</p>${renderMemoryStructuredMetadata(memory)}</details>
+    <div id="memoryRevisions">${renderMemoryRevisions(memory.revisions)}</div>
+    <details class="memory-record-section"><summary>系统归属与使用反馈</summary><section class="memory-atom-panel" aria-label="Memory Atom v2">
       <div class="memory-atom-panel-head"><b>Memory Atom v2</b><span>归属与系统反馈字段为只读</span></div>
       <div class="memory-atom-readonly-grid">
         <span><em>Owner Bot</em><strong>${escapeHtml(memory.owner_bot_id || "未标记")}</strong></span>
@@ -4836,15 +5009,14 @@ async function showMemory(id) {
         <span><em>最近注入</em><strong>${escapeHtml(formatTime(memory.last_injected_at) || "从未")}</strong></span>
         <span><em>Canonical</em><strong title="${escapeHtml(memory.canonical_key || "")}">${escapeHtml(shortId(memory.canonical_key || "未生成"))}</strong></span>
       </div>
-    </section>
+    </section></details>
+    <details class="memory-record-section memory-editor" data-memory-editor><summary>编辑内容与有效状态</summary>
+    <p class="item-meta">收起保留本页输入；切换记录、刷新或离开页面会丢失未保存修改。</p>
     <form id="memoryManageForm" class="memory-manage-form" autocomplete="off">
-      <label>
-        <span>记忆类型</span>
-        <input name="memory_type" type="text" value="${escapeHtml(memory.memory_type || "")}" />
-      </label>
       <label>
         <span>内容</span>
         <textarea name="content" rows="6">${escapeHtml(memory.content || "")}</textarea>
+        ${memory.memory_type === "conversation_summary" ? '<small>修改摘要正文后会同步更新检索内容，旧的自动要点与关联索引停止使用。修改前的版本保留在修改历史中。</small>' : ""}
       </label>
       <label>
         <span>证据</span>
@@ -4871,6 +5043,13 @@ async function showMemory(id) {
             ${memoryOption("shareable", "可共享", memory.visibility)}
           </select>
         </label>
+      </div>
+      <details class="memory-record-section"><summary>高级属性、有效期与召回权重</summary>
+      <label>
+        <span>记忆类型</span>
+        <input name="memory_type" type="text" value="${escapeHtml(memory.memory_type || "")}" />
+      </label>
+      <div class="memory-manage-grid">
         <label>
           <span>生命周期</span>
           <select name="lifecycle">
@@ -4919,20 +5098,35 @@ async function showMemory(id) {
           <input name="valid_to" type="text" value="${escapeHtml(memory.valid_to || "")}" placeholder="留空表示不设截止" />
         </label>
       </div>
+      </details>
       <div class="memory-manage-actions">
         <button id="saveMemoryBtn" type="submit">保存这条记忆</button>
-        <button class="danger" data-delete="1" type="button">删除</button>
       </div>
-    </form>
+    </form></details>
+    <details class="memory-record-section"><summary data-memory-maintenance>删除与底层资料</summary>
+    <p class="item-meta">归档请在编辑区修改有效状态；删除会移除记录及其修改历史，仍需再次确认。</p>
+    <button class="danger" data-delete="1" type="button">删除这条记忆</button>
     <details class="memory-raw-detail">
       <summary>归属与元数据</summary>
       <h4>归属</h4>
       <pre>${escapeHtml(JSON.stringify({ subject: memory.subject, object: memory.object, scope: memory.scope, session_id: memory.session_id, group_id: memory.group_id }, null, 2))}</pre>
       <h4>元数据</h4>
       <pre>${escapeHtml(JSON.stringify(displayMemoryMetadata(memory), null, 2))}</pre>
-    </details>
+    </details></details>
   `;
   const form = $("#memoryManageForm");
+  $("[data-memory-back]").addEventListener("click", () => {
+    ($(".view.is-active .memory-browser") || $("#workspace")).scrollIntoView({block: "start"});
+  });
+  $("#memoryRevisions")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-revision-offset]");
+    if (!button) return;
+    await withButton(button, "读取中", async () => {
+      const result = await apiGet(`/memory?id=${encodeURIComponent(id)}&revision_offset=${Number(button.dataset.revisionOffset)}`);
+      if (state.activeMemoryId !== id) return;
+      $("#memoryRevisions").innerHTML = renderMemoryRevisions(result.memory.revisions, true);
+    });
+  });
   form?.addEventListener("submit", (event) => {
     event.preventDefault();
     withButton($("#saveMemoryBtn"), "保存中", () => saveMemoryManagement(id, form));
@@ -4941,7 +5135,7 @@ async function showMemory(id) {
     showInlineConfirmation({
       host: "#detailDrawer",
       title: "删除这条记忆",
-      message: "删除后会同时清理关联的向量、关系边和知识图谱边。",
+      message: "删除后会同时清理修改历史、关联的向量、关系边和知识图谱边。",
       confirmLabel: "确认删除",
       busyText: "正在删除记忆...",
       dangerous: true,
@@ -4953,6 +5147,23 @@ async function showMemory(id) {
       onCancel: () => showMemory(id),
     });
   });
+}
+
+function renderMemoryRevisions(history, open = false) {
+  if (!history?.total) return "";
+  const items = history.items || [];
+  const offset = Number(history.offset) || 0;
+  return `<details class="memory-raw-detail"${open ? " open" : ""}>
+    <summary>修改历史 · ${Number(history.total)} 次（历史版本不参与召回）</summary>
+    ${items.map(item => `<section class="memory-structured-block">
+      <b>第 ${Number(item.revision)} 次修改前</b>
+      <p class="item-meta">${escapeHtml(formatTime(item.created_at))} · ${escapeHtml(item.actor === "astrbot_admin" ? "后台手动修改" : item.actor)}</p>
+      <p style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(item.before?.content || "")}</p>
+      <details><summary>当时的证据与来源</summary><pre>${escapeHtml(JSON.stringify({ evidence: item.before?.evidence, source: item.before?.source_plugin, metadata: item.before?.metadata }, null, 2))}</pre></details>
+    </section>`).join("")}
+    ${offset ? `<button type="button" data-revision-offset="${Math.max(0, offset - 10)}">较新的修改</button>` : ""}
+    ${offset + items.length < history.total ? `<button type="button" data-revision-offset="${offset + items.length}">更早的修改</button>` : ""}
+  </details>`;
 }
 
 function displayMemoryMetadata(memory) {
@@ -5075,7 +5286,7 @@ async function saveMemoryManagement(id, form) {
       throw new Error("生效时间不能晚于失效时间");
     }
   }
-  await apiPost("/memory/update", {
+  const result = await apiPost("/memory/update", {
     id,
     memory_type: String(data.get("memory_type") || ""),
     content: String(data.get("content") || ""),
@@ -5091,9 +5302,17 @@ async function saveMemoryManagement(id, form) {
     durability: String(data.get("durability") || "normal"),
     sensitivity: String(data.get("sensitivity") || "private"),
   });
+  if (result?.updated !== true) throw new Error("保存结果未确认，请重新读取当前记录核对，不要重复提交。");
   showToast("这条记忆已保存");
-  await refreshAll();
+  // A completed write belongs to its original form; do not reopen it over another record.
+  if (state.activeMemoryId !== id || !form.isConnected) return;
   await showMemory(id);
+  try {
+    await loadStats();
+    if (state.activeMemoryId === id) await loadActiveView();
+  } catch (error) {
+    showToast("这条记忆已保存，但列表或统计暂未刷新；可稍后手动刷新。", "error");
+  }
 }
 
 function showInjectionLogDetail(payload) {
@@ -5172,12 +5391,49 @@ function clearDetail() {
   `;
 }
 
-function livingMemoryPathValue() {
-  const activeInputs = Array.from(document.querySelectorAll("#view-archive .archive-section.is-active .livingmemory-path"));
-  const filled = activeInputs.find((input) => input.value.trim());
-  if (filled) return filled.value.trim();
-  const fallbackInput = activeInputs[0] || $("#view-archive .livingmemory-path");
-  return fallbackInput?.value.trim() || "";
+function livingMemoryPathValue(kind = "import") {
+  return $(kind === "repair" ? "#livingMemoryRepairPath" : "#livingMemoryImportPath")?.value.trim() || "";
+}
+
+function archiveTransferFields(fields) {
+  return `<dl class="archive-transfer-fields">${fields.filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
+}
+
+function bindArchiveTransferPaths(host) {
+  const box = $(host);
+  box?.querySelectorAll("[data-use-portable-path]").forEach((button) => button.addEventListener("click", () => {
+    $("#portableArchivePath").value = button.dataset.usePortablePath;
+    $("#portableArchivePath").focus();
+    showToast("已填入路径；可先预览，不会自动导入");
+  }));
+  box?.querySelectorAll("[data-use-living-path]").forEach((button) => button.addEventListener("click", () => {
+    $("#livingMemoryImportPath").value = button.dataset.useLivingPath;
+    $("#livingMemoryImportPath").focus();
+    showToast("已填入导入来源；内容修复栏保持独立");
+  }));
+}
+
+function showArchiveTransferUnknown(host, path, error) {
+  const box = $(host);
+  if (!box) return;
+  box.hidden = false;
+  box.innerHTML = `<section class="archive-result-panel"><b>操作结果未确认</b>
+    <p>没有收到完整结果，不代表服务端未写入。不要重复提交；先在记忆列表与服务器记录中核对。再次预览文件只能确认其内容，不能证明上次操作已完成。</p>
+    ${archiveTransferFields([["请求来源", path || "自动扫描"]])}<p>${escapeHtml(error?.message || error || "结果缺失")}</p></section>`;
+  showToast("结果未确认，请先核对，不要重复提交", "error");
+}
+
+async function refreshAfterArchiveTransfer(host) {
+  try { await refreshAll(); return true; }
+  catch (error) {
+    const note = document.createElement("p");
+    note.dataset.transferRefresh = "";
+    note.className = "archive-transfer-warning";
+    note.textContent = `操作结果已返回，但统计或列表读取失败：${error?.message || error}。上方结果仍保留，无需重新提交。`;
+    $(host)?.append(note);
+    return false;
+  }
 }
 
 function sumLivingMemoryRows(tables = [], importable = true) {
@@ -5207,53 +5463,17 @@ function renderArchiveResultDetails(value) {
 
 function renderLivingMemoryPreview(report = {}) {
   const candidates = Array.isArray(report.candidates) ? report.candidates : [];
-  if (!candidates.length) {
-    return `
-      <section class="archive-result-panel">
-        <div class="archive-result-head">
-          <b>未找到 LivingMemory 数据库</b>
-          <span>可以填写数据库路径后重新预览。</span>
-        </div>
-        ${renderArchiveResultDetails(report)}
-      </section>
-    `;
-  }
-  const primary = candidates[0] || {};
-  const tables = Array.isArray(primary.tables) ? primary.tables : [];
-  const importableRows = sumLivingMemoryRows(tables, true);
-  const skippedRows = sumLivingMemoryRows(tables, false);
-  const importableTables = tables.filter((table) => table.importable);
-  const skippedTables = tables.filter((table) => !table.importable);
-  return `
-    <section class="archive-result-panel">
-      <div class="archive-result-head">
-        <b>LivingMemory 预览</b>
-        <span>${escapeHtml(primary.path || "未记录来源路径")}</span>
-      </div>
-      <div class="archive-result-grid">
-        ${archiveResultCard("可导入", `${importableRows} 条`, `${importableTables.length} 张表`, "teal")}
-        ${archiveResultCard("将跳过", `${skippedRows} 条`, "派生碎片或空表", "gold")}
-        ${archiveResultCard("候选库", `${candidates.length} 个`, candidates.length > 1 ? "默认导入第一项" : "已锁定来源", "blue")}
-      </div>
-      ${importableTables.length ? `
-        <div class="archive-table-list">
-          <b>将导入的表</b>
-          ${importableTables.slice(0, 6).map((table) => `
-            <span><strong>${escapeHtml(table.name || "-")}</strong><em>${escapeHtml(table.count || 0)} 行</em></span>
-          `).join("")}
-        </div>
-      ` : `<div class="empty-state">没有可导入的完整摘要表。</div>`}
-      ${skippedTables.length ? `
-        <div class="archive-table-list is-muted">
-          <b>跳过的碎片</b>
-          ${skippedTables.slice(0, 6).map((table) => `
-            <span><strong>${escapeHtml(table.name || "-")}</strong><em>${escapeHtml(table.note || "not_importable")}</em></span>
-          `).join("")}
-        </div>
-      ` : ""}
-      ${renderArchiveResultDetails(report)}
-    </section>
-  `;
+  return `<section class="archive-result-panel"><div class="archive-result-head"><b>LivingMemory 来源预览</b>
+    <span>${candidates.length ? `找到 ${candidates.length} 个候选库；原导入优先使用第一项，可将其他候选填入来源栏。` : "未找到 LivingMemory 数据库，可填写服务器路径后重新预览。"}</span></div>
+    <p class="archive-note">预览行数不等于最终导入数，单次上限与审核状态沿当前配置；空内容、重复内容及不支持的表按原规则处理。</p>
+    ${candidates.map((item, index) => {
+      const tables = Array.isArray(item.tables) ? item.tables : [];
+      return `<details class="archive-transfer-source" data-living-source ${index === 0 ? "open" : ""}>
+        <summary>${index + 1}. ${escapeHtml(item.path || "未记录来源")}<small>${item.error ? "无法读取" : `可导入 ${sumLivingMemoryRows(tables, true)} 行 · 跳过 ${sumLivingMemoryRows(tables, false)} 行`}</small></summary>
+        ${item.error ? `<p class="archive-transfer-warning">${escapeHtml(item.error)}</p>` : `<div class="archive-table-list">${tables.map((table) => `<span><strong>${escapeHtml(table.name || "-")}</strong><em>${escapeHtml(table.count || 0)} 行 · ${table.importable ? "可导入" : "跳过"}</em></span>`).join("")}</div>`}
+        <button type="button" data-use-living-path="${escapeHtml(item.path || "")}" ${!item.path || item.error ? "disabled" : ""}>将此库填入导入来源</button>
+      </details>`;
+    }).join("")}${renderArchiveResultDetails(report)}</section>`;
 }
 
 function renderLivingMemoryImportResult(result = {}) {
@@ -5274,6 +5494,8 @@ function renderLivingMemoryImportResult(result = {}) {
         <b>LivingMemory 导入完成</b>
         <span>${escapeHtml(result.source_path || "未记录来源路径")}</span>
       </div>
+      ${archiveTransferFields([["来源数据库", result.source_path], ["导入批次", result.batch_id], ["单次导入上限", result.import_limit]])}
+      <p class="archive-note">旧库导入是否备份沿当前配置；此接口不返回备份路径，请在服务器记录中核对，不把 JSONL 档案当成整库备份。</p>
       <div class="archive-result-grid">
         ${archiveResultCard("已导入", `${result.imported || 0} 条`, result.batch_id ? `批次 ${shortId(result.batch_id)}` : "", "teal")}
         ${archiveResultCard("异常跳过", `${result.skipped || 0} 条`, "空内容或无法识别", Number(result.skipped || 0) ? "gold" : "blue")}
@@ -5282,7 +5504,7 @@ function renderLivingMemoryImportResult(result = {}) {
       ${Array.isArray(result.importable_tables) && result.importable_tables.length ? `
         <div class="archive-table-list">
           <b>导入明细</b>
-          ${result.importable_tables.slice(0, 8).map((table) => `
+          ${result.importable_tables.map((table) => `
             <span><strong>${escapeHtml(table.name || "-")}</strong><em>${escapeHtml(table.imported || 0)} / ${escapeHtml(table.count || 0)}</em></span>
           `).join("")}
         </div>
@@ -5306,6 +5528,34 @@ function renderLivingMemoryRepairResult(result = {}) {
       ${renderArchiveResultDetails(result)}
     </section>
   `;
+}
+
+function renderPortableArchiveResult(value = {}, kind) {
+  const sum = (counts) => Object.values(counts || {}).reduce((total, count) => total + (Number(count) || 0), 0);
+  const importing = kind === "portable-import";
+  const skipped = sum(value.skipped);
+  const errors = Array.isArray(value.errors) ? value.errors : [];
+  const warnings = Array.isArray(value.warnings) ? value.warnings : [];
+  const title = importing ? (skipped || errors.length ? "导入完成，部分记录未导入" : "档案已导入")
+    : kind === "portable-preview" ? "档案预览" : "档案已导出";
+  return `<section class="archive-result-panel">
+    <div class="archive-result-head"><b>${escapeHtml(title)}</b><span>修订历史仅供查阅，不重新进入记忆检索。</span></div>
+    ${archiveTransferFields([["格式", value.format ? `${value.format}${value.version ? ` v${value.version}` : ""}` : ""], ["导出时间", value.exported_at], ["导入批次", value.batch_id]])}
+    ${value.path ? `<div class="archive-transfer-path"><span>服务器文件位置</span><code data-archive-path>${escapeHtml(value.path)}</code>${kind === "portable-export" ? `<button type="button" data-use-portable-path="${escapeHtml(value.path)}">填入预览路径</button>` : ""}</div>` : ""}
+    ${value.backup ? `${archiveTransferFields([["导入前记忆库备份", value.backup]])}<p class="archive-note">这是服务器上当前 MC 单库备份，不是异地备份或整个 TLS 跨库快照。</p>` : ""}
+    <div class="archive-result-grid">
+      ${archiveResultCard(importing ? "成功核对 / 导入" : "资料", sum(importing ? value.imported : value.counts), "条", "blue")}
+      ${archiveResultCard("修订历史", Number(value.revision_count) || 0, "条（包含已存在的同一修订）", "blue")}
+      ${importing ? archiveResultCard("跳过", skipped, "保留当前资料，查看下方原因", "blue") : ""}
+    </div>
+    <details class="archive-transfer-counts"><summary>各类资料数量</summary>
+      ${archiveTransferFields(Object.entries(importing ? value.imported || {} : value.counts || {}).map(([key, count]) => [({memory:"记忆",identity:"身份",relationship:"关系",timeline:"时间线",acl_rule:"权限规则",acl_policy:"权限策略"})[key] || key, count]))}
+    </details>
+    ${value.conflict_policy ? `<p>${escapeHtml(value.conflict_policy)}</p>` : ""}
+    ${warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}
+    ${errors.length ? `<ul>${errors.map((error) => `<li>${escapeHtml(error)}</li>`).join("")}</ul>` : ""}
+    ${renderArchiveResultDetails(value)}
+  </section>`;
 }
 
 function renderGenericArchiveResult(value = {}, title = "执行结果") {
@@ -5394,6 +5644,8 @@ function showArchiveResult(value, kind = "generic", host = "#importResult") {
     box.innerHTML = renderLivingMemoryRepairResult(value);
   } else if (kind === "diagnostics") {
     box.innerHTML = renderOperationsDiagnostics(value);
+  } else if (["portable-export", "portable-preview", "portable-import"].includes(kind)) {
+    box.innerHTML = renderPortableArchiveResult(value, kind);
   } else {
     box.innerHTML = renderGenericArchiveResult(value, kind === "maintenance" ? "维护结果" : "执行结果");
   }
@@ -5480,7 +5732,8 @@ function portableArchivePath() {
 
 async function exportPortableArchive() {
   const data = await apiPost("/data/export", {});
-  showArchiveResult(data.result, "portable-export");
+  showArchiveResult(data.result, "portable-export", "#portableArchiveResult");
+  bindArchiveTransferPaths("#portableArchiveResult");
   showToast("可移植档案已导出");
 }
 
@@ -5492,7 +5745,7 @@ async function previewPortableArchive() {
   }
   const params = new URLSearchParams({ path });
   const data = await apiGet(`/data/import/preview?${params.toString()}`);
-  showArchiveResult(data.result, "portable-preview");
+  showArchiveResult(data.result, "portable-preview", "#portableArchiveResult");
   showToast("可移植档案预览已生成");
 }
 
@@ -5503,9 +5756,9 @@ async function importPortableArchive() {
     return;
   }
   showInlineConfirmation({
-    host: "#importResult",
+    host: "#portableArchiveResult",
     title: "导入可移植档案",
-    message: `将从 ${path} 导入记忆、身份、关系、时间线和 ACL；执行前会自动备份当前数据库。`,
+    message: `将从 ${path} 导入记忆及修订、身份、关系、时间线和 ACL；执行前自动备份。同ID记忆冲突会跳过，不覆盖当前修改。`,
     confirmLabel: "执行导入",
     busyText: "正在导入可移植档案...",
     onConfirm: () => executePortableArchiveImport(path),
@@ -5513,10 +5766,17 @@ async function importPortableArchive() {
 }
 
 async function executePortableArchiveImport(path) {
-  const data = await apiPost("/data/import/run", { path });
-  await refreshAll();
-  showArchiveResult(data.result, "portable-import");
-  showToast("可移植档案已导入");
+  const host = "#portableArchiveResult";
+  let result;
+  try {
+    result = (await apiPost("/data/import/run", { path })).result;
+    if (!result?.batch_id || !result.imported || !result.skipped || !Array.isArray(result.errors)) throw new Error("导入收据不完整");
+  } catch (error) { showArchiveTransferUnknown(host, path, error); return; }
+  showArchiveResult(result, "portable-import", host);
+  const refreshed = await refreshAfterArchiveTransfer(host);
+  const skipped = Object.values(result.skipped).reduce((n, v) => n + (Number(v) || 0), 0);
+  showToast(skipped || result.errors.length ? "导入完成，部分记录未导入；请查看原因"
+    : refreshed ? "可移植档案已导入" : "档案已导入，统计读取失败；结果已保留", skipped || result.errors.length || !refreshed ? "error" : "success");
 }
 
 function localDateTimeInputValue(value) {
@@ -5773,33 +6033,54 @@ function historicalChatBatchStateLabel(value) {
 async function loadHistoricalChatBatchList() {
   const target = $("#historicalChatRecentList");
   if (!target) return;
-  target.innerHTML = '<div class="empty-state">正在读取最近任务...</div>';
-  let data;
   try {
-    data = await apiGet("/conversation-import/status");
+    const data = await apiGet("/conversation-import/status");
+    if (!Array.isArray(data.result?.batches)) throw new Error("未返回完整批次列表");
+    state.historicalChatBatches = data.result.batches;
+    renderHistoricalChatBatchList();
   } catch (error) {
-    target.innerHTML = panelError(error);
+    showToast(`批次列表读取失败；保留上次列表。${error.message || ""}`, "error");
+    if (!state.historicalChatBatches.length) target.innerHTML = panelError(error);
     target.querySelector("[data-retry-active]")?.addEventListener("click", loadHistoricalChatBatchList);
-    return;
   }
-  const batches = data.result?.batches || [];
-  if (!batches.length) {
-    target.innerHTML = '<div class="empty-state">还没有历史聊天导入任务。</div>';
-    return;
+}
+
+function renderHistoricalChatBatchList() {
+  const target = $("#historicalChatRecentList");
+  if (!target) return;
+  const query = $("#historicalChatBatchQuery"), filter = $("#historicalChatBatchFilter");
+  if (query) {
+    query.value = state.historicalChatBatchQuery;
+    query.oninput = () => { state.historicalChatBatchQuery = query.value; state.historicalChatBatchPage = 0; renderHistoricalChatBatchList(); };
   }
-  target.innerHTML = batches.map((batch) => `
+  if (filter) {
+    const values = [...new Set(state.historicalChatBatches.map(b => b.state))];
+    filter.innerHTML = '<option value="all">全部状态</option>' + values.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(historicalChatBatchStateLabel(value))}</option>`).join("");
+    if (!values.includes(state.historicalChatBatchFilter)) state.historicalChatBatchFilter = "all";
+    filter.value = state.historicalChatBatchFilter;
+    filter.onchange = () => { state.historicalChatBatchFilter = filter.value; state.historicalChatBatchPage = 0; renderHistoricalChatBatchList(); };
+  }
+  const needle = state.historicalChatBatchQuery.trim().toLocaleLowerCase();
+  const rows = state.historicalChatBatches.filter(b => (state.historicalChatBatchFilter === "all" || b.state === state.historicalChatBatchFilter)
+    && [b.id, b.source_name, b.user_id, b.user_name, b.bot_id, b.bot_name, b.session_id].join(" ").toLocaleLowerCase().includes(needle));
+  const pages = Math.max(1, Math.ceil(rows.length / 8));
+  state.historicalChatBatchPage = Math.min(state.historicalChatBatchPage, pages - 1);
+  const selectedOutside = state.historicalChatBatchId && !rows.some(b => b.id === state.historicalChatBatchId);
+  target.innerHTML = `<p class="import-window-note">本次读取 ${number(state.historicalChatBatches.length)} 个留存批次，匹配 ${number(rows.length)} 个。按服务端更新时间排列；查找和翻页不会启动导入。${selectedOutside ? "当前任务在筛选外，详情仍保留。" : ""}</p>`
+    + rows.slice(state.historicalChatBatchPage * 8, (state.historicalChatBatchPage + 1) * 8).map(batch => `
     <button class="chat-import-recent-item${batch.id === state.historicalChatBatchId ? " is-active" : ""}" data-chat-import-batch="${escapeHtml(batch.id)}" type="button">
-      <span><b>${escapeHtml(batch.source_name || "历史聊天")}</b><small>${escapeHtml(formatTime(batch.created_at || batch.updated_at) || "时间未知")}</small></span>
-      <span><strong>${escapeHtml(historicalChatBatchStateLabel(batch.state))}</strong><small>${number(batch.completed_segments)}/${number(batch.total_segments)} 片段</small></span>
-    </button>
-  `).join("");
-  $$('[data-chat-import-batch]').forEach((button) => {
-    button.addEventListener("click", () => withBusy("正在读取任务状态...", () => loadHistoricalChatBatch(button.dataset.chatImportBatch)));
-  });
+      <span><b>${escapeHtml(batch.source_name || "历史聊天")}</b><small>${escapeHtml(batch.user_name || batch.user_id || "未记录对象")} · ${escapeHtml(batch.bot_name || batch.bot_id || "未记录 Bot")}</small><small>${escapeHtml(formatTime(batch.updated_at || batch.created_at))}</small></span>
+      <span><strong>${escapeHtml(historicalChatBatchStateLabel(batch.state))}</strong><small>${escapeHtml(shortId(batch.id))}</small></span>
+    </button>`).join("")
+    + (!rows.length ? '<div class="empty-state">没有匹配的批次。</div>' : "")
+    + `<div class="import-pagination"><button data-import-page="prev" type="button" ${!state.historicalChatBatchPage ? "disabled" : ""}>上一页</button><span>${state.historicalChatBatchPage + 1} / ${pages}</span><button data-import-page="next" type="button" ${state.historicalChatBatchPage >= pages - 1 ? "disabled" : ""}>下一页</button></div>`;
+  target.querySelectorAll('[data-chat-import-batch]').forEach(button => button.addEventListener("click", () => withBusy("正在读取任务状态...", () => loadHistoricalChatBatch(button.dataset.chatImportBatch))));
+  target.querySelectorAll('[data-import-page]').forEach(button => button.addEventListener("click", () => { state.historicalChatBatchPage += button.dataset.importPage === "next" ? 1 : -1; renderHistoricalChatBatchList(); }));
 }
 
 async function loadHistoricalChatBatch(batchId) {
   state.historicalChatBatchId = String(batchId || "");
+  if (state.historicalChatOutcomes.get(state.historicalChatBatchId)?.unknown) return reconcileHistoricalChatAction();
   const result = await refreshHistoricalChatStatus();
   showHistoricalChatOutput(Boolean(result));
   if (!new Set(["completed", "completed_with_warnings", "rolled_back", "paused", "failed"]).has(result?.batch?.state)) {
@@ -6504,6 +6785,7 @@ function prepareHistoricalChatRebind() {
 }
 
 async function executeHistoricalChatRebind(context) {
+  clearConversationImportResult();
   const data = await apiPost("/conversation-import/rebind", {
     batch_id: state.historicalChatBatchId,
     user_id: context.target_id,
@@ -6524,118 +6806,74 @@ async function executeHistoricalChatRebind(context) {
   );
 }
 
+function historicalChatRollbackSummary(report) {
+  if (!report || report.state !== "rolled_back") return "记忆库已标记回滚；旧批次没有完整回滚结果，关系候选需人工核对。";
+  const relationship = report.relationship_observations || {};
+  const complete = report.rollback_status === "completed" && ["completed", "not_needed"].includes(relationship.status);
+  const label = complete ? "本批已回滚" : "回滚部分完成：记忆库已回滚";
+  return `${label}。移除记忆 ${number(report.deleted?.memories)}、时间线 ${number(report.deleted?.timeline)}、片段 ${number(report.deleted?.segments)}。${relationship.message || "关系候选结果未确认，请人工核对。"}`;
+}
+
 function renderHistoricalChatStatus(result) {
-  let box = $("#historicalChatStatus");
-  if (!box) {
-    const panel = $("#historicalChatPanel");
-    if (!panel) return;
-    panel.hidden = false;
-    panel.innerHTML = `
-      <div class="chat-import-section-head">
-        <span><b>当前历史对话任务</b><small>可修正旧批次归属、继续任务或整批回滚</small></span>
-        <button id="historicalChatNewImportBtn" class="subtle" type="button">导入另一份记录</button>
-      </div>
-      <div id="historicalChatStatus"></div>
-    `;
-    $("#historicalChatNewImportBtn")?.addEventListener("click", resetHistoricalChatImportView);
-    box = $("#historicalChatStatus");
-  }
-  const batch = result.batch || {};
-  const total = Number(batch.total_segments || 0);
-  const completed = Number(batch.completed_segments || 0);
-  const segmentProgress = total > 0 ? Math.min(1, completed / total) : 0;
-  const statusCounts = result.segment_status || {};
-  const memoryCounts = batch.stats?.memory_counts || {};
-  const recentSegments = Array.isArray(result.recent_segments) ? result.recent_segments : [];
-  const errorSegments = recentSegments.filter((item) => item.error);
-  const stateLabel = {
-    prepared: "已准备", running: "整理中", reconciling: "跨片段去重整理中", enriching: "正在补充详细回忆", indexing: "正在建立向量索引", paused: "已暂停", failed: "失败",
-    completed: "已完成", completed_with_warnings: "完成但有警告", rolled_back: "已回滚",
-  }[batch.state] || batch.state || "未知";
-  const isFinished = ["completed", "completed_with_warnings"].includes(batch.state);
-  const progress = isFinished
-    ? 100
-    : batch.state === "indexing"
-      ? 94
-      : batch.state === "enriching"
-        ? 86
-      : batch.state === "reconciling"
-        ? 78
-        : Math.round(segmentProgress * 70);
-  const identityLinks = batch.stats?.identity_links || {};
-  const identityRebind = batch.stats?.identity_rebind || {};
-  const relationshipRebind = batch.stats?.relationship_observation_rebind || {};
-  const summaryPerspective = batch.stats?.summary_perspective || {};
-  const detailQuality = batch.stats?.detail_quality || {};
-  showHistoricalChatOutput(true);
-  setHistoricalChatStep(3, isFinished);
-  const stageOrder = [
-    { key: "archive", label: "原文归档", done: Boolean(batch.id), active: false },
-    { key: "segments", label: "片段整理", done: total > 0 && completed >= total, active: batch.state === "running" },
-    { key: "reconcile", label: "跨片段去重", done: ["enriching", "indexing", "completed", "completed_with_warnings"].includes(batch.state), active: batch.state === "reconciling" },
-    { key: "detail", label: "细节补全", done: Number(detailQuality.version || 0) > 0, active: batch.state === "enriching" },
-    { key: "embedding", label: "向量收尾", done: isFinished, active: batch.state === "indexing" },
-  ];
+  const panel = $("#historicalChatPanel");
+  if (!panel) return;
+  state.historicalChatBatchView = result;
+  panel.hidden = false;
+  panel.innerHTML = '<div class="chat-import-section-head"><span><b>当前导入任务</b><small>阅读来源、当前进度与本批操作结果</small></span><button id="historicalChatNewImportBtn" class="subtle" type="button">导入另一份记录</button></div><div id="historicalChatStatus"></div>';
+  $("#historicalChatNewImportBtn").addEventListener("click", resetHistoricalChatImportView);
+  const box = $("#historicalChatStatus"), batch = result.batch || {};
+  const completed = Number(batch.completed_segments || 0), total = Number(batch.total_segments || 0);
+  const isFinished = ["completed", "completed_with_warnings"].includes(batch.state), rolledBack = batch.state === "rolled_back";
+  const statusCounts = result.segment_status || {}, memoryCounts = batch.stats?.memory_counts || {};
+  const errors = (result.recent_segments || []).filter(item => item.error);
+  const progress = isFinished ? 100 : ({indexing:94,enriching:86,reconciling:78}[batch.state] || Math.round((total ? Math.min(1, completed / total) : 0) * 70));
+  const identityLinks = batch.stats?.identity_links || {}, identityRebind = batch.stats?.identity_rebind || {};
+  const relationshipRebind = batch.stats?.relationship_observation_rebind || {}, summaryPerspective = batch.stats?.summary_perspective || {}, detailQuality = batch.stats?.detail_quality || {};
+  const report = batch.stats?.rollback_report;
+  const outcome = rolledBack ? historicalChatRollbackSummary(report) : batch.state === "completed_with_warnings" ? "整理完成，但仍有警告。请核对任务提示和诊断；不能据此认定全部内容均已建立索引或可召回。" : batch.state === "completed" ? "整理完成。关系候选需在陪伴管理中人工确认；记忆是否使用仍受范围、有效状态和检索规则约束。" : batch.state === "paused" ? "已登记暂停。正在进行的片段可能继续收尾；不是撤销已经写入的内容。" : "当前任务尚未完成，可按需要查看进度或维护。";
+  showHistoricalChatOutput(true); setHistoricalChatStep(3, isFinished);
   box.innerHTML = `
     <div class="chat-import-progress">
-      <div class="chat-import-progress-head">
-        <span><b>${escapeHtml(stateLabel)}</b><small>批次 ${escapeHtml(shortId(batch.id))}</small></span>
-        <strong>${progress}%</strong>
-      </div>
-      <progress max="100" value="${progress}" aria-label="历史对话整理进度 ${progress}%"></progress>
-      <div class="chat-import-stage-track">
-        ${stageOrder.map((item) => `<span class="${item.done ? "is-done" : ""} ${item.active ? "is-active" : ""}"><i></i>${escapeHtml(item.label)}</span>`).join("")}
-      </div>
-      <div class="chat-import-status-summary">
-        <span><b>${number(completed)}/${number(total)}</b><small>已整理片段</small></span>
-        <span><b>${number(batch.stats?.message_count || 0)}</b><small>永久原始消息</small></span>
-        <span><b>${number(memoryCounts.total ?? batch.summary_memory_count ?? 0)}</b><small>本批正式记忆</small></span>
-        <span><b>${number(batch.relationship_observation_count)}</b><small>关系待确认</small></span>
-      </div>
-      ${Object.keys(statusCounts).length ? `
-        <div class="chat-import-status-chips">
-          ${Object.entries(statusCounts).map(([key, value]) => `<span data-status="${escapeHtml(key)}">${escapeHtml(historicalChatSegmentStatusLabel(key))} ${number(value)}</span>`).join("")}
-        </div>
-      ` : ""}
-      ${memoryCounts.total != null ? `
-        <div class="chat-import-memory-breakdown">
-          <b>生成结果</b>
-          <span>片段回忆 ${number(memoryCounts.conversation_summary)}</span>
-          <span>重要事件 ${number(memoryCounts.important_event)}</span>
-          <span>日摘要 ${number(memoryCounts.daily_digest)}</span>
-          <span>稳定事实 ${number(memoryCounts.stable_fact)}</span>
-          <span>相处经历摘要 ${number(memoryCounts.relationship_phase_summary)}</span>
-        </div>
-      ` : ""}
-      ${batch.stats?.embedding?.enabled ? `<small class="chat-import-embedding-note">向量索引 ${number(batch.stats.embedding.indexed)}/${number(batch.stats.embedding.eligible)} · ${escapeHtml(batch.stats.embedding.status || "处理中")}</small>` : ""}
-      ${identityRebind.to ? `<div class="chat-import-callout is-safe"><b>本批归属已修正</b><span>已合并到 ${escapeHtml(identityRebind.to.user_name || identityRebind.to.user_id || "目标用户")} 的私聊窗口，不影响其他批次和现有记忆。</span></div>` : ""}
+      <div class="chat-import-progress-head"><span><b>${escapeHtml(historicalChatBatchStateLabel(batch.state))}</b><small>${escapeHtml(batch.source_name || "未记录来源")}</small></span><small>${escapeHtml(formatTime(batch.updated_at))}</small></div>
+      <div data-import-outcome class="chat-import-callout ${batch.state === "completed" || report?.rollback_status === "completed" ? "is-safe" : "is-warning"}"><span>${escapeHtml(outcome)}</span></div>
+      ${batch.error ? `<div class="chat-import-callout is-warning"><b>任务提示</b><span>${escapeHtml(batch.error)}</span></div>` : ""}
+      ${!rolledBack ? `<div class="import-stage"><span>阶段进度（估算） ${progress}% · 已整理 ${number(completed)}/${number(total)} 个片段</span><progress max="100" value="${progress}" aria-label="估算阶段进度"></progress></div>` : ""}
+      <details data-import-provenance class="import-detail"><summary>来源与目标私聊</summary><dl>${[
+        ["来源文件",batch.source_name],["批次",batch.id],["用户",[batch.user_name,batch.user_id].filter(Boolean).join(" · ")],["Bot",[batch.bot_name,batch.bot_id].filter(Boolean).join(" · ")],
+        ["会话",batch.session_id],["平台 / 范围",[batch.platform,batch.scope].filter(Boolean).join(" / ")],["创建时间",formatTime(batch.created_at)],["更新时间",formatTime(batch.updated_at)],["导入前备份",batch.backup_path]
+      ].map(([label,value])=>`<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value || "未记录")}</dd></div>`).join("")}</dl><p>备份路径仅表示原批次记录，不证明文件目前仍存在。打开运行中任务会沿原接口接续中断的工作；“仅核对记录”不接续工作。</p></details>
+      <details data-import-diagnostics class="import-detail"><summary>导入时统计与处理记录</summary><p>以下保留批次生成时的统计和处理记录，不代表当前仍可用或已召回；回滚后也保留这些来源记录。</p>
+        <div class="chat-import-status-summary"><span><b>${number(batch.stats?.message_count)}</b><small>导入时消息数</small></span><span><b>${number(memoryCounts.total ?? batch.summary_memory_count)}</b><small>生成记忆统计</small></span><span><b>${number(batch.relationship_observation_count)}</b><small>批次记录的关系候选</small></span></div>
+        <div class="chat-import-memory-breakdown"><span>片段回忆 ${number(memoryCounts.conversation_summary)}</span><span>重要事件 ${number(memoryCounts.important_event)}</span><span>日摘要 ${number(memoryCounts.daily_digest)}</span><span>稳定事实 ${number(memoryCounts.stable_fact)}</span><span>相处经历摘要 ${number(memoryCounts.relationship_phase_summary)}</span></div>
+        ${Object.entries(statusCounts).map(([key,value])=>`<span class="import-segment">${escapeHtml(historicalChatSegmentStatusLabel(key))} ${number(value)}</span>`).join(" ")}
+        ${batch.stats?.embedding?.enabled ? `<p>向量索引 ${number(batch.stats.embedding.indexed)}/${number(batch.stats.embedding.eligible)} · ${escapeHtml(batch.stats.embedding.status || "处理中")}</p>` : ""}
+              ${identityRebind.to ? `<div class="chat-import-callout is-safe"><b>本批归属已修正</b><span>已合并到 ${escapeHtml(identityRebind.to.user_name || identityRebind.to.user_id || "目标用户")} 的私聊窗口，不影响其他批次和现有记忆。</span></div>` : ""}
       ${["failed", "unsupported", "completed_with_warnings"].includes(relationshipRebind.status) ? `<div class="chat-import-callout is-warning"><b>关系候选需人工核对</b><span>${escapeHtml(relationshipRebind.message || "记忆归属已修正，但陪伴插件中的关系候选未完全自动移动。")}</span></div>` : ""}
       ${Number(identityLinks.version || 0) > 0 ? `<div class="chat-import-callout is-safe"><b>私聊归属已统一</b><span>本批记忆已合并到用户 ${escapeHtml(identityLinks.target_user_id || batch.user_id || "-")} 的现有私聊窗口${Number(identityLinks.repaired_entities || 0) > 0 ? `，修复 ${number(identityLinks.repaired_entities)} 条实体关联` : ""}。</span></div>` : ""}
       ${Number(summaryPerspective.version || 0) > 0 ? `<div class="chat-import-callout is-safe"><b>记忆视角已校正</b><span>可召回正文统一使用明确称呼的第三人称摘要，不会把用户的“我”误认成 Bot。</span></div>` : ""}
       ${Number(detailQuality.version || 0) > 0 ? `<div class="chat-import-callout is-safe"><b>详细回忆已整理</b><span>片段回忆 ${number(detailQuality.conversation_summaries_enriched ?? detailQuality.conversation_summaries ?? batch.summary_memory_count)}/${number(detailQuality.conversation_summaries ?? batch.summary_memory_count)}，日摘要 ${number(detailQuality.daily_digests_enriched ?? detailQuality.daily_digests ?? memoryCounts.daily_digest)}/${number(detailQuality.daily_digests ?? memoryCounts.daily_digest)}；事件与稳定事实继续保持原子化，避免重复和混淆。</span></div>` : ""}
-      ${batch.error ? `<div class="chat-import-callout is-warning"><b>任务提示</b><span>${escapeHtml(batch.error)}</span></div>` : ""}
-      ${errorSegments.length ? `
-        <details class="chat-import-error-details">
-          <summary>查看最近失败片段（${number(errorSegments.length)}）</summary>
-          ${errorSegments.map((item) => `<p><b>片段 ${number(Number(item.segment_index || 0) + 1)}</b><span>${escapeHtml(item.error)}</span></p>`).join("")}
-        </details>
-      ` : ""}
-      ${isFinished ? `<div class="chat-import-callout is-safe"><b>可以开始使用了</b><span>长期记忆已写入；关系候选仍需在陪伴插件关系网页人工确认。</span></div>` : ""}
-      ${historicalChatRebindPanel(batch)}
+
+        ${errors.map(item=>`<p>片段 ${number(Number(item.segment_index || 0)+1)} · ${escapeHtml(item.error)}</p>`).join("")}
+      </details>
       <div class="chat-import-primary-actions">
         ${batch.state === "running" ? '<button id="historicalChatPauseBtn" type="button">暂停</button>' : ""}
-        ${["paused", "failed", "prepared"].includes(batch.state) ? '<button id="historicalChatResumeBtn" type="button">恢复</button>' : ""}
-        ${!["rolled_back"].includes(batch.state) ? '<button id="historicalChatRefreshBtn" class="subtle" type="button">立即刷新</button>' : ""}
-        ${batch.state !== "rolled_back" ? '<button id="historicalChatRollbackBtn" class="danger subtle" type="button">整批回滚</button>' : ""}
+        ${["paused","failed","prepared"].includes(batch.state) ? '<button id="historicalChatResumeBtn" type="button">恢复</button>' : ""}
+        ${!rolledBack ? '<button id="historicalChatRefreshBtn" class="subtle" type="button">读取任务进度</button>' : ""}
+        <button data-import-reconcile class="subtle" type="button">仅核对记录</button>
       </div>
-    </div>
-  `;
+      <details data-import-maintenance class="import-detail"><summary>归属修正与回滚</summary><p>回滚删除本批记忆库记录，并尝试移除本批待确认关系观察。已确认关系、原始文件和备份不在清理范围。记忆库和关系资料分别处理，可能部分完成；不撤回聊天消息。</p>
+        ${historicalChatRebindPanel(batch)}
+        ${!rolledBack ? '<button id="historicalChatRollbackBtn" class="danger subtle" type="button">整批回滚</button>' : '<p>已回滚批次没有重复回滚入口。部分结果请在对应资料中核对。</p>'}
+      </details>
+    </div>`;
   $("#historicalChatPauseBtn")?.addEventListener("click", () => withBusy("正在暂停...", pauseHistoricalChatImport));
   $("#historicalChatResumeBtn")?.addEventListener("click", () => withBusy("正在恢复...", resumeHistoricalChatImport));
-  $("#historicalChatRefreshBtn")?.addEventListener("click", () => withButton($("#historicalChatRefreshBtn"), "刷新中", refreshHistoricalChatStatus));
+  $("#historicalChatRefreshBtn")?.addEventListener("click", () => withBusy("正在读取进度...", refreshHistoricalChatStatus));
+  box.querySelector('[data-import-reconcile]')?.addEventListener("click", () => withBusy("正在核对批次记录...", reconcileHistoricalChatAction));
   $("#historicalChatRollbackBtn")?.addEventListener("click", prepareHistoricalChatRollback);
   $("#historicalChatRebindContext")?.addEventListener("change", updateHistoricalChatRebindButton);
   $("#historicalChatRebindBtn")?.addEventListener("click", prepareHistoricalChatRebind);
+  renderHistoricalChatActionResult();
 }
 
 function resetHistoricalChatImportView() {
@@ -6651,47 +6889,104 @@ function resetHistoricalChatImportView() {
   document.querySelector(`[data-import-source="${conversationImportSource()}"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-async function pauseHistoricalChatImport() {
-  const data = await apiPost("/conversation-import/pause", { batch_id: state.historicalChatBatchId });
-  renderHistoricalChatStatus(data.result || {});
-  stopHistoricalChatPoll();
-  showToast("导入将在当前片段完成后暂停");
+function renderHistoricalChatActionResult() {
+  const outcome = state.historicalChatOutcomes.get(state.historicalChatBatchId);
+  const host = $("#conversationImportResult");
+  if (!host) return;
+  // A status read must not erase an unsubmitted confirmation.
+  if (host.querySelector('[data-inline-confirm]')) return;
+  if (!outcome) { host.hidden = true; host.innerHTML = ""; return; }
+  host.hidden = false;
+  host.innerHTML = `<div data-import-action-result role="status" class="chat-import-callout ${outcome.unknown || outcome.warning ? "is-warning" : "is-safe"}"><span>${escapeHtml(outcome.message)}</span></div>`;
+  if (outcome.unknown) {
+    ['#historicalChatPauseBtn','#historicalChatResumeBtn','#historicalChatRollbackBtn','#historicalChatRebindBtn','#historicalChatRefreshBtn','#historicalChatRebindContext'].forEach(selector => { const control = $(selector); if (control) control.disabled = true; });
+  }
 }
 
-async function resumeHistoricalChatImport() {
-  const data = await apiPost("/conversation-import/resume", { batch_id: state.historicalChatBatchId });
-  renderHistoricalChatStatus(data.result || {});
-  scheduleHistoricalChatPoll();
-  showToast("历史对话整理已恢复");
+async function reconcileHistoricalChatAction() {
+  const id = state.historicalChatBatchId, previous = state.historicalChatOutcomes.get(id);
+  try {
+    // No batch_id: the original list read does not repair legacy batches or
+    // restart workers, unlike the detail status endpoint.
+    const data = await apiGet("/conversation-import/status");
+    if (!Array.isArray(data.result?.batches)) throw new Error("批次列表未完整返回");
+    state.historicalChatBatches = data.result.batches;
+    renderHistoricalChatBatchList();
+    const batch = data.result.batches.find(item => item.id === id);
+    if (!batch) throw new Error("列表未找到该批次，操作结果仍需核对");
+    const terminal = ["completed","completed_with_warnings","rolled_back"].includes(batch.state);
+    const resolved = !previous?.unknown || (previous.kind === "rollback" ? batch.state === "rolled_back" : previous.kind === "pause" ? batch.state === "paused" || terminal : ["running","reconciling","enriching","indexing"].includes(batch.state) || terminal);
+    const message = `当前批次：${historicalChatBatchStateLabel(batch.state)}。${batch.state === "rolled_back" ? historicalChatRollbackSummary(batch.stats?.rollback_report) : "已核对保存的记录，未启动工作。"}${resolved ? "" : "先前操作结果仍未确认，请稍后仅核对记录；不要重复提交。"}`;
+    state.historicalChatOutcomes.set(id, {kind:previous?.kind, unknown:!resolved, warning:!resolved || batch.stats?.rollback_report?.rollback_status === "partial", message});
+    if (state.historicalChatBatchId === id) renderHistoricalChatStatus({batch});
+    return {batch};
+  } catch (error) {
+    state.historicalChatOutcomes.set(id, {...previous, warning:true, message:`${previous?.message || "未更改任务。"} 记录读取失败：${error.message || "未知错误"}。可使用“仅核对记录”，不会自动重试操作。`});
+    if (state.historicalChatBatchId === id) renderHistoricalChatActionResult();
+    return null;
+  }
 }
+
+async function historicalChatControl(kind, id = state.historicalChatBatchId) {
+  if (!id || state.historicalChatOutcomes.get(id)?.unknown) return;
+  clearConversationImportResult();
+  stopHistoricalChatPoll();
+  let result;
+  try {
+    const data = await apiPost(`/conversation-import/${kind}`, {batch_id:id});
+    result = data.result;
+    const returnedId = kind === "rollback" ? result?.batch_id : result?.batch?.id;
+    if (returnedId !== id || (kind === "rollback" ? result?.state !== "rolled_back" : !result?.batch?.state)) throw new Error("接口未返回完整批次结果");
+    if (kind === "rollback" && !["memories", "timeline", "segments"].every(key => Number.isInteger(result.deleted?.[key]) && result.deleted[key] >= 0)) throw new Error("回滚结果缺少已处理记录数量");
+  } catch (error) {
+    state.historicalChatOutcomes.set(id, {kind, unknown:true, warning:true, message:`操作结果未确认：${error.message || "未收到结果"}。请先“仅核对记录”，不会自动重试提交。`});
+    if (state.historicalChatBatchId === id) renderHistoricalChatActionResult();
+    return;
+  }
+  if (kind === "rollback") {
+    const old = state.historicalChatBatchView?.batch || {};
+    state.historicalChatOutcomes.set(id, {kind, warning:result.rollback_status !== "completed", message:historicalChatRollbackSummary(result)});
+    if (state.historicalChatBatchId === id) {
+      renderHistoricalChatStatus({batch:{...old,id,state:"rolled_back",completed_segments:0,summary_memory_count:0,relationship_observation_count:0,stats:{...old.stats,rollback_report:result}}});
+      await reconcileHistoricalChatAction();
+    }
+    return;
+  }
+  const current = result.batch.state;
+  const active = ["running","reconciling","enriching","indexing"].includes(current);
+  const message = kind === "pause" && current === "paused" ? "已暂停；当前片段可能继续收尾。" : kind === "resume" && active ? "已恢复，任务按原后台流程继续。" : `当前为${historicalChatBatchStateLabel(current)}，未重新启动或改变终态。`;
+  state.historicalChatOutcomes.set(id, {kind, message});
+  if (state.historicalChatBatchId === id) {
+    renderHistoricalChatStatus(result);
+    if (active) scheduleHistoricalChatPoll();
+    showToast(message);
+  }
+}
+
+async function pauseHistoricalChatImport() { return historicalChatControl("pause"); }
+async function resumeHistoricalChatImport() { return historicalChatControl("resume"); }
 
 function prepareHistoricalChatRollback() {
+  const id = state.historicalChatBatchId;
   showInlineConfirmation({
-    host: "#conversationImportResult",
-    title: "回滚历史对话导入",
-    message: "将删除该批次写入的时间线、片段记忆、重要事件、向量和关系网待确认观察；其它记忆不受影响。",
-    confirmLabel: "确认回滚",
-    busyText: "正在整批回滚...",
-    dangerous: true,
-    onConfirm: rollbackHistoricalChatImport,
+    host: "#conversationImportResult", title: "回滚历史对话导入",
+    message: `将回滚批次 ${shortId(id)} 的记忆库记录，并尝试移除本批待确认关系观察；已确认关系、原始文件和备份不删除。其它批次不受影响，可能部分完成。`,
+    confirmLabel: "确认回滚", busyText: "正在整批回滚...", dangerous: true,
+    onConfirm: () => historicalChatControl("rollback", id),
   });
 }
 
-async function rollbackHistoricalChatImport() {
-  const data = await apiPost("/conversation-import/rollback", { batch_id: state.historicalChatBatchId });
-  stopHistoricalChatPoll();
-  await refreshAll();
-  showArchiveResult(data.result || {}, "historical-chat-rollback", "#conversationImportResult");
-  await refreshHistoricalChatStatus();
-  showToast("历史对话导入已回滚");
-}
-
 async function repairLivingMemoryContent() {
-  const path = livingMemoryPathValue();
-  const data = await apiPost("/maintenance/repair_livingmemory_content", { path });
-  await refreshAll();
-  showArchiveResult(data.result, "repair");
-  showToast(`已修复 ${data.result?.updated || 0} 条 LivingMemory 内容`);
+  const path = livingMemoryPathValue("repair"), host = "#livingMemoryRepairResult";
+  let result;
+  try {
+    result = (await apiPost("/maintenance/repair_livingmemory_content", { path })).result;
+    if (!result || !Number.isInteger(result.updated) || !Number.isInteger(result.skipped)) throw new Error("修复收据不完整");
+  } catch (error) { showArchiveTransferUnknown(host, path, error); return; }
+  showArchiveResult(result, "repair", host);
+  const refreshed = result.reason ? true : await refreshAfterArchiveTransfer(host);
+  showToast(result.reason ? `修复未执行：${result.reason}` : result.error ? "修复未全部完成，请查看结果"
+    : `已修复 ${result.updated} 条${refreshed ? "" : "，统计读取失败"}`, result.reason || result.error || !refreshed ? "error" : "success");
 }
 
 async function clearAllMemoryData() {
@@ -6862,18 +7157,19 @@ async function previewImport() {
   const params = new URLSearchParams();
   if (path) params.set("path", path);
   const data = await apiGet(`/import/livingmemory/preview?${params.toString()}`);
-  showArchiveResult(data.report, "preview");
+  showArchiveResult(data.report, "preview", "#livingMemoryResult");
+  bindArchiveTransferPaths("#livingMemoryResult");
   showToast("预览已生成");
 }
 
 async function runImport() {
   const path = livingMemoryPathValue();
   showInlineConfirmation({
-    host: "#importResult",
+    host: "#livingMemoryResult",
     title: "导入 LivingMemory",
     message: path
-      ? `将从 ${path} 导入完整摘要，跳过派生碎片；执行前会自动备份当前数据库。`
-      : "将从自动发现的 LivingMemory 数据库导入完整摘要，跳过派生碎片；执行前会自动备份当前数据库。",
+      ? `将从 ${path} 按原规则导入可用摘要表，跳过派生碎片；是否备份沿当前配置。若路径不可用，原扫描可能选择其他库，请核对执行结果。`
+      : "将从自动发现的 LivingMemory 数据库按原规则导入可用摘要表，跳过派生碎片；是否备份沿当前配置。若路径不可用，原扫描可能选择其他库，请核对执行结果。",
     confirmLabel: "执行导入",
     busyText: "正在导入 LivingMemory...",
     onConfirm: () => executeLivingMemoryImport(path),
@@ -6881,10 +7177,16 @@ async function runImport() {
 }
 
 async function executeLivingMemoryImport(path) {
-  const data = await apiPost("/import/livingmemory/run", { path });
-  await refreshAll();
-  showArchiveResult(data.result, "import");
-  showToast("导入已完成");
+  const host = "#livingMemoryResult";
+  let result;
+  try {
+    result = (await apiPost("/import/livingmemory/run", { path })).result;
+    if (!result || !Number.isInteger(result.imported) || !Number.isInteger(result.skipped)) throw new Error("导入收据不完整");
+  } catch (error) { showArchiveTransferUnknown(host, path, error); return; }
+  showArchiveResult(result, "import", host);
+  if (result.reason && !result.source_path) { showToast(`导入未执行：${result.reason}`, "error"); return; }
+  const refreshed = await refreshAfterArchiveTransfer(host);
+  showToast(refreshed ? "LivingMemory 导入完成，请查看实际数量与来源" : "导入完成，统计读取失败；结果已保留", refreshed ? "success" : "error");
 }
 
 function installMemoryAuditOwnerControls() {
@@ -6938,6 +7240,38 @@ async function loadMemoryAuditOwners() {
   }
 }
 
+function memoryAuditOutcome(batch, action = "") {
+  const items = Array.isArray(batch.items) ? batch.items.filter(Boolean) : [];
+  const applied = Array.isArray(batch.applied_results) ? batch.applied_results.filter(Boolean) : [];
+  const rolled = Array.isArray(batch.rollback_results) ? batch.rollback_results.filter(Boolean) : [];
+  const rollback = action ? action === "rollback" : Boolean(rolled.length || batch.rolled_back_at || batch.status === "rolled_back");
+  const rows = rollback ? rolled : applied;
+  const expected = rollback ? applied.filter(row => row.status === "applied") : items;
+  const expectedIds = new Set(expected.map(row => String(row.memory_id || "")));
+  const resultIds = new Set(rows.map(row => String(row.memory_id || "")));
+  const success = rollback ? "rolled_back" : "applied";
+  const done = rows.filter(row => row.status === success).length;
+  const completeRows = rows.length === expected.length && resultIds.size === rows.length
+    && expectedIds.size === expected.length && [...resultIds].every(id => id && expectedIds.has(id));
+  const complete = batch.status === success && completeRows && done === expected.length;
+  const verb = rollback ? "回滚" : "应用";
+  const message = complete ? (expected.length ? `已${verb} ${done} 项，全部完成。` : "本批没有需要应用的变更。")
+    : !completeRows ? `结果不完整：已${verb} ${done} 项，请读取状态核对。`
+    : `部分完成：已${verb} ${done} / ${expected.length} 项，其余未完成，请查看逐条结果。`;
+  return {rollback, rows, applied, done, total: expected.length, resultsComplete: completeRows, complete, message};
+}
+
+function memoryAuditResultInfo(status) {
+  return ({
+    applied: ["已应用", "success", "该项已写入当前记忆。"],
+    rolled_back: ["已回滚", "success", "该项已恢复到本批应用前的内容。"],
+    stale: ["记录已更新", "attention", "本次跳过，保留后来修改；请查看当前记录。"],
+    missing: ["记录已不存在", "attention", "本次未修改，不能恢复已删除的记录。"],
+    failed: ["未完成", "attention", "该项未完成，请先读取状态并核对当前记录。"],
+    invalid_action: ["操作不受支持", "attention", "本次未修改，请重新检查审计预览。"],
+  })[status] || ["结果待核对", "attention", "当前返回未说明完成情况，请读取状态核对。"];
+}
+
 function renderMemoryAuditBatch(batch) {
   const host = $("#memoryAuditResult");
   if (!host) return;
@@ -6948,28 +7282,60 @@ function renderMemoryAuditBatch(batch) {
   }
   const items = Array.isArray(batch.items) ? batch.items : [];
   const status = String(batch.status || "unknown");
+  const outcome = memoryAuditOutcome(batch);
+  const unconfirmed = state.memoryAuditUnconfirmedBatchId === batch.batch_id;
+  const statusLabel = unconfirmed || (status !== "preview" && !outcome.resultsComplete) ? "结果待核对"
+    : ({preview: "待确认预览", applied: "已应用", partial: "部分完成", rolled_back: "已回滚"})[status] || "状态待核对";
+  const itemMap = new Map(items.map(item => [String(item.memory_id || ""), item]));
+  const resultRows = (rows) => rows.map(row => {
+    const [label, tone, hint] = memoryAuditResultInfo(row.status);
+    const id = String(row.memory_id || "");
+    const proposal = itemMap.get(id);
+    return `<article class="memory-audit-result-row" data-memory-audit-result-status="${escapeHtml(row.status || "unknown")}">
+      <div><span class="memory-audit-status" data-tone="${tone}">${label}</span><code>${escapeHtml(shortId(id))}</code></div>
+      <p>${hint}</p>${proposal?.reason ? `<small>${escapeHtml(compact(proposal.reason, ""))}</small>` : ""}
+      ${id && row.status !== "missing" ? `<button type="button" class="subtle" data-memory-audit-open="${escapeHtml(id)}">查看当前记录</button>` : ""}
+    </article>`;
+  }).join("");
+  const resultSection = outcome.rows.length ? `<section class="memory-audit-results" aria-label="${outcome.rollback ? "回滚" : "应用"}结果">
+    <h4>${outcome.rollback ? "回滚" : "应用"}结果 · 已完成 ${outcome.done} / ${outcome.total}</h4>${resultRows(outcome.rows)}</section>` : "";
+  const canRollback = ["applied", "partial"].includes(status) && outcome.resultsComplete && outcome.applied.some(row => row.status === "applied");
   host.innerHTML = `
     <div class="memory-audit-summary">
       <span><em>批次</em><strong>${escapeHtml(batch.batch_id || "-")}</strong></span>
-      <span><em>状态</em><strong>${escapeHtml(status)}</strong></span>
+      <span><em>状态</em><strong>${escapeHtml(statusLabel)}</strong></span>
       <span><em>候选</em><strong>${escapeHtml(batch.candidate_count || 0)}</strong></span>
       <span><em>建议</em><strong>${escapeHtml(items.length)}</strong></span>
     </div>
+    ${unconfirmed ? '<p class="memory-audit-notice" data-tone="attention" role="status">操作结果未确认。请先读取状态，不要重复提交；读取只查询已有批次。</p>'
+      : status !== "preview" ? `<p class="memory-audit-notice" data-tone="${outcome.complete ? "success" : "attention"}" role="status">${escapeHtml(outcome.message)}</p>` : ""}
     ${typeof batch.pending_unassigned === "number" ? `<p class="archive-note">本次检查 ${Number(batch.scanned_count || 0)} 条，待归属 ${Number(batch.pending_unassigned)} 条，其他范围未选 ${Number(batch.excluded_other_scope || 0)} 条；${batch.model_requested ? "仅已确证归属且有引用证据的材料参与模型预览" : "本批未调用模型"}。${batch.owner_scope ? `当前范围：${escapeHtml(batch.owner_scope.platform || "")} · ${escapeHtml(batch.owner_scope.character_id || "")} · ${escapeHtml(batch.owner_scope.session_id || "")}` : batch.all_scopes ? "已明确确认跨全部已确证范围，不含待归属材料。" : "尚未选择完整归属范围。"}</p>` : ""}
-    ${items.length ? `<div class="memory-audit-items">${items.map((item) => `
+    ${resultSection}
+    ${outcome.rollback && outcome.applied.length ? `<details class="memory-audit-prior"><summary>查看应用时的结果（${outcome.applied.length} 项）</summary>${resultRows(outcome.applied)}</details>` : ""}
+    ${items.length ? `<details class="memory-audit-proposals" ${status === "preview" && !unconfirmed ? "open" : ""}><summary>原审计建议（${items.length} 项）</summary><div class="memory-audit-items">${items.map((item) => `
       <article>
         <div><b>${escapeHtml(item.action === "archive" ? "建议归档" : "建议修正")}</b><code>${escapeHtml(shortId(item.memory_id || ""))}</code></div>
         <p>${escapeHtml(item.reason || "未提供原因")}</p>
         ${item.proposed_content ? `<small>${escapeHtml(compact(item.proposed_content, ""))}</small>` : ""}
       </article>
-    `).join("")}</div>` : '<div class="empty-state">该批次没有需要修改的建议。</div>'}
+    `).join("")}</div></details>` : '<div class="empty-state">该批次没有需要修改的建议。</div>'}
     <div class="inline-actions memory-audit-result-actions">
-      ${status === "preview" && items.length ? '<button data-memory-audit-action="apply" class="danger subtle" type="button">应用此批次</button>' : ""}
-      ${["applied", "partial"].includes(status) ? '<button data-memory-audit-action="rollback" class="danger subtle" type="button">回滚此批次</button>' : ""}
+      ${batch.batch_id ? '<button data-memory-audit-refresh type="button">读取最新状态</button>' : ""}
+      ${!unconfirmed && status === "preview" && items.length ? '<button data-memory-audit-action="apply" class="danger subtle" type="button">应用此批次</button>' : ""}
+      ${!unconfirmed && canRollback ? '<button data-memory-audit-action="rollback" class="danger subtle" type="button">回滚已应用项</button>' : ""}
     </div>
   `;
   host.querySelector('[data-memory-audit-action="apply"]')?.addEventListener("click", () => confirmMemoryAuditAction("apply"));
   host.querySelector('[data-memory-audit-action="rollback"]')?.addEventListener("click", () => confirmMemoryAuditAction("rollback"));
+  host.querySelector('[data-memory-audit-refresh]')?.addEventListener("click", () => {
+    $("#memoryAuditBatchId").value = batch.batch_id;
+    withBusy("正在核对审计结果...", loadMemoryAuditStatus);
+  });
+  host.querySelectorAll('[data-memory-audit-open]').forEach(button => button.addEventListener("click", () =>
+    withBusy("正在读取当前记忆...", async () => {
+      await showMemory(button.dataset.memoryAuditOpen);
+      $("#detailDrawer")?.scrollIntoView({block: "start"});
+    })));
 }
 
 async function previewMemoryAudit() {
@@ -6995,12 +7361,15 @@ async function loadMemoryAuditStatus() {
   const batchId = String($("#memoryAuditBatchId")?.value || "").trim();
   if (!batchId) throw new Error("请先填写审计批次 ID");
   const data = await apiGet(`/maintenance/audit/status?batch_id=${encodeURIComponent(batchId)}`);
+  if (data.result?.batch_id !== batchId) throw new Error("返回的批次不匹配，请重新读取状态");
+  if (state.memoryAuditUnconfirmedBatchId === batchId) state.memoryAuditUnconfirmedBatchId = "";
   renderMemoryAuditBatch(data.result || {});
 }
 
 function confirmMemoryAuditAction(action) {
   const batch = state.memoryAuditBatch;
   if (!batch?.batch_id) return;
+  if (state.memoryAuditUnconfirmedBatchId === batch.batch_id) return;
   const rollback = action === "rollback";
   showInlineConfirmation({
     host: "#memoryAuditResult",
@@ -7018,10 +7387,23 @@ function confirmMemoryAuditAction(action) {
 
 async function executeMemoryAuditAction(action, batchId) {
   const endpoint = action === "rollback" ? "/maintenance/audit/rollback" : "/maintenance/audit/apply";
-  const data = await apiPost(endpoint, { batch_id: batchId, confirm: "确认" });
-  renderMemoryAuditBatch(data.result || {});
-  await loadStats();
-  showToast(action === "rollback" ? "审计批次已回滚" : "审计批次已应用");
+  let batch;
+  try {
+    const data = await apiPost(endpoint, { batch_id: batchId, confirm: "确认" });
+    if (data.result?.batch_id !== batchId) throw new Error("返回的批次不匹配");
+    batch = data.result;
+  } catch (error) {
+    state.memoryAuditUnconfirmedBatchId = batchId;
+    renderMemoryAuditBatch(state.memoryAuditBatch);
+    showToast(`操作结果未确认，请读取状态：${error.message || "连接中断"}`, "error");
+    return;
+  }
+  state.memoryAuditUnconfirmedBatchId = "";
+  renderMemoryAuditBatch(batch);
+  const outcome = memoryAuditOutcome(batch, action);
+  let statsFailed = false;
+  try { await loadStats(); } catch (_) { statsFailed = true; }
+  showToast(outcome.message + (statsFailed ? " 统计暂未刷新。" : ""), outcome.complete && !statsFailed ? "info" : "error");
 }
 
 async function refreshAll() {
@@ -7494,137 +7876,86 @@ const CORE_MEMORY_SCOPE_LABELS = {
   group: "群聊",
 };
 
-function resetCoreMemoryForm() {
-  const form = $("#coreMemoryForm");
-  if (!form) return;
-  form.reset();
-  form.elements.id.value = "";
-  form.elements.expected_revision.value = "0";
-  form.elements.kind.value = "fact";
-  form.elements.scope.value = "global";
-  form.elements.priority.value = "50";
-  form.elements.enabled.checked = true;
-  $("#coreMemoryFormState").textContent = "新建核心块";
-  syncCoreMemoryTargetRequirement();
-}
+// The inherited core write routes are intentionally closed. Keep the old
+// records readable and navigate to the existing authoritative personal editor.
+const coreHistory = {query: "", kind: "", scope: "", enabled: "", page: 0, request: 0};
 
-function syncCoreMemoryTargetRequirement() {
-  const form = $("#coreMemoryForm");
-  if (!form) return;
-  const scoped = ["private", "group"].includes(form.elements.scope.value);
-  form.elements.target_id.required = scoped;
-  form.elements.target_id.disabled = !scoped;
-  if (!scoped) form.elements.target_id.value = "";
+async function openNativePersonalMaterials(button) {
+  const status = $("#coreMemoryNavigationStatus");
+  button.disabled = true; status.textContent = "正在打开当前管理页...";
+  try {
+    const bridge = window.AstrBotPluginPage;
+    if (!bridge) throw new Error("请从 AstrBot 后台重新打开此页面。");
+    await bridge.ready();
+    const theme = document.documentElement.dataset.adminTheme || new URLSearchParams(location.search).get("theme") || "dark";
+    let result = await bridge.apiGet("page/nav", {to: "console", theme, format: "json"});
+    if (result?.success === false) throw new Error(result.error || "管理入口读取失败");
+    if (result?.data) result = result.data;
+    const url = new URL(result?.url || "", location.href);
+    if (url.origin !== location.origin || url.pathname !== "/api/plugin/page/content/astrbot_plugin_asteria/console/" || !url.searchParams.get("asset_token")) {
+      throw new Error("管理入口地址未确认，请从 AstrBot 后台打开 Asteria 长期约定。");
+    }
+    url.hash = "personal";
+    location.assign(url.href);
+  } catch (error) {
+    status.textContent = error?.message || "管理入口读取失败，请重试。";
+  } finally { button.disabled = false; }
 }
 
 function renderCoreMemoryBlocks() {
   const host = $("#coreMemoryList");
   if (!host) return;
   const blocks = Array.isArray(state.coreMemoryBlocks) ? state.coreMemoryBlocks : [];
-  host.innerHTML = blocks.length ? blocks.map((block) => `
-    <article class="core-memory-row${block.enabled ? "" : " is-disabled"}">
-      <div class="core-memory-row-head">
-        <span>
-          <b>${escapeHtml(block.label || block.id)}</b>
-          <small>${escapeHtml(CORE_MEMORY_KIND_LABELS[block.kind] || block.kind || "事实")} · ${escapeHtml(CORE_MEMORY_SCOPE_LABELS[block.scope] || block.scope || "全局")} · P${escapeHtml(block.priority ?? 50)} · r${escapeHtml(block.revision ?? 0)}</small>
-        </span>
-        <div class="inline-actions">
-          <button class="subtle" type="button" data-core-memory-edit="${escapeHtml(block.id)}">编辑</button>
-          <button class="danger subtle" type="button" data-core-memory-delete="${escapeHtml(block.id)}">删除</button>
-        </div>
-      </div>
-      <p>${escapeHtml(block.content || "")}</p>
-      <div class="badges">
-        <span class="badge ${block.enabled ? "green" : "gray"}">${block.enabled ? "已启用" : "已停用"}</span>
-        ${block.target_id ? `<span class="badge blue">目标 ${escapeHtml(block.target_id)}</span>` : ""}
-        ${block.bot_id && block.bot_id !== "self" ? `<span class="badge blue">Bot ${escapeHtml(block.bot_id)}</span>` : ""}
-        ${block.persona_id ? `<span class="badge blue">人格 ${escapeHtml(block.persona_id)}</span>` : ""}
-      </div>
-    </article>
-  `).join("") : `<div class="empty-state">当前还没有核心记忆块。</div>`;
-  host.querySelectorAll("[data-core-memory-edit]").forEach((button) => {
-    button.addEventListener("click", () => editCoreMemoryBlock(button.dataset.coreMemoryEdit));
-  });
-  host.querySelectorAll("[data-core-memory-delete]").forEach((button) => {
-    button.addEventListener("click", () => deleteCoreMemoryBlock(button.dataset.coreMemoryDelete));
-  });
-}
-
-function editCoreMemoryBlock(memoryId) {
-  const block = state.coreMemoryBlocks.find((item) => item.id === memoryId);
-  const form = $("#coreMemoryForm");
-  if (!block || !form) return;
-  for (const key of ["id", "label", "kind", "scope", "target_id", "bot_id", "persona_id", "priority"]) {
-    if (form.elements[key]) form.elements[key].value = block[key] ?? "";
-  }
-  form.elements.expected_revision.value = block.revision ?? 0;
-  form.elements.enabled.checked = block.enabled !== false;
-  form.elements.content.value = block.content || "";
-  $("#coreMemoryFormState").textContent = `编辑 ${block.label || block.id} · revision ${block.revision ?? 0}`;
-  syncCoreMemoryTargetRequirement();
-  form.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
-}
-
-async function saveCoreMemoryBlock(form) {
-  const data = new FormData(form);
-  const payload = {
-    id: String(data.get("id") || ""),
-    expected_revision: Number(data.get("expected_revision") || 0),
-    label: String(data.get("label") || "").trim(),
-    kind: String(data.get("kind") || "fact"),
-    scope: String(data.get("scope") || "global"),
-    target_id: String(data.get("target_id") || "").trim(),
-    bot_id: String(data.get("bot_id") || "").trim(),
-    persona_id: String(data.get("persona_id") || "").trim(),
-    priority: Number(data.get("priority") || 50),
-    enabled: data.get("enabled") === "on",
-    content: String(data.get("content") || "").trim(),
-  };
-  await apiPost("/core-memory/upsert", payload);
-  showToast(payload.id ? "核心块已更新" : "核心块已创建");
-  resetCoreMemoryForm();
-  await loadCoreMemoryBlocks();
-}
-
-async function deleteCoreMemoryBlock(memoryId) {
-  const block = state.coreMemoryBlocks.find((item) => item.id === memoryId);
-  if (!block) return;
-  showInlineConfirmation({
-    host: "#detailDrawer",
-    title: `删除核心块“${block.label || block.id}”`,
-    message: "删除后，这条约定将不再进入后续对话上下文。",
-    confirmLabel: "确认删除",
-    busyText: "正在删除核心块...",
-    dangerous: true,
-    onConfirm: async () => {
-      await apiPost("/core-memory/delete", { id: memoryId });
-      showToast("核心块已删除");
-      resetCoreMemoryForm();
-      clearDetail();
-      await loadCoreMemoryBlocks();
-    },
-    onCancel: clearDetail,
-  });
+  const query = coreHistory.query.trim().toLowerCase();
+  const rows = blocks.filter(block => (!query || [block.id, block.label, block.content, block.target_id, block.target_name, block.bot_id, block.persona_id].join(" ").toLowerCase().includes(query))
+    && (!coreHistory.kind || block.kind === coreHistory.kind) && (!coreHistory.scope || block.scope === coreHistory.scope)
+    && (!coreHistory.enabled || Boolean(block.enabled) === (coreHistory.enabled === "yes")));
+  const pages = Math.max(1, Math.ceil(rows.length / 12));
+  coreHistory.page = Math.max(0, Math.min(coreHistory.page, pages - 1));
+  const field = (label, value) => `<div><dt>${label}</dt><dd>${escapeHtml(value || "未提供")}</dd></div>`;
+  host.innerHTML = rows.slice(coreHistory.page * 12, (coreHistory.page + 1) * 12).map(block => `
+    <details class="core-history-record" data-core-history-id="${escapeHtml(block.id)}">
+      <summary><b>${escapeHtml(block.label || block.id)}</b><span>只读 · ${escapeHtml(CORE_MEMORY_KIND_LABELS[block.kind] || block.kind)} · ${escapeHtml(CORE_MEMORY_SCOPE_LABELS[block.scope] || block.scope)} · ${block.enabled ? "旧标记启用" : "旧标记停用"}</span></summary>
+      <p class="core-history-content">${escapeHtml(block.content || "未提供正文")}</p>
+      <dl class="core-history-fields">${field("原编号", block.id)}${field("原修订", `r${block.revision ?? 0}`)}${field("原优先级", String(block.priority ?? 50))}${field("原目标", block.target_id)}${field("原目标名称", block.target_name)}${field("原 Bot", block.bot_id || "未限定 / self")}${field("原人格", block.persona_id)}${field("原平台", block.platform)}${field("原会话", block.session_id)}${field("更新时间", formatTime(block.updated_at))}</dl>
+    </details>`).join("") || '<p class="persona-empty">当前读取窗口与筛选下没有旧核心记录；不代表长期约定管理页没有资料。</p>';
+  $("#coreMemoryReadStatus").textContent = `本次读取 ${blocks.length} 条 · 筛选后 ${rows.length} 条 · 仅查询旧来源`;
+  $("#coreMemoryPager").innerHTML = `<button type="button" data-core-history-page="previous"${coreHistory.page === 0 ? " disabled" : ""}>上一页</button><span>${coreHistory.page + 1} / ${pages}</span><button type="button" data-core-history-page="next"${coreHistory.page + 1 >= pages ? " disabled" : ""}>下一页</button>`;
 }
 
 async function loadCoreMemoryBlocks() {
-  const host = $("#coreMemoryList");
-  if (host) host.innerHTML = loadingState("正在读取核心记忆...");
-  const data = await apiGet("/core-memory");
-  state.coreMemoryBlocks = Array.isArray(data.blocks) ? data.blocks : [];
-  renderCoreMemoryBlocks();
-  const form = $("#coreMemoryForm");
-  if (!form?.dataset.bound) {
-    form.dataset.bound = "true";
-    form.elements.scope.addEventListener("change", syncCoreMemoryTargetRequirement);
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      withButton(form.querySelector("button[type='submit']"), "保存中", () => saveCoreMemoryBlock(form));
-    });
-    $("#newCoreMemoryBtn")?.addEventListener("click", resetCoreMemoryForm);
-    $("#cancelCoreMemoryEditBtn")?.addEventListener("click", resetCoreMemoryForm);
+  const host = $("#coreMemoryList"), status = $("#coreMemoryReadStatus"), refresh = $("#legacyCoreRefresh");
+  if (!host) return;
+  if (!host.dataset.bound) {
+    host.dataset.bound = "true";
+    const open = $("[data-native-personal-open]");
+    open.addEventListener("click", () => openNativePersonalMaterials(open));
+    refresh.addEventListener("click", () => loadCoreMemoryBlocks());
+    for (const [id, field, type] of [["legacyCoreQuery", "query", "input"], ["legacyCoreKind", "kind", "change"], ["legacyCoreScope", "scope", "change"], ["legacyCoreEnabled", "enabled", "change"]]) {
+      const input = $("#" + id);
+      input.addEventListener(type, () => { coreHistory[field] = input.value; coreHistory.page = 0; renderCoreMemoryBlocks(); });
+    }
+    $("#coreMemoryPager").addEventListener("click", event => { const button = event.target.closest("[data-core-history-page]"); if (!button) return; coreHistory.page += button.dataset.coreHistoryPage === "next" ? 1 : -1; renderCoreMemoryBlocks(); });
   }
-  syncCoreMemoryTargetRequirement();
+  const ticket = ++coreHistory.request;
+  refresh.disabled = true; status.textContent = "正在读取旧核心记录...";
+  host.innerHTML = loadingState("正在读取旧核心记录...");
+  try {
+    const data = await apiGet("/core-memory");
+    if (ticket !== coreHistory.request) return;
+    state.coreMemoryBlocks = Array.isArray(data.blocks) ? data.blocks : [];
+    for (const [id, field, labels] of [["legacyCoreKind", "kind", CORE_MEMORY_KIND_LABELS], ["legacyCoreScope", "scope", CORE_MEMORY_SCOPE_LABELS]]) {
+      const select = $("#" + id), values = [...new Set(state.coreMemoryBlocks.map(block => block[field]).filter(Boolean))];
+      if (coreHistory[field] && !values.includes(coreHistory[field])) values.push(coreHistory[field]);
+      select.innerHTML = '<option value="">全部</option>' + values.map(value => memoryOption(value, labels[value] || value, coreHistory[field])).join("");
+    }
+    renderCoreMemoryBlocks();
+  } catch (error) {
+    if (ticket !== coreHistory.request) return;
+    status.textContent = `旧记录读取失败：${error?.message || "暂不可用"}。当前长期约定仍可从上方独立进入。`;
+    host.innerHTML = '<p class="persona-empty">旧记录暂未读取，未将失败解释为空库。</p>';
+    $("#coreMemoryPager").replaceChildren();
+  } finally { if (ticket === coreHistory.request) refresh.disabled = false; }
 }
 
 function _windowFeatureValue(data, node, feature) {
@@ -8049,8 +8380,49 @@ async function _toggleTopologyPermission(ownerKey, readerKey) {
   }
 }
 
+
+// Navigation is a projection of the existing controller, never a second memory source.
+function syncNativeMemoryNavigation(view) {
+  const root = document.getElementById("nativeMemoryNavigation");
+  if (!root) return;
+  root.querySelectorAll("[data-native-view]").forEach((button) => {
+    const active = button.dataset.nativeView === view;
+    button.setAttribute("aria-current", active ? "page" : "false");
+    if (active) document.getElementById("nativeMemoryNavigationTitle").textContent = button.textContent.trim();
+  });
+  const section = activeSecondaryNav(view);
+  const hash = view === "overview" ? "" : `#view=${encodeURIComponent(view)}${section && secondaryNavItems(view).length ? `&section=${encodeURIComponent(section)}` : ""}`;
+  if (location.hash !== hash) history.replaceState(history.state, "", `${location.pathname}${location.search}${hash}`);
+  if (matchMedia("(max-width:760px)").matches) root.open = false;
+}
+
+function initNativeMemoryNavigation() {
+  const root = document.getElementById("nativeMemoryNavigation");
+  if (!root) return;
+  const narrow = matchMedia("(max-width:760px)");
+  root.open = !narrow.matches;
+  narrow.addEventListener("change", () => { root.open = !narrow.matches; });
+  root.querySelectorAll("[data-native-view]").forEach((button) => button.addEventListener("click", () => {
+    if (button.dataset.nativeView === "overview") void returnHome();
+    else void openView(button.dataset.nativeView);
+  }));
+  document.getElementById("nativeMemorySearch").addEventListener("input", (event) => {
+    const query = event.target.value.trim().toLocaleLowerCase();
+    let visible = 0;
+    root.querySelectorAll("[data-native-view]").forEach((button) => {
+      button.hidden = !button.textContent.toLocaleLowerCase().includes(query);
+      if (!button.hidden) visible++;
+    });
+    root.querySelectorAll(".aw-nav-group").forEach((group) => { group.hidden = !group.querySelector("button:not([hidden])"); });
+    root.querySelector(".aw-nav-empty").hidden = visible > 0;
+  });
+  // Do not overwrite a saved link while startup is reading its existing data.
+  if (!location.hash) syncNativeMemoryNavigation("overview");
+}
+
 async function init() {
   syncOverviewLayoutControls();
+  initNativeMemoryNavigation();
   bindActions();
   playInitialOverviewEntrance();
   await loadUiCapabilities();
@@ -8065,6 +8437,12 @@ async function init() {
     state.buckets = normalizeBuckets([]);
     renderBuckets();
     renderStandardRecentBuckets();
+  }
+  const route = new URLSearchParams(location.hash.slice(1));
+  const requested = route.get("view");
+  if (requested && VIEWS[requested] && requested !== "maintain") {
+    await openView(requested);
+    if (route.get("section")) await selectSecondaryNav(route.get("section"));
   }
 }
 

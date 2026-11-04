@@ -271,7 +271,7 @@ window.ChatWorkspace = (() => {
   }
   function invalidate(){epoch++;proactiveSerial++;datesSerial++;owner='';busy=0;snapshot=null;calendar=null;dates=null;}
   function open(){
-    if(!state.authenticated||!state.activeId){showNotice('先连接伙伴。');return;}
+    if(!state.authenticated||!state.activeId){showNotice('先连接角色。');return;}
     hideMoreMenu();epoch++;owner=scope();busy=0;snapshot=null;calendar=null;dates=null;
     $id('important-date-list').replaceChildren();$id('important-date-form').hidden=true;
     if(dateOwner!==owner)dateForm();

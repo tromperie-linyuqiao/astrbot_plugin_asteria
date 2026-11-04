@@ -9,7 +9,7 @@ _MARKER = re.compile(
     r"|Selfie composition guard:|Additional fixed prompt:|Requested scene:|【指定生图场景预设】)", re.I,
 )
 _BARE = re.compile(r"\b(?:nude|naked|topless|bottomless|unclothed)\b|\b(?:no|without)\s+(?:any\s+)?(?:clothes|clothing|outfit)\b|裸体|裸身|全裸|不穿衣服|没有穿衣服",re.I)
-_PERSON = re.compile(r"\b(?:1girl|1boy|girl|woman|female|man|boy|person|character|portrait|selfie)\b|角色|角色本人|人物|人像|自拍|穿搭",re.I)
+_PERSON = re.compile(r"\b(?:1girl|1boy|girl|woman|female|man|boy|person|character|portrait|selfie)\b|德克萨斯|角色本人|人物|人像|自拍|穿搭",re.I)
 _GARMENT = re.compile(r"\b(?:(?:white|black|red|blue|pink|green|yellow|purple|brown|beige|gr[ae]y|cream)\s+){0,2}(?:apron|dress|shirt|blouse|sweater|hoodie|jacket|coat|skirt|trousers|pants|jeans|pajamas|uniform|swimsuit|bikini)\b",re.I)
 _CN_GARMENT = re.compile(r"(?P<color>白色|黑色|红色|蓝色|粉色|绿色|黄色|紫色|棕色|米色|灰色)?(?P<garment>围裙|连衣裙|衬衫|毛衣|卫衣|外套|大衣|裙子|长裤|牛仔裤|睡衣|制服|泳装|泳衣)")
 _CN_NAMES={'围裙':'apron','连衣裙':'dress','衬衫':'shirt','毛衣':'sweater','卫衣':'hoodie','外套':'jacket','大衣':'coat','裙子':'skirt','长裤':'trousers','牛仔裤':'jeans','睡衣':'pajamas','制服':'uniform','泳装':'swimsuit','泳衣':'swimsuit'}

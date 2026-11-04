@@ -135,7 +135,7 @@ window.ChatNight = (() => {
   function closeBody(){
     bodyEpoch++;bodyOwner='';const dialog=$n('body-state-dialog');if(dialog?.open)dialog.close();
     if($n('body-state-values'))$n('body-state-values').replaceChildren();
-    if($n('body-state-name'))$n('body-state-name').textContent='伙伴';
+    if($n('body-state-name'))$n('body-state-name').textContent=currentRoleName();
     if($n('body-state-status'))$n('body-state-status').textContent='';
   }
   function scopeChanged(){
@@ -177,7 +177,7 @@ window.ChatNight = (() => {
       if(!value){$n('user-avatar-status').textContent='头像读取未成功，请点重新读取。';return;}
       for(const [name,number]of Object.entries(value.crop||{x:.5,y:.5,zoom:1}))$n('user-avatar-'+name).value=number;
       if(!await setAvatarSource(value.source_data_url,ticket)||!avatarCurrent(ticket))return;
-      $n('user-avatar-status').textContent='我的头像保存到当前账户；伙伴头像仍在原聊天外观中分别设置。';
+      $n('user-avatar-status').textContent='我的头像保存到当前账户；角色头像仍在原聊天外观中分别设置。';
     }catch(error){if(avatarCurrent(ticket))$n('user-avatar-status').textContent=errorText(error);}
     finally{if(avatarCurrent(ticket)){avatarLoading=false;avatarControls();}}
   }
@@ -196,7 +196,7 @@ window.ChatNight = (() => {
   }
   async function saveUserAvatar(reset=false){
     if(avatarSaving||avatarLoading||avatarChoosing)return;
-    if(!avatar||avatarPanelOwner!==account()||!state.activeId){$n('user-avatar-status').textContent='请先连接伙伴，再保存当前账户头像。';return;}
+    if(!avatar||avatarPanelOwner!==account()||!state.activeId){$n('user-avatar-status').textContent='请先连接角色，再保存当前账户头像。';return;}
     const ticket=avatarTicket();if(!avatarCurrent(ticket))return;
     avatarSaving=true;avatarControls();
     try{const value=await apiClient.json('POST','/chat/user-avatar',{session_id:state.activeId,expected_revision:avatar.revision,crop:cropValues(),reset,...(!reset&&avatarSourceChanged?{source_data_url:avatarSource}:{})});
@@ -220,7 +220,7 @@ window.ChatNight = (() => {
     $n('body-state-values').replaceChildren();
     try{const value=await apiClient.json('GET','/chat/body-state?session_id='+encodeURIComponent(state.activeId));if(!current())return;
       const list=$n('body-state-values');list.replaceChildren();
-      $n('body-state-name').textContent=value.name||'伙伴';
+      $n('body-state-name').textContent=value.name||currentRoleName();
       const metric=(label,number,isTime=false)=>{const row=document.createElement('div'),value=isTime?bodyTime(number):null;
         const content=text('strong',value?value.label:number==null?'未提供':String(number));
         if(value)content.title=value.raw?'服务器原始时间：'+value.raw:'未记录';row.append(text('span',label),content);return row;};
@@ -231,6 +231,15 @@ window.ChatNight = (() => {
         if(rp.mode==='roleplay'&&rp.rp_intensity)section.append(metric('互动强度',{inherit:'继承角色设置',light:'轻量',balanced:'适中',immersive:'沉浸'}[rp.rp_intensity]||rp.rp_intensity));
         list.append(section);
       }else list.append(text('p','当前服务器未提供会话与 RP 状态。','appearance-help'));
+      const interaction=value.interaction,section=document.createElement('section');section.className='body-state-rp';section.id='body-state-interaction';section.append(text('h3','当前互动'));
+      section.append(text('p','来自本会话已发送动作的虚构互动记录，不是现实观察。','appearance-help'));
+      if(interaction?.available&&interaction.source==='owned_webchat_action'){
+        for(const [key,label]of [['posture','姿态'],['position','相对位置']]){const entry=interaction[key];section.append(metric(label,entry?.label||'尚未记录'));if(entry)section.append(metric(label+'记录于',entry.at,true));}
+        const contacts=Array.isArray(interaction.contacts)?interaction.contacts:[];
+        if(!contacts.length)section.append(text('p','没有记录中的持续接触。','appearance-help'));
+        for(const contact of contacts){section.append(metric('持续接触',(contact.action||'接触')+' · '+(contact.label||contact.part||'未标明部位')),metric('开始于',contact.since,true));}
+      }else section.append(text('p','当前服务器尚未提供互动记录。','appearance-help'));
+      const choose=text('button','选择互动动作','secondary-button');choose.type='button';choose.onclick=()=>{closeBody();window.ChatComposer?.showActions();};section.append(choose);list.append(section);
       const source=value.source==='owned_webchat_virtual_body'?'当前APP会话 · TLS虚拟身体原始记录':value.source||'当前APP会话';
       list.append(text('p','来源：'+source+' · 读取于 '+bodyTime(value.read_at).label,'appearance-help'));
       if(!value.available){$n('body-state-status').textContent=value.reason||'虚拟身体尚未接入';return;}
@@ -247,7 +256,7 @@ window.ChatNight = (() => {
   function decorateRoleAvatars(rows){
     const nodes=rows?rows.filter(row=>row.classList.contains('assistant')).map(row=>row.querySelector('.message-avatar')).filter(Boolean):document.querySelectorAll('.message-row.assistant .message-avatar,.header-avatar');
     for(const node of nodes){
-      node.removeAttribute('aria-hidden');node.setAttribute('role','button');node.tabIndex=0;node.setAttribute('aria-label','查看伙伴身体状态');node.onclick=openBody;
+      node.removeAttribute('aria-hidden');node.setAttribute('role','button');node.tabIndex=0;node.setAttribute('aria-label','查看角色身体状态');node.onclick=openBody;
       node.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openBody();}};
     }
     applyUserAvatar(rows);
@@ -258,13 +267,13 @@ window.ChatNight = (() => {
     const avatarDialog=document.createElement('dialog');avatarDialog.id='user-avatar-dialog';avatarDialog.className='settings-dialog night-dialog';
     avatarDialog.innerHTML='<div class="settings-form"><div class="dialog-heading"><h2>我的头像</h2><button id="user-avatar-close" type="button" class="icon-button" aria-label="关闭我的头像">×</button></div><canvas id="user-avatar-preview" width="256" height="256"></canvas><button id="user-avatar-choose" type="button" class="secondary-button">从设备选择图片</button><label>左右位置<input id="user-avatar-x" type="range" min="0" max="1" step="0.01" value="0.5"></label><label>上下位置<input id="user-avatar-y" type="range" min="0" max="1" step="0.01" value="0.5"></label><label>缩放<input id="user-avatar-zoom" type="range" min="1" max="3" step="0.05" value="1"></label><p id="user-avatar-status" role="status"></p><div class="appearance-actions"><button id="user-avatar-default" type="button" class="text-button">恢复默认</button><button id="user-avatar-reload" type="button" class="secondary-button">重新读取</button><button id="user-avatar-save" type="button" class="primary-button">保存我的头像</button></div></div>';
     const bodyDialog=document.createElement('dialog');bodyDialog.id='body-state-dialog';bodyDialog.className='settings-dialog night-dialog body-state-dialog';
-    bodyDialog.innerHTML='<div class="settings-form"><div class="dialog-heading"><h2 id="body-state-name">伙伴</h2><button id="body-state-close" type="button" class="icon-button" aria-label="关闭身体状态">×</button></div><p class="appearance-help">当前APP对话的真实虚拟身体数据；打开面板不推进状态、不调用模型。</p><p id="body-state-status" role="status"></p><div id="body-state-values"></div><button id="body-state-refresh" type="button" class="secondary-button">刷新身体状态</button></div>';
+    bodyDialog.innerHTML='<div class="settings-form"><div class="dialog-heading"><h2 id="body-state-name">角色</h2><button id="body-state-close" type="button" class="icon-button" aria-label="关闭身体状态">×</button></div><p class="appearance-help">当前APP对话的真实虚拟身体数据；打开面板不推进状态、不调用模型。</p><p id="body-state-status" role="status"></p><div id="body-state-values"></div><button id="body-state-refresh" type="button" class="secondary-button">刷新身体状态</button></div>';
     document.body.append(avatarDialog,bodyDialog);$n('user-avatar-close').onclick=closeAvatar;$n('body-state-close').onclick=closeBody;$n('body-state-refresh').onclick=readBody;
     avatarDialog.addEventListener('close',()=>{if(avatarPanelOwner)closeAvatar();});
     bodyDialog.addEventListener('close',()=>{if(bodyOwner)closeBody();});
     $n('user-avatar-choose').onclick=chooseUserAvatar;$n('user-avatar-save').onclick=()=>saveUserAvatar();$n('user-avatar-default').onclick=()=>saveUserAvatar(true);$n('user-avatar-reload').onclick=openUserAvatar;
     for(const key of ['x','y','zoom'])$n('user-avatar-'+key).oninput=paintAvatar;
-    $n('more-menu').prepend(button('我的头像',openUserAvatar,'menu-item'),button('伙伴身体状态',openBody,'menu-item'));
+    $n('more-menu').prepend(button('我的头像',openUserAvatar,'menu-item'),button('角色身体状态',openBody,'menu-item'));
     const accountAvatar=button('你',openUserAvatar,'account-avatar');accountAvatar.id='account-avatar';accountAvatar.setAttribute('aria-label','我的头像设置');document.querySelector('.sidebar-footer').prepend(accountAvatar);
     const originalRender=renderMessages;renderMessages=function(){const value=originalRender.apply(this,arguments);decorateRoleAvatars(value?.rows);return value;};
     const originalChrome=renderChrome;renderChrome=function(){const value=originalChrome.apply(this,arguments);readUserAvatar();return value;};

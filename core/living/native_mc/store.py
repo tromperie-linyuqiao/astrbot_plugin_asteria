@@ -465,6 +465,17 @@ class MemoryStore:
                 CREATE INDEX IF NOT EXISTS idx_memories_content
                     ON memories(content);
 
+                CREATE TABLE IF NOT EXISTS memory_revisions (
+                    memory_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    before_json TEXT NOT NULL,
+                    graph_json TEXT NOT NULL DEFAULT '{}',
+                    actor TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(memory_id, revision),
+                    FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS identities (
                     id TEXT PRIMARY KEY,
                     platform TEXT NOT NULL DEFAULT '',
@@ -5172,6 +5183,9 @@ class MemoryStore:
         placeholders = ", ".join(f":{key}" for key in data.keys())
         updates = ", ".join(f"{key}=excluded.{key}" for key in data.keys() if key != "id")
         with self._lock:
+            if self._is_manual_summary_sync(record.id):
+                # A delayed import/summary retry cannot overwrite an admin correction.
+                return record.id
             duplicate = None
             if record.content_fingerprint:
                 duplicate = self._conn.execute(
@@ -5618,6 +5632,8 @@ class MemoryStore:
         node_id = "kg_node_" + stable_fingerprint(node_type, node_key, scope, session_id)[:16]
         now = utc_now()
         with self._lock:
+            if self._is_manual_summary_sync(metadata.get("source_memory_id") or metadata.get("memory_id")):
+                return ""
             self._conn.execute(
                 """
                 INSERT INTO knowledge_nodes(
@@ -5711,6 +5727,8 @@ class MemoryStore:
         edge_id = "kg_edge_" + stable_fingerprint(source_node_id, target_node_id, relation_type, source_memory_id)[:16]
         now = utc_now()
         with self._lock:
+            if self._is_manual_summary_sync(source_memory_id):
+                return ""
             self._conn.execute(
                 """
                 INSERT INTO knowledge_edges(
@@ -5948,6 +5966,9 @@ class MemoryStore:
             if priority_cases
             else ""
         )
+        source_validity, source_params = validity_where_clause(table_alias="m", valid_at=utc_now())
+        clauses.extend([source_validity, "m.lifecycle!='archived'"])
+        params.extend(source_params)
         with self._lock:
             rows = self._conn.execute(
                 f"""
@@ -5977,7 +5998,7 @@ class MemoryStore:
                 FROM knowledge_edges e
                 JOIN knowledge_nodes s ON s.id=e.source_node_id
                 JOIN knowledge_nodes t ON t.id=e.target_node_id
-                LEFT JOIN memories m ON m.id=e.source_memory_id
+                JOIN memories m ON m.id=e.source_memory_id
                 WHERE {' AND '.join(clauses)}
                 ORDER BY {priority_order}e.confidence DESC, e.updated_at DESC, e.id ASC
                 LIMIT ?
@@ -7231,6 +7252,8 @@ class MemoryStore:
                 ).fetchone()
                 if not row:
                     return {"memories": 0, "embeddings_removed": 0}
+                if self._is_manual_summary_sync(memory_id):
+                    return {"memories": 0, "embeddings_removed": 0, "manual_preserved": 1}
                 metadata = json_loads(row["metadata"], {})
                 if not isinstance(metadata, dict):
                     metadata = {}
@@ -7755,7 +7778,7 @@ class MemoryStore:
                                        session_id, scope, reasons)
 
     def _mark_timeline_summary_filtered_sync(self, session_id, scope, reasons):
-        allowed = {'low_value', 'duplicate_in_window', 'working_not_long_term'}
+        allowed = {'low_value', 'duplicate_in_window', 'working_not_long_term', 'assistant_draft_only'}
         if (not isinstance(reasons, dict) or len(reasons) > 1000
                 or any(not isinstance(key, str) or not key or value not in allowed
                        for key, value in reasons.items())):
@@ -9878,6 +9901,182 @@ class MemoryStore:
             ).fetchall()
         return {row["id"]: MemoryRecord.from_row(row) for row in rows}
 
+    def _is_manual_summary_sync(self, memory_id: str) -> bool:
+        if not memory_id:
+            return False
+        row = self._conn.execute("SELECT metadata FROM memories WHERE id=?", (memory_id,)).fetchone()
+        metadata = json_loads(row["metadata"], {}) if row else {}
+        return isinstance(metadata, dict) and bool(metadata.get("manual_summary_revision"))
+
+    def _revise_summary_sync(self, row: sqlite3.Row, content: str, metadata: dict[str, Any], actor: str) -> dict[str, Any]:
+        """Called inside the payload transaction; history never enters the retrieval corpus."""
+        memory_id = row["id"]
+        before = dict(row)
+        old_metadata = json_loads(row["metadata"], {})
+        edges = [dict(item) for item in self._conn.execute(
+            "SELECT * FROM knowledge_edges WHERE source_memory_id=?", (memory_id,),
+        )]
+        relationships = [dict(item) for item in self._conn.execute(
+            "SELECT * FROM relationship_edges WHERE source_memory_id=?", (memory_id,),
+        )]
+        nodes = [dict(item) for item in self._conn.execute(
+            """SELECT * FROM knowledge_nodes WHERE id IN (
+                SELECT source_node_id FROM knowledge_edges WHERE source_memory_id=?
+                UNION SELECT target_node_id FROM knowledge_edges WHERE source_memory_id=?)
+                OR json_extract(metadata, '$.source_memory_id')=?
+                OR json_extract(metadata, '$.memory_id')=?""",
+            (memory_id, memory_id, memory_id, memory_id),
+        )]
+        revision = int(self._conn.execute(
+            "SELECT COALESCE(MAX(revision),0)+1 FROM memory_revisions WHERE memory_id=?", (memory_id,),
+        ).fetchone()[0])
+        now = utc_now()
+        self._conn.execute(
+            "INSERT INTO memory_revisions(memory_id,revision,before_json,graph_json,actor,created_at) VALUES(?,?,?,?,?,?)",
+            (memory_id, revision, json_dumps(before), json_dumps({
+                "nodes": nodes, "edges": edges, "relationships": relationships,
+            }), clean_text(actor, 120) or "payload_update", now),
+        )
+        self._conn.execute("DELETE FROM knowledge_edges WHERE source_memory_id=?", (memory_id,))
+        self._conn.execute("DELETE FROM relationship_edges WHERE source_memory_id=?", (memory_id,))
+        for node in nodes:
+            source = json_loads(node["metadata"], {})
+            if node["node_type"] not in {"memory", "topic", "fact"} or memory_id not in {
+                source.get("memory_id"), source.get("source_memory_id"),
+            }:
+                continue
+            self._conn.execute(
+                """DELETE FROM knowledge_nodes WHERE id=? AND NOT EXISTS (
+                    SELECT 1 FROM knowledge_edges WHERE source_node_id=? OR target_node_id=?)""",
+                (node["id"], node["id"], node["id"]),
+            )
+        derived_keys = {
+            "canonical_summary", "persona_summary", "key_facts", "key_facts_with_refs", "topics",
+            "associations", "routine_check_notes", "participants", "sentiment", "legacy_brief_summary",
+            "summary_quality", "evidence_gate_passed", "summary_perspective", "detail_schema_version",
+        }
+        result = {key: value for key, value in metadata.items() if key not in derived_keys}
+        result["canonical_summary"] = content
+        result["manual_summary_revision"] = {"revision": revision, "at": now, "actor": clean_text(actor, 120) or "payload_update"}
+        result["summary_perspective"] = "manual_edit"
+        topics = old_metadata.get("topics", []) if isinstance(old_metadata, dict) else []
+        topics = {str(item) for item in topics} if isinstance(topics, list) else set()
+        tags = [tag for tag in json_loads(row["tags"], []) if str(tag) not in topics]
+        self._conn.execute("UPDATE memories SET tags=? WHERE id=?", (json_dumps(tags), memory_id))
+        self._conn.execute("DELETE FROM memory_embeddings WHERE memory_id=?", (memory_id,))
+        return result
+
+    async def memory_revisions(self, memory_id: str, offset: int = 0) -> dict[str, Any]:
+        return await self._run_recoverable_database_operation(self._memory_revisions_sync, memory_id, offset)
+
+    async def portable_memory_page(self, limit: int = 500, offset: int = 0) -> list[tuple[MemoryRecord, list[dict[str, Any]]]]:
+        """Read each current record and its revision provenance together."""
+        return await self._run_recoverable_database_operation(self._portable_memory_page_sync, limit, offset)
+
+    def _portable_memory_page_sync(self, limit: int, offset: int) -> list[tuple[MemoryRecord, list[dict[str, Any]]]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM memories ORDER BY occurred_at DESC,created_at DESC,id LIMIT ? OFFSET ?",
+                (max(1, min(500, int(limit))), max(0, int(offset))),
+            ).fetchall()
+            if not rows:
+                return []
+            revisions: dict[str, list[dict[str, Any]]] = {row["id"]: [] for row in rows}
+            placeholders = ",".join("?" for _ in rows)
+            for revision in self._conn.execute(
+                f"SELECT * FROM memory_revisions WHERE memory_id IN ({placeholders}) ORDER BY revision",
+                list(revisions),
+            ):
+                revisions[revision["memory_id"]].append({
+                    "revision": revision["revision"], "actor": revision["actor"], "created_at": revision["created_at"],
+                    "before": json_loads(revision["before_json"], {}), "graph": json_loads(revision["graph_json"], {}),
+                })
+        return [(MemoryRecord.from_row(row), revisions[row["id"]]) for row in rows]
+
+    async def restore_portable_memory(self, record: MemoryRecord, revisions: list[dict[str, Any]]) -> str:
+        return await self._run_recoverable_database_operation(self._restore_portable_memory_sync, record, revisions)
+
+    def _restore_portable_memory_sync(self, record: MemoryRecord, revisions: list[dict[str, Any]]) -> str:
+        """Restore one atom with its history, preserving IDs and local corrections.
+
+        Portable restore is not new conversational evidence: it must not merge
+        different identities, strengthen evidence, or reactivate an old graph.
+        """
+        record.ensure_defaults()
+        data = record.to_db()
+        if not isinstance(revisions, list):
+            raise ValueError("portable revisions must be a list")
+        prepared: list[tuple[Any, ...]] = []
+        seen: set[int] = set()
+        domain_keys = ("id", "scope", "session_id", "platform", "group_id", "subject_kind", "subject_id", "object_kind", "object_id", "owner_bot_id")
+        for item in revisions:
+            if not isinstance(item, dict):
+                raise ValueError("invalid portable revision")
+            revision = int(item.get("revision") or 0)
+            before, graph = item.get("before"), item.get("graph")
+            if revision < 1 or revision in seen or not isinstance(before, dict) or not isinstance(graph, dict):
+                raise ValueError("invalid portable revision provenance")
+            if any(str(before.get(key) or "") != str(data.get(key) or "") for key in domain_keys):
+                raise ValueError("portable revision belongs to a different memory scope")
+            seen.add(revision)
+            prepared.append((record.id, revision, json_dumps(before), json_dumps(graph),
+                clean_text(item.get("actor"), 120), clean_text(item.get("created_at"), 80)))
+        with self._lock, self._transaction_sync():
+            existing = self._conn.execute("SELECT * FROM memories WHERE id=?", (record.id,)).fetchone()
+            if existing is not None:
+                # Access counters and the batch which imported a row can differ;
+                # its actual content, ownership, validity and review state cannot.
+                ignored = {"import_batch_id", "last_accessed_at", "access_count", "injection_count", "last_injected_at"}
+                current = MemoryRecord.from_row(existing).to_db()
+                for key in data.keys() - ignored:
+                    left, right = current[key], data[key]
+                    if key in {"metadata", "tags"}:
+                        left, right = json_loads(left, None), json_loads(right, None)
+                        if key == "metadata":
+                            left.pop("portable_origin_import_batch_id", None)
+                            right.pop("portable_origin_import_batch_id", None)
+                    if left != right:
+                        raise ValueError("portable memory conflicts with current data; existing record preserved")
+            else:
+                duplicate = self._conn.execute(
+                    "SELECT id FROM memories WHERE content_fingerprint=? LIMIT 1", (record.content_fingerprint,),
+                ).fetchone()
+                if duplicate is not None:
+                    raise ValueError("portable memory duplicates another ID; review identity before merging")
+                self._write_memory_record_sync(record)
+                if record.review_status == "pending":
+                    self._upsert_review_sync(record.id, "待人工确认")
+            for values in prepared:
+                previous = self._conn.execute(
+                    "SELECT before_json,graph_json,actor,created_at FROM memory_revisions WHERE memory_id=? AND revision=?",
+                    values[:2],
+                ).fetchone()
+                if previous is not None:
+                    same = (json_loads(previous["before_json"], {}) == json_loads(values[2], {})
+                        and json_loads(previous["graph_json"], {}) == json_loads(values[3], {})
+                        and previous["actor"] == values[4] and previous["created_at"] == values[5])
+                    if not same:
+                        raise ValueError("portable revision conflicts with local history; existing history preserved")
+                    continue
+                self._conn.execute(
+                    "INSERT INTO memory_revisions(memory_id,revision,before_json,graph_json,actor,created_at) VALUES(?,?,?,?,?,?)",
+                    values,
+                )
+        return record.id
+
+    def _memory_revisions_sync(self, memory_id: str, offset: int) -> dict[str, Any]:
+        offset = max(0, int(offset))
+        with self._lock:
+            total = int(self._conn.execute("SELECT COUNT(*) FROM memory_revisions WHERE memory_id=?", (memory_id,)).fetchone()[0])
+            rows = self._conn.execute(
+                "SELECT revision,before_json,actor,created_at FROM memory_revisions WHERE memory_id=? ORDER BY revision DESC LIMIT 10 OFFSET ?",
+                (memory_id, offset),
+            ).fetchall()
+        return {"total": total, "offset": offset, "items": [{
+            "revision": row["revision"], "actor": row["actor"], "created_at": row["created_at"],
+            "before": json_loads(row["before_json"], {}),
+        } for row in rows]}
+
     async def update_memory_payload(
         self,
         memory_id: str,
@@ -9897,6 +10096,8 @@ class MemoryStore:
         salience: Any | None = None,
         durability: str | None = None,
         sensitivity: str | None = None,
+        manual_summary_actor: str = "",
+        expected_current: MemoryRecord | None = None,
     ) -> bool:
         return await self._run_recoverable_database_operation(
             self._update_memory_payload_sync,
@@ -9916,6 +10117,8 @@ class MemoryStore:
             salience,
             durability,
             sensitivity,
+            manual_summary_actor,
+            expected_current,
         )
 
     def _update_memory_payload_sync(
@@ -9936,12 +10139,19 @@ class MemoryStore:
         salience: Any | None,
         durability: str | None,
         sensitivity: str | None,
+        manual_summary_actor: str = "",
+        expected_current: MemoryRecord | None = None,
     ) -> bool:
         memory_id = clean_text(memory_id, 120)
         with self._lock:
             with self._transaction_sync():
                 row = self._conn.execute("SELECT * FROM memories WHERE id=?", (memory_id,)).fetchone()
                 if not row:
+                    return False
+                # Audit confirmation is bound to the record read by its original
+                # controller. Recheck under the same write transaction so an
+                # awaited handoff cannot overwrite a newer administrator edit.
+                if expected_current is not None and MemoryRecord.from_row(row) != expected_current:
                     return False
                 next_type = clean_text(memory_type if memory_type is not None else row["memory_type"], 80) or row["memory_type"]
                 next_content = clean_text(
@@ -9962,6 +10172,9 @@ class MemoryStore:
                 if not isinstance(next_metadata, dict):
                     next_metadata = {}
                 next_metadata = redact_sensitive_value(next_metadata)
+                summary_changed = row["memory_type"] == "conversation_summary" and next_content != row["content"]
+                if self._is_manual_summary_sync(memory_id) and summary_changed and not manual_summary_actor:
+                    return False
                 prospective = MemoryRecord.from_row(row)
                 prospective.memory_type = next_type
                 prospective.visibility = next_visibility
@@ -10024,6 +10237,11 @@ class MemoryStore:
                     requested_sensitivity,
                     clean_text(row["sensitivity"], 24) if row["sensitivity"] in SENSITIVITY_LEVELS else "private",
                 )
+                if summary_changed:
+                    next_metadata = self._revise_summary_sync(
+                        row, next_content, next_metadata, manual_summary_actor,
+                    )
+                    row = self._conn.execute("SELECT * FROM memories WHERE id=?", (memory_id,)).fetchone()
                 atom = self._memory_atom_record_for_row(
                     row,
                     reset_semantic_keys=memory_type is not None or content is not None,
@@ -10200,6 +10418,7 @@ class MemoryStore:
         with self._lock:
             with self._transaction_sync():
                 self._conn.execute("DELETE FROM review_queue WHERE memory_id=?", (memory_id,))
+                self._conn.execute("DELETE FROM memory_revisions WHERE memory_id=?", (memory_id,))
                 self._conn.execute("DELETE FROM memory_embeddings WHERE memory_id=?", (memory_id,))
                 self._conn.execute("DELETE FROM relationship_edges WHERE source_memory_id=?", (memory_id,))
                 self._conn.execute("DELETE FROM knowledge_edges WHERE source_memory_id=?", (memory_id,))

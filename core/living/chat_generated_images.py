@@ -37,7 +37,7 @@ def explicit_image_request(text):
     """Narrow user command detection, not inference from roleplay actions."""
     if not isinstance(text, str) or len(text)>16000 or re.search(r'不要|别|不用|无需|不想|不需要',text):return None
     command=r'(?:^|[。！？!?\n])\s*(?:(?:请|麻烦|能不能|可以|能否|我想要|我要|帮我|给我|为我|你)\s*){0,3}'
-    if not re.search(command+r'(?:(?:生成|画|绘制|制作).{0,48}(?:图|画|角色)|(?:发|给我看).{0,24}(?:一张|张).{0,24}(?:你的|角色).{0,12}(?:图片|照片|自拍))',text):return None
+    if not re.search(command+r'(?:(?:生成|画|绘制|制作).{0,48}(?:图|画|德克萨斯)|(?:发|给我看).{0,24}(?:一张|张).{0,24}(?:你的|德克萨斯).{0,12}(?:图片|照片|自拍))',text):return None
     return dict(prompt=text.strip()[:1200],purpose='chat')
 
 

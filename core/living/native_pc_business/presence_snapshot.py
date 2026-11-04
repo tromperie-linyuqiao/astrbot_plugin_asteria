@@ -26,6 +26,8 @@ import os
 import re
 import time as _time
 from typing import Any
+from pathlib import Path
+from ....identity import existing_data_directory
 
 _MAX_CHARS = 100
 _CACHE_LIMIT = 32
@@ -78,12 +80,8 @@ def _load_manor(pc_data_dir: str) -> Any:
     """manor.json：用户覆盖层优先，其次 ../../plugins/.../data/manor.json；失败返回 None。"""
     base = os.path.dirname(os.path.normpath(str(pc_data_dir)))   # plugin_data/
     candidates = (
-        os.path.join(base, _VB_NAME, "manor", "manor.json"),
-        os.path.normpath(
-            os.path.join(
-                str(pc_data_dir), "..", "..", "plugins", _VB_NAME, "data", "manor.json"
-            )
-        ),
+        str(existing_data_directory(base) / 'manor' / 'manor.json'),
+        str(Path(__file__).resolve().parents[3] / 'data' / 'manor.json'),
     )
     for path in candidates:
         data = _load_json_file(path)
@@ -173,9 +171,7 @@ def build_snapshot(data_dir: str, session: str, now: float) -> str:
         pc_data_dir = str(data_dir or "").strip()
         if not pc_data_dir:
             return ""
-        state_dir = os.path.join(
-            os.path.dirname(os.path.normpath(pc_data_dir)), _VB_NAME, "state"
-        )
+        state_dir = str(existing_data_directory(Path(pc_data_dir).parent) / 'state')
         space_path = _find_space_file(state_dir, session)
         space = _load_json_file(space_path) if space_path else None
         if not isinstance(space, dict):
@@ -237,7 +233,7 @@ def _read_mood_triggers(data_dir: str, now: float) -> str:
     旧 astrbot_plugin_mood_orchestrator 路径回退兼容）。过期过滤 + 前 3 条拼段；任何缺失 → 空串。"""
     import os as _os
     paths = [
-        _os.path.normpath(_os.path.join(str(data_dir), "..", "astrbot_plugin_virtual_body", "mood", "triggers.json")),
+        str(existing_data_directory(Path(data_dir).parent) / 'mood' / 'triggers.json'),
         _os.path.normpath(_os.path.join(str(data_dir), "..", "astrbot_plugin_mood_orchestrator", "triggers.json")),
     ]
     data = None

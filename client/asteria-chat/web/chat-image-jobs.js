@@ -78,7 +78,7 @@ window.ChatImageJobs = (() => {
   function renderParents(){
     if(!parent)return;
     const rows=storedRows().slice(-80).reverse();if(!rows.some(value=>String(value.serverId)===selectedParent))selectedParent=rows[0]?String(rows[0].serverId):'';
-    const options=rows.map(message=>[String(message.serverId),(message.role==='user'?'你':'伙伴')+'：'+plain(message.text||message.parts?.map(p=>p.label||p.filename||p.type).join(' · ')||'媒体消息',46)]),signature=JSON.stringify(options);
+    const options=rows.map(message=>[String(message.serverId),(message.role==='user'?'你':'角色')+'：'+plain(message.text||message.parts?.map(p=>p.label||p.filename||p.type).join(' · ')||'媒体消息',46)]),signature=JSON.stringify(options);
     if(signature!==renderedParents){renderedParents=signature;parent.replaceChildren();for(const [id,text]of options){const option=node('option',text);option.value=id;parent.append(option);}
       if(!rows.length){const option=node('option','先发送或同步一条聊天记录');option.value='';parent.append(option);}}
     if(parent.value!==selectedParent)parent.value=selectedParent;
@@ -102,7 +102,7 @@ window.ChatImageJobs = (() => {
       const card=node('article',undefined,'image-job-card');card.dataset.jobId=job.id;card.dataset.state=job.state;
       const top=node('div',undefined,'image-job-heading');top.append(node('strong',purposes[job.purpose]||'图片'),node('span',labels[job.state],'image-job-state'));card.append(top,node('p',reason(job),'image-job-reason'));
       if(job.updated_at){const date=new Date(Number(job.updated_at)*1000);if(Number.isFinite(date.getTime()))card.append(node('small','更新于 '+date.toLocaleString('zh-CN',{hour12:false})));}
-      const parentMessage=savedParent(job.parent_message_id);if(parentMessage)card.append(node('p','接在'+(parentMessage.role==='user'?'你的':'伙伴的')+'消息之后：'+plain(parentMessage.text||'媒体消息',90),'image-job-parent'));
+      const parentMessage=savedParent(job.parent_message_id);if(parentMessage)card.append(node('p','接在'+(parentMessage.role==='user'?'你的':'角色的')+'消息之后：'+plain(parentMessage.text||'媒体消息',90),'image-job-parent'));
       else if(job.parent_message_id)card.append(node('p','关联原消息 #'+job.parent_message_id+'（当前未加载）','image-job-parent'));
       if(job.state==='stored'){
         const loaded=state.messages.some(value=>value.delivery==='confirmed'&&String(value.serverId)===job.message_id);

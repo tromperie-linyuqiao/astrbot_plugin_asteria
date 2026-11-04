@@ -11,7 +11,7 @@
     {id:'resources',name:'资料中心',home:'area-resources',summary:'图片、音乐、文案与场景使用各自适合的编辑器，共享已有资料与来源记录。',icon:'M3 6h7l2 2h9v12H3z M3 6V3h6l2 3',groups:[group('素材库',['assets','music_library','materials']),group('文字与场景',['data','phone','narrative']),group('维护与整理',['maintenance'])]},
     {id:'automation',name:'任务与自动化',home:'area-automation',summary:'日程、便签、目标与活动分开维护，通过执行记录核对真实结果。',icon:'M5 4h14v18H5z M9 2v4 M15 2v4 M8 10h8 M8 14h8 M8 18h5',groups:[group('时间与提醒',['agenda','dates','special_occasions','memo_notes']),group('目标与活动',['personal_goals','scoped_daily_plan']),group('执行与历史',['tasks','pc_daily_native'])]},
     {id:'models',name:'模型与路由',home:'area-models',summary:'为现有任务选择已配置的模型，查看实际调用与回退信息。凭据继续由 AstrBot 统一管理。',icon:'M12 3v5 M4 16v5 M20 16v5 M4 16V8h16v8 M8 12h8 M12 8v8',groups:[group('选择与调用',['model_routes']),group('预算与查询',['insight','memory_strategy'])]},
-    {id:'integrations',name:'插件与集成',home:'area-integrations',summary:'核对每项能力的实际执行者、依赖与运行状态；保留尚需协作的管理入口。',icon:'M8 3v5 M16 3v5 M5 8h14v4a7 7 0 0 1-14 0z M12 19v3',groups:[group('运行与归属',['native_ownership','modules']),group('连接管理',['phone_service']),group('原生业务详情',['memory-native','pc-native'])]},
+    {id:'integrations',name:'系统服务',home:'area-integrations',summary:'查看 Asteria 自身服务的运行状态、外部连接与管理入口。',icon:'M8 3v5 M16 3v5 M5 8h14v4a7 7 0 0 1-14 0z M12 19v3',groups:[group('服务与状态',['native_ownership','modules']),group('连接管理',['phone_service']),group('资料维护',['memory-native','pc-native'])]},
     {id:'settings',name:'系统设置',home:'area-settings',summary:'管理全局记录、上下文展示和工作台外观，业务资料仍在各自中心维护。',icon:'M4 6h16 M4 12h16 M4 18h16 M8 3v6 M16 9v6 M10 15v6',groups:[group('系统与权限',['config','context_display']),group('外观与维护',['workspace_appearance','maintenance'])]}
   ];
   const descriptions = {
@@ -47,15 +47,15 @@
     memo_notes:['便签与待办','记录待办，完成、恢复、归档或导入已有资料'],
     personal_goals:['个人目标','维护角色目标与手动进度，查看自动推进状态'],
     scoped_daily_plan:['目标日计划','维护明确归属的计划与有来源的活动记录'],
-    native_ownership:['原生接管状态','查看实际执行者、依赖、阻塞与恢复信息'],
+    native_ownership:['服务运行状态','查看本插件服务、外部连接与阻塞信息'],
     modules:['能力与模块','查看已登记功能、当前运行状态和管理入口'],
     model_routes:['任务模型路由','当前任务选择、备用模型、实际调用与用量'],
     memory_strategy:['记忆分流与摘要策略','临时记忆时效、低价值过滤与摘要去重'],
     context_display:['上下文与展示权限','统一上下文、资料显示开关及范围继承'],
     workspace_appearance:['工作台外观','主题、快捷入口和首页布局'],
-    'memory-native':['完整记忆与画像','TLS 原生 MC 资料、画像、关系及摘要管理'],
+    'memory-native':['完整记忆与画像','记忆资料、画像、关系及摘要管理'],
     'memory-classic':['记忆记录维护','独立页面中的补充、纠正、删除与恢复'],
-    'pc-native':['完整角色与陪伴','TLS 原生 PC 的角色资料、日常和策略'],
+    'pc-native':['完整角色与陪伴','角色资料、日常和陪伴策略'],
     weather:['存在层总览','查看已有空间、身体与天气来源'],
     materials:['材质工坊','维护虚拟身体使用的触觉材质与对应属性'],
     config:['全局记录设置','私聊原话记录与已有配置读取'],

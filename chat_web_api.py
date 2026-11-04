@@ -1,4 +1,4 @@
-"""Authenticated Asteria Chat entry points over AstrBot's existing ChatService.
+"""Authenticated Texas Chat entry points over AstrBot's existing ChatService.
 
 The service owns conversations, generation, SSE and persistence. This small
 bridge adds the missing owner check before a new main-session generation.
@@ -130,7 +130,10 @@ class NativeChatWebApi:
                 ('upload', self.upload, 'POST'), ('file', self.file, 'GET')):
             self.plugin.context.register_web_api(
                 PAGE_API_PREFIX + '/' + name, handler, [method],
-                'TLS authenticated Asteria Chat ' + name)
+                'TLS authenticated Texas Chat ' + name)
+        from .chat_corpus_web_api import NativeChatCorpusWebApi
+        self._corpus_api = NativeChatCorpusWebApi(self)
+        self._corpus_api.register_routes()
 
     def _bound(self):
         if getattr(self.plugin, '_stopping', False):
@@ -251,7 +254,7 @@ class NativeChatWebApi:
                         break
                     if session_id is None:
                         if persona_id is None:
-                            raise _RequestError('首次连接请先在连接设置中选择角色的实际角色。', 409)
+                            raise _RequestError('首次连接请先在连接设置中选择德克萨斯的实际角色。', 409)
                         self._bound()
                         created = await service.new_session(username, 'webchat')
                         session_id = _session_id(created.get('session_id'))
@@ -430,6 +433,8 @@ class NativeChatWebApi:
                 state = {'state': 'unavailable'}
             payload = dict(snapshot, persona=persona, tls_state=state, proactive_inbox=inbox_state,
                 receipt_transport=ChatReceipts.capability())
+            from .core.living.structured_reply import visible_snapshot
+            payload = visible_snapshot(payload)
             # A transport revision covers the complete final owned snapshot.
             # Matching it never skips SDK ownership, inbox or typed-state reads.
             revision = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
@@ -473,7 +478,8 @@ class NativeChatWebApi:
 
     async def _observe_run_stream(self, username, service, services, session_id, active, *, seconds=30):
         """A bounded subscription, detached from the SDK's generation task."""
-        from .core.living.structured_reply import display
+        from .core.living.structured_reply import ReplyProjection
+        projection = ReplyProjection()
         run_id, stream = active.run_id, None
         end_reason = 'closed'
         async def owned():
@@ -514,11 +520,8 @@ class NativeChatWebApi:
                                 if (not isinstance(data, dict) or data.get('run_id') != run_id
                                         or data.get('session_id') != session_id):
                                     raise _RequestError('回复范围已变化，请同步记录', 409)
-                                # Snapshot is the same SDK content as history;
-                                # presentation filters stay on the client.
-                            elif frame.get('type') in {'plain', 'complete'} and isinstance(frame.get('data'), str):
-                                frame['data'] = display(frame['data'])
-                                text = 'data: ' + json.dumps(frame, ensure_ascii=False) + '\n\n'
+                            frame = projection.frame(frame)
+                            text = 'data: ' + json.dumps(frame, ensure_ascii=False) + '\n\n'
                         except (ValueError, TypeError) as exc:
                             if isinstance(exc, _RequestError):
                                 raise
@@ -695,8 +698,11 @@ class NativeChatWebApi:
     async def receipts_save(self):
         try:
             body = await self._body(limit=10000)
-            if set(body) != {'session_id', 'phase', 'message_ids'}:
+            fields = {'session_id', 'phase', 'message_ids'}
+            if not fields <= set(body) or set(body) - fields - {'allow_partial'}:
                 raise _RequestError('收件确认字段无效')
+            if type(body.get('allow_partial', False)) is not bool:
+                raise _RequestError('收件确认模式无效')
             session_id = _session_id(body['session_id'])
             username, service, snapshot, _ = await self._owned_chat(session_id)
             expressions = self._expressions(service)
@@ -721,7 +727,7 @@ class NativeChatWebApi:
                 snapshot = dict(snapshot, history=history)
             await self._recheck_owned_session(username, service, session_id)
             result = await asyncio.to_thread(receipts.report, username, session_id, snapshot,
-                body['phase'], body['message_ids'])
+                body['phase'], body['message_ids'], allow_partial=body.get('allow_partial', False))
             await self._recheck_owned_session(username, service, session_id)
             return self._ok(result)
         except (_RequestError, ChatServiceError) as exc:
@@ -775,9 +781,11 @@ class NativeChatWebApi:
     async def expressions(self):
         try:
             session_id = _session_id(request.query.get('session_id'))
-            _, _, expressions, scope = await self._owned_expression(session_id)
+            username, service, expressions, scope = await self._owned_expression(session_id)
             result = await asyncio.to_thread(expressions.list, scope,
                 query=request.query.get('query', ''), filter_name=request.query.get('filter', 'all'))
+            await self._recheck_owned_session(username, service, session_id)
+            expressions._check()
             return self._ok(result)
         except (_RequestError, ChatServiceError, ChatExpressionError, KeyError, RuntimeError, OSError, ValueError) as exc:
             return self._expression_error(exc)
@@ -785,8 +793,11 @@ class NativeChatWebApi:
     async def expression_preview(self):
         try:
             session_id = _session_id(request.query.get('session_id'))
-            _, _, expressions, _ = await self._owned_expression(session_id)
-            return self._ok(await asyncio.to_thread(expressions.preview, request.query.get('asset_id')))
+            username, service, expressions, _ = await self._owned_expression(session_id)
+            result = await asyncio.to_thread(expressions.preview, request.query.get('asset_id'))
+            await self._recheck_owned_session(username, service, session_id)
+            expressions._check()
+            return self._ok(result)
         except (_RequestError, ChatServiceError, ChatExpressionError, KeyError, RuntimeError, OSError, ValueError) as exc:
             return self._expression_error(exc)
 
@@ -1132,8 +1143,9 @@ class NativeChatWebApi:
             lambda: self._same_app_memory_resources(username, session, resources))
 
     def _voice_view(self, profile):
-        from .core.living.voice_cloud import availability
+        from .core.living.voice_cloud import availability, CloudVoice
         value = profile.get()
+        value['recent_audio'] = CloudVoice(self.plugin, profile).recent()
         value['cloud'] = availability(self.plugin)
         if not value['persisted'] and value['cloud']['available']:
             value['profile']['binding'] = dict(service='fish_tts', voice_id='', model=value['cloud']['model'])
@@ -1147,8 +1159,11 @@ class NativeChatWebApi:
     async def voice_synthesize(self):
         from .core.living.voice_cloud import CloudVoice, VoiceError
         from .core.living.voice_profile import validate
+        from .core.living.structured_reply import visible_parts
         try:
             body = await self._body()
+            retry_failed = body.pop('retry_failed', False)
+            if type(retry_failed) is not bool: raise _RequestError('重试标记无效')
             preview = set(body) == {'session_id','preview_text','profile'}
             if not preview and set(body) != {'session_id','message_id'}:
                 raise _RequestError('语音合成需要消息编号或独立试听文本')
@@ -1170,10 +1185,12 @@ class NativeChatWebApi:
                 expressions = self._expressions(service)
                 parts = await asyncio.to_thread(expressions.saved_parts, expressions.message_scope(username, session_id), 'assistant', identity)
                 if parts is None: parts = record.content.get('message', [])
-                text = '\n\n'.join(part['text'] for part in parts if isinstance(part, dict)
-                    and part.get('type') in {'plain','text','speech'} and isinstance(part.get('text'), str))
-                chosen = self._voice_view(profile)['profile']
-            result = await CloudVoice(self.plugin, profile).synthesize(text, identity, chosen)
+                text = '\n\n'.join(part['text'] for part in visible_parts(parts) if isinstance(part, dict)
+                    and part.get('type') in {'plain','text','speech'} and isinstance(part.get('text'), str)
+                    and part.get('chain_type') not in {'reasoning','tool_call','tool_call_result'})
+                if not text.strip(): raise _RequestError('这条回复没有可朗读的话语；动作和思考草稿不会朗读')
+                chosen = (await asyncio.to_thread(self._voice_view, profile))['profile']
+            result = await CloudVoice(self.plugin, profile).synthesize(text, identity, chosen, retry_failed=retry_failed)
             await self._recheck_owned_session(username, service, session_id)
             return self._ok(dict(result, session_id=session_id))
         except VoiceError as exc:
@@ -1233,9 +1250,17 @@ class NativeChatWebApi:
                 raise _RequestError('生活档案读取参数无效')
             session_id = _session_id(query['session_id'])
             username, service, _, session = await self._owned_chat(session_id)
-            from .core.living.chat_life import get
+            from .core.living.chat_life import get, resources, current
+            from .core.living.chat_workspace import linked_source_scope
+            access = resources(self, username, session)
+            material_source = linked_source_scope(self.plugin, access[4], permission='materials')
             value = get(self, username, session, query)
             await self._recheck_owned_session(username, service, session_id)
+            # Ownership survives a revoked sharing grant. Recheck both the
+            # archive and any linked collection source after the final await.
+            current(self, username, session, access)
+            if linked_source_scope(self.plugin, access[4], permission='materials') != material_source:
+                raise PermissionError('收藏资料来源授权已变化，请重新读取')
             return self._ok(value)
         except (ChatServiceError, _RequestError, PermissionError, JournalConflict, KeyError,
                 RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
@@ -1275,7 +1300,7 @@ class NativeChatWebApi:
             if set(query) != {'session_id', 'id'}:
                 raise _RequestError('记忆读取只接受当前会话与记录编号')
             session_id, identity = _session_id(query['session_id']), _session_id(query['id'])
-            username, _, _, session = await self._owned_chat(session_id)
+            username, service, _, session = await self._owned_chat(session_id)
             resources = self._app_memory_resources(username, session)
             def read():
                 store, scope = resources[3:]
@@ -1291,6 +1316,7 @@ class NativeChatWebApi:
                             for row in history[-20:]],
                         history_total=len(history), history_limited=len(history) > 20)
             snapshot = await asyncio.to_thread(read)
+            await self._recheck_owned_session(username, service, session_id)
             self._same_app_memory_resources(username, session, resources)
             return self._ok(dict(session_id=session_id, **snapshot, editable=True,
                 shared_qq_read_only=True, state='current'))
@@ -1802,6 +1828,8 @@ class NativeChatWebApi:
     def _record_text(content):
         if not isinstance(content, dict):
             return ''
+        from .core.living.structured_reply import visible_content
+        content = visible_content(content)
         parts = content.get('message', [])
         if isinstance(parts, str):
             return parts
@@ -2254,6 +2282,8 @@ class NativeChatWebApi:
         exact server-owned checkpoint; an unknown send is never resubmitted.
         """
         final_state = 'stream_finished'
+        from .core.living.structured_reply import ReplyProjection
+        projection = ReplyProjection()
         yield 'data: '+json.dumps({'type':'tls_generation_state','data':{'phase':'queued','source':'sdk_run_accepted'}})+'\n\n'
         if action_receipt is not None:
             yield 'data: ' + json.dumps({'type': 'tls_action_result', 'data': action_receipt}, ensure_ascii=False) + '\n\n'
@@ -2262,11 +2292,9 @@ class NativeChatWebApi:
             emitted=chunk
             if isinstance(text,str) and text.startswith('data: '):
                 try:
-                    frame=json.loads(text[6:].strip())
+                    frame=projection.frame(json.loads(text[6:].strip()))
+                    emitted='data: '+json.dumps(frame,ensure_ascii=False)+'\n\n'
                     if frame.get('type')in {'plain','complete'}and isinstance(frame.get('data'),str)and frame['data']:
-                        from .core.living.structured_reply import display
-                        frame['data']=display(frame['data'])
-                        emitted='data: '+json.dumps(frame,ensure_ascii=False)+'\n\n'
                         reasoning=frame.get('chain_type')=='reasoning'
                         phase='generating' if reasoning else 'streaming'
                         source='model_reasoning_received' if reasoning else 'model_output_received'

@@ -1,100 +1,441 @@
 {
- "id": "example",
- "name": "示例角色",
- "whitelist": [],
- "forbidden": [
-  "public",
-  "stranger",
-  "third_party"
- ],
- "body": {
-  "height_cm": 170
- },
- "parts": [
-  {
-   "id": "ear_tip",
-   "label": "耳尖",
-   "sens": 9,
-   "half_life": 900,
-   "aliases": [
-    "耳朵"
-   ],
-   "radiate": {},
-   "viz": [
-    100,
-    60
-   ]
+  "id": "example",
+  "name": "示例角色",
+  "whitelist": [],
+  "forbidden": [
+    "public",
+    "stranger",
+    "third_party"
+  ],
+  "body": {
+    "height_cm": 170
   },
-  {
-   "id": "nape",
-   "label": "后颈",
-   "sens": 7,
-   "half_life": 900,
-   "aliases": [],
-   "radiate": {},
-   "viz": [
-    100,
-    96
-   ]
+  "parts": [
+    {
+      "id": "ear_tip",
+      "label": "耳尖",
+      "sens": 9,
+      "half_life": 900,
+      "aliases": [
+        "耳朵"
+      ],
+      "radiate": {},
+      "viz": [
+        100,
+        60
+      ]
+    },
+    {
+      "id": "nape",
+      "label": "后颈",
+      "sens": 7,
+      "half_life": 900,
+      "aliases": [],
+      "radiate": {},
+      "viz": [
+        100,
+        96
+      ]
+    },
+    {
+      "id": "shoulder",
+      "label": "肩膀",
+      "sens": 5,
+      "half_life": 900,
+      "aliases": [],
+      "radiate": {},
+      "viz": [
+        140,
+        156
+      ]
+    },
+    {
+      "id": "hand",
+      "label": "手掌",
+      "sens": 7,
+      "half_life": 900,
+      "aliases": [],
+      "radiate": {},
+      "viz": [
+        140,
+        228
+      ]
+    },
+    {
+      "id": "sole",
+      "label": "脚心",
+      "sens": 7,
+      "half_life": 900,
+      "aliases": [],
+      "radiate": {},
+      "viz": [
+        140,
+        264
+      ]
+    },
+    {
+      "id": "head_top",
+      "label": "头顶",
+      "sens": 5,
+      "half_life": 1200,
+      "aliases": [
+        "头顶",
+        "脑袋"
+      ],
+      "group": "face"
+    },
+    {
+      "id": "cheek",
+      "label": "脸颊",
+      "sens": 7,
+      "half_life": 900,
+      "aliases": [
+        "脸",
+        "脸颊",
+        "脸蛋"
+      ],
+      "group": "face"
+    },
+    {
+      "id": "collarbone",
+      "label": "锁骨",
+      "sens": 5,
+      "half_life": 900,
+      "aliases": [
+        "锁骨"
+      ],
+      "group": "upper"
+    },
+    {
+      "id": "back",
+      "label": "背",
+      "sens": 3,
+      "half_life": 1200,
+      "aliases": [
+        "后背",
+        "背"
+      ],
+      "group": "upper"
+    },
+    {
+      "id": "waist",
+      "label": "腰侧",
+      "sens": 3,
+      "half_life": 1200,
+      "aliases": [
+        "腰",
+        "腰侧",
+        "侧腰"
+      ],
+      "group": "upper"
+    },
+    {
+      "id": "belly",
+      "label": "腹部",
+      "sens": 3,
+      "half_life": 1200,
+      "aliases": [
+        "肚子",
+        "腹部"
+      ],
+      "group": "upper"
+    },
+    {
+      "id": "arm",
+      "label": "手臂",
+      "sens": 3,
+      "half_life": 1500,
+      "aliases": [
+        "手臂",
+        "胳膊"
+      ],
+      "group": "hands"
+    },
+    {
+      "id": "wrist",
+      "label": "手腕",
+      "sens": 4,
+      "half_life": 1200,
+      "aliases": [
+        "手腕"
+      ],
+      "group": "hands"
+    },
+    {
+      "id": "palm",
+      "label": "手掌",
+      "sens": 6,
+      "half_life": 1500,
+      "aliases": [
+        "手心",
+        "手掌"
+      ],
+      "group": "hands"
+    },
+    {
+      "id": "thigh",
+      "label": "大腿",
+      "sens": 2,
+      "half_life": 1200,
+      "aliases": [
+        "大腿"
+      ],
+      "group": "legs"
+    },
+    {
+      "id": "knee",
+      "label": "膝",
+      "sens": 4,
+      "half_life": 1500,
+      "aliases": [
+        "膝盖",
+        "膝"
+      ],
+      "group": "legs"
+    },
+    {
+      "id": "calf",
+      "label": "小腿",
+      "sens": 3,
+      "half_life": 1500,
+      "aliases": [
+        "小腿"
+      ],
+      "group": "legs"
+    },
+    {
+      "id": "ankle",
+      "label": "脚踝",
+      "sens": 4,
+      "half_life": 1500,
+      "aliases": [
+        "脚踝"
+      ],
+      "group": "legs"
+    },
+    {
+      "id": "tail_root",
+      "label": "尾根",
+      "sens": 6,
+      "half_life": 900,
+      "aliases": [
+        "尾巴",
+        "尾根"
+      ],
+      "radiate": {
+        "waist": 0.2
+      },
+      "group": "tail"
+    },
+    {
+      "id": "n1",
+      "label": "01",
+      "sens": 10,
+      "half_life": 600,
+      "radiate": {
+        "n3": 0.25,
+        "n4": 0.3
+      },
+      "viz": [
+        100,
+        336,
+        -2
+      ],
+      "aliases": [],
+      "group": "other"
+    },
+    {
+      "id": "n2",
+      "label": "02",
+      "sens": 8,
+      "half_life": 750,
+      "radiate": {
+        "n3": 0.25
+      },
+      "viz": [
+        100,
+        300,
+        10
+      ],
+      "aliases": [],
+      "group": "other"
+    },
+    {
+      "id": "n3",
+      "label": "03",
+      "sens": 9,
+      "half_life": 750,
+      "radiate": {
+        "n1": 0.2
+      },
+      "viz": [
+        100,
+        362,
+        8
+      ],
+      "aliases": [],
+      "group": "other"
+    },
+    {
+      "id": "n4",
+      "label": "04",
+      "sens": 9,
+      "half_life": 750,
+      "radiate": {
+        "n1": 0.25,
+        "n5": 0.2
+      },
+      "viz": [
+        100,
+        340,
+        -10
+      ],
+      "aliases": [],
+      "group": "other"
+    },
+    {
+      "id": "n5",
+      "label": "05",
+      "sens": 8,
+      "half_life": 900,
+      "radiate": {
+        "n4": 0.2
+      },
+      "viz": [
+        100,
+        355,
+        -8
+      ],
+      "aliases": [],
+      "group": "other"
+    },
+    {
+      "id": "ear_base",
+      "label": "耳根",
+      "sens": 5,
+      "half_life": 900,
+      "aliases": [
+        "耳根"
+      ],
+      "group": "ears"
+    },
+    {
+      "id": "ear_outer",
+      "label": "耳廓",
+      "sens": 5,
+      "half_life": 900,
+      "aliases": [
+        "耳廓",
+        "耳缘"
+      ],
+      "group": "ears"
+    },
+    {
+      "id": "forehead",
+      "label": "额头",
+      "sens": 5,
+      "half_life": 1200,
+      "aliases": [
+        "额头",
+        "前额"
+      ],
+      "group": "face"
+    },
+    {
+      "id": "temple",
+      "label": "太阳穴",
+      "sens": 5,
+      "half_life": 1200,
+      "aliases": [
+        "太阳穴"
+      ],
+      "group": "face"
+    },
+    {
+      "id": "chin",
+      "label": "下巴",
+      "sens": 5,
+      "half_life": 900,
+      "aliases": [
+        "下巴"
+      ],
+      "group": "face"
+    },
+    {
+      "id": "hand_back",
+      "label": "手背",
+      "sens": 5,
+      "half_life": 1500,
+      "aliases": [
+        "手背"
+      ],
+      "group": "hands"
+    },
+    {
+      "id": "fingers",
+      "label": "手指",
+      "sens": 5,
+      "half_life": 1500,
+      "aliases": [
+        "手指"
+      ],
+      "group": "hands"
+    },
+    {
+      "id": "fingertips",
+      "label": "指尖",
+      "sens": 5,
+      "half_life": 1500,
+      "aliases": [
+        "指尖",
+        "手指尖"
+      ],
+      "group": "hands"
+    },
+    {
+      "id": "tail_middle",
+      "label": "尾中段",
+      "sens": 5,
+      "half_life": 900,
+      "aliases": [
+        "尾中段",
+        "尾巴中段"
+      ],
+      "group": "tail"
+    },
+    {
+      "id": "tail_tip",
+      "label": "尾尖",
+      "sens": 5,
+      "half_life": 900,
+      "aliases": [
+        "尾尖",
+        "尾巴尖"
+      ],
+      "group": "tail"
+    }
+  ],
+  "tiers": [
+    {
+      "key": "notice",
+      "min": 0.15
+    },
+    {
+      "key": "react",
+      "min": 0.3
+    },
+    {
+      "key": "lose",
+      "min": 0.5
+    },
+    {
+      "key": "overload",
+      "min": 0.85
+    }
+  ],
+  "render": {
+    "max_chars": 400,
+    "show_numbers_to_model": true
   },
-  {
-   "id": "shoulder",
-   "label": "肩膀",
-   "sens": 5,
-   "half_life": 900,
-   "aliases": [],
-   "radiate": {},
-   "viz": [
-    140,
-    156
-   ]
-  },
-  {
-   "id": "hand",
-   "label": "手掌",
-   "sens": 7,
-   "half_life": 900,
-   "aliases": [],
-   "radiate": {},
-   "viz": [
-    140,
-    228
-   ]
-  },
-  {
-   "id": "sole",
-   "label": "脚心",
-   "sens": 7,
-   "half_life": 900,
-   "aliases": [],
-   "radiate": {},
-   "viz": [
-    140,
-    264
-   ]
-  }
- ],
- "tiers": [
-  {
-   "key": "notice",
-   "min": 0.15
-  },
-  {
-   "key": "react",
-   "min": 0.3
-  },
-  {
-   "key": "lose",
-   "min": 0.5
-  },
-  {
-   "key": "overload",
-   "min": 0.85
-  }
- ],
- "render": {
-  "max_chars": 400,
-  "show_numbers_to_model": true
- },
- "params": {}
+  "params": {}
 }

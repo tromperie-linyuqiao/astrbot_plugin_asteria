@@ -2,7 +2,7 @@
 /* Recoverable snapshots only. Drafts, credentials, preferences and send state
    have separate owners. No timers, network calls or send queue live here. */
 window.ChatCache = (() => {
-  const KEY = 'asteria-chat.saved-history.v1';
+  const KEY = 'texas-chat.saved-history.v1';
   const limits = Object.freeze({ ttlMs: 30 * 86400000, accounts: 4, sessions: 20, messages: 250, chars: 1500000 });
   let error = '';
   const clone = value => JSON.parse(JSON.stringify(value));
@@ -130,4 +130,128 @@ window.ChatCache = (() => {
       bytes: account ? JSON.stringify(account).length * 2 : 0, error, limits };
   }
   return Object.freeze({ sessions, save, restore, history, remove, clear, stats, limits });
+})();
+
+/* Image previews have one bounded disk owner. History keeps references only.
+   No credentials, network, message sends or server writes are stored here. */
+window.ChatMediaCache = (() => {
+  const limits = Object.freeze({ bytes: 64 * 1024 * 1024, count: 256, ttlMs: 30 * 86400000 });
+  let database, epoch = 0, error = '';
+  const scope = (server, user) => JSON.stringify([server, user]);
+  const valid = body => body && typeof body.data_url === 'string' && body.data_url.length <= 12 * 1024 * 1024
+    && /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(body.data_url);
+  function db() {
+    if (!database) database = new Promise((resolve, reject) => {
+      const request = indexedDB.open('texas-chat-media-v1', 2);
+      request.onupgradeneeded = () => {
+        for (const name of ['images','index','catalogs'])
+          if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name, { keyPath: 'key' });
+      };
+      request.onsuccess = () => { request.result.onversionchange = () => { request.result.close(); database = null; }; resolve(request.result); };
+      request.onerror = () => reject(request.error);
+      request.onblocked = () => reject(new Error('media_database_busy'));
+    }).catch(failure => { database = null; throw failure; });
+    return database;
+  }
+  async function run(mode, action) {
+    const opened = await db();
+    return new Promise((resolve, reject) => {
+      const tx = opened.transaction(['images', 'index', 'catalogs'], mode); let value;
+      tx.oncomplete = () => resolve(value); tx.onabort = tx.onerror = () => reject(tx.error || new Error('media_storage_failed'));
+      try { action(tx.objectStore('images'), tx.objectStore('index'), result => { value = result; }, tx.objectStore('catalogs')); }
+      catch (failure) { tx.abort(); reject(failure); }
+    });
+  }
+  async function get(owner, resource, version = null) {
+    const generation = epoch, key = JSON.stringify([owner, resource]);
+    try {
+      const value = await run('readwrite', (images, index, done) => {
+        const request = images.get(key);
+        request.onsuccess = () => {
+          const row = request.result, now = Date.now();
+          if (!row || generation !== epoch) return done(null);
+          if (!valid(row.body) || now - row.touched > limits.ttlMs || now < row.touched
+              || version != null && row.version !== version) {
+            images.delete(key); index.delete(key); return done(null);
+          }
+          row.touched = now; images.put(row);
+          index.put({ key, owner, touched: now, bytes: row.bytes }); done(row.body);
+        };
+      });
+      return generation === epoch ? value || null : null;
+    } catch (_) { error = '图片缓存暂不可读取，联网图片仍可使用。'; return null; }
+  }
+  async function put(owner, resource, version, body, generation = epoch) {
+    if (!valid(body) || generation !== epoch) return false;
+    const key = JSON.stringify([owner, resource]), bytes = body.data_url.length * 2;
+    try {
+      return await run('readwrite', (images, index, done) => {
+        if (generation !== epoch) return done(false);
+        const now = Date.now(), metadata = { key, owner, touched: now, bytes };
+        images.put({ ...metadata, version, body: { data_url: body.data_url, mime_type: body.mime_type || body.data_url.split(';')[0].slice(5) } });
+        index.put(metadata);
+        const request = index.getAll();
+        request.onsuccess = () => {
+          const rows = request.result.sort((a,b) => a.touched - b.touched);
+          let total = rows.reduce((sum,row) => sum + row.bytes, 0), count = rows.length;
+          for (const row of rows) {
+            if (row.key === key) continue;
+            if (total <= limits.bytes && count <= limits.count && now-row.touched <= limits.ttlMs) continue;
+            images.delete(row.key); index.delete(row.key); total -= row.bytes; count--;
+          }
+          error = ''; done(true);
+        };
+      });
+    } catch (_) { error = '图片缓存未保存；已加载图片仍可查看。'; return false; }
+  }
+  const catalogLimits = Object.freeze({ count:8, bytes:2*1024*1024, rowBytes:512*1024, ttlMs:30*86400000 });
+  function validCatalog(value) {
+    return value && Array.isArray(value.items) && value.items.length <= 1000
+      && value.items.every(row=>row && typeof row==='object' && !Array.isArray(row)
+        && typeof (row.id||row.asset_id)==='string' && (row.id||row.asset_id).length<=128)
+      && JSON.stringify(value).length*2<=catalogLimits.rowBytes;
+  }
+  async function catalogGet(owner, resource) {
+    const generation=epoch,key=JSON.stringify([owner,resource]);
+    try {
+      const row=await run('readonly',(_,__,done,catalogs)=>{const request=catalogs.get(key);request.onsuccess=()=>done(request.result);});
+      return generation===epoch && row && row.owner===owner && Date.now()>=row.savedAt
+        && Date.now()-row.savedAt<catalogLimits.ttlMs && validCatalog(row.body) ? row.body : null;
+    } catch (_) { return null; }
+  }
+  async function catalogPut(owner, resource, body, generation=epoch) {
+    if(generation!==epoch||!validCatalog(body))return false;
+    try {return await run('readwrite',(_,__,done,catalogs)=>{
+      if(generation!==epoch)return done(false);
+      const key=JSON.stringify([owner,resource]),savedAt=Date.now(),bytes=JSON.stringify(body).length*2;
+      catalogs.put({key,owner,savedAt,bytes,body});
+      const request=catalogs.getAll();request.onsuccess=()=>{
+        const rows=request.result.sort((a,b)=>a.savedAt-b.savedAt);let total=rows.reduce((sum,row)=>sum+row.bytes,0),count=rows.length;
+        for(const row of rows){if(row.key===key)continue;if(total<=catalogLimits.bytes&&count<=catalogLimits.count&&savedAt-row.savedAt<=catalogLimits.ttlMs)continue;catalogs.delete(row.key);total-=row.bytes;count--;}
+        done(true);
+      };
+    });}catch(_){return false;}
+  }
+  async function clear(owner = null) {
+    epoch++;
+    try {
+      return await run('readwrite', (images,index,done,catalogs) => {
+        const result={ok:true,removed:0,catalogs_removed:0};done(result);
+        const request = index.getAll(); request.onsuccess = () => {
+          for (const row of request.result) if (owner == null || owner === row.owner) { images.delete(row.key); index.delete(row.key); result.removed++; }
+          error = '';
+        };
+        const list=catalogs.getAll();list.onsuccess=()=>{for(const row of list.result)if(owner==null||owner===row.owner){catalogs.delete(row.key);result.catalogs_removed++;}};
+      });
+    } catch (_) { return { ok:false, removed:0 }; }
+  }
+  async function status(owner = null) {
+    try {
+      return await run('readonly', (_,index,done) => { const request=index.getAll();request.onsuccess=()=>{
+        const rows=request.result.filter(row=>owner==null||row.owner===owner);
+        done({ok:true,count:rows.length,bytes:rows.reduce((sum,row)=>sum+row.bytes,0),limits,error});
+      }; });
+    } catch (_) { return {ok:false,error:'图片缓存暂不可读取。',limits}; }
+  }
+  return Object.freeze({scope,get,put,clear,status,limits,catalogGet,catalogPut,catalogLimits,generation:()=>epoch});
 })();

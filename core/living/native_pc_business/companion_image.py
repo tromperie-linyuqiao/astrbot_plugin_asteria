@@ -31,7 +31,7 @@ _SCENES = {
 }
 _CAPTIONS = {
     "care": "安静陪伴的日常人物画面", "night": "低光下安静休息的日常人物画面",
-    "daily": "角色日常状态的人物画面", "weather_rain": "雨天环境中的日常人物画面",
+    "daily": "德克萨斯日常状态的人物画面", "weather_rain": "雨天环境中的日常人物画面",
     "weather_snow": "雪天环境中的日常人物画面", "weather_cold": "凉冷天气中的日常人物画面",
     "weather_hot": "温暖天气中的日常人物画面", "weather_wind": "风中环境的日常人物画面",
     "weather_clear": "晴朗环境中的日常人物画面", "weather_overcast": "阴天环境中的日常人物画面",

@@ -231,7 +231,7 @@ window.AsteriaChatPerception = (() => {
     function close() { epoch++; owner = ''; busy = false; if (dialog.open) dialog.close(); }
     function scopeChanged() { if (owner && (!state.authenticated || owner !== scope())) { stopEpoch++; close(); } }
     function open() {
-      if (!state.authenticated || !state.activeId) { showNotice('先登录并连接伙伴。'); return; }
+      if (!state.authenticated || !state.activeId) { showNotice('先登录并连接角色。'); return; }
       $('more-menu').hidden = true; $('more-button').setAttribute('aria-expanded', 'false');
       epoch++; owner = scope(); busy = false; server = null; nativeState = null; installationId = '';
       $('perception-device').replaceChildren(); $('perception-enabled').checked = false; $('perception-consent').checked = false;

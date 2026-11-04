@@ -48,7 +48,7 @@ public final class MainActivity extends Activity {
     private static final int MAX_RESPONSE = 8 * 1024 * 1024;
     private static final int ATTACHMENT_PICKER = 6401;
     private static final int SPEECH_RECOGNIZER = 6403;
-    private static final String CHANNEL_ID = "asteria-chat-replies";
+    private static final String CHANNEL_ID = "texas-chat-replies";
     private static final int NOTIFICATION_PERMISSION = 6402;
     private static final AttachmentCacheRecovery ATTACHMENT_RECOVERY = new AttachmentCacheRecovery();
     private final AtomicBoolean localPage = new AtomicBoolean(false);
@@ -57,7 +57,7 @@ public final class MainActivity extends Activity {
     private WebView web;
     private ChatViewportController viewport;
     private NativeBridge bridge;
-    private AsteriaVoice voice;
+    private TexasVoice voice;
     private ReplyWatchService.Observer replyWatchObserver;
     private Intent pendingReplyIntent;
     private boolean replyAccountSwitching;
@@ -103,12 +103,7 @@ public final class MainActivity extends Activity {
         getWindow().setNavigationBarColor(Color.rgb(22, 26, 24));
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationManager channels = getSystemService(NotificationManager.class);
-            if (channels != null && channels.getNotificationChannel(CHANNEL_ID) == null) {
-                NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "聊天回复",
-                        NotificationManager.IMPORTANCE_HIGH);
-                channel.setDescription("服务器出现新回复时提醒；通知由本机读取记录产生，不是服务器推送。");
-                channels.createNotificationChannel(channel);
-            }
+            NotificationChannels.ensure(channels);
         }
         web = new WebView(this);
         web.setBackgroundColor(Color.rgb(22, 26, 24));
@@ -126,7 +121,7 @@ public final class MainActivity extends Activity {
         settings.setSafeBrowsingEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(true);
         bridge = new NativeBridge();
-        voice = new AsteriaVoice(this, value -> {if(trusted() && web!=null) web.evaluateJavascript("window.ChatVoice&&window.ChatVoice.receive("+value.toString()+")",null);});
+        voice = new TexasVoice(this, value -> {if(trusted() && web!=null) web.evaluateJavascript("window.ChatVoice&&window.ChatVoice.receive("+value.toString()+")",null);});
         if (bridge.token == null) {
             PhonePerceptionService.stop(this, "login_required");
             // Explicit saved background accounts remain independent of the visible login.
@@ -211,7 +206,9 @@ public final class MainActivity extends Activity {
         super.onResume();
         if (destroyed.get()) return;
         foreground.set(true);
-        if (bridge != null) ReplyWatchService.setVisibleAccount(bridge.server, bridge.token);
+        if (bridge != null) synchronized (bridge.lock) {
+            ReplyWatchService.setVisibleAccount(bridge.server, bridge.token, bridge.visibleSession);
+        }
         ReplyWatchService.setAppForeground(true);
         ReplyWatchService.resumeEnabled(this);
         if (web != null && !destroyed.get()) web.onResume();
@@ -255,8 +252,13 @@ public final class MainActivity extends Activity {
         if (!trusted() || web == null || bridge == null || pendingReplyIntent == null || replyAccountSwitching) return;
         final Intent selected = pendingReplyIntent;
         final String session;
+        final String sourceServer, sourceUser;
+        final long sourceEpoch;
         synchronized (bridge.lock) {
             session = ReplyWatchService.notificationSession(selected, bridge.server, bridge.token);
+            sourceServer = bridge.server;
+            sourceUser = AttachmentCache.username(bridge.token);
+            sourceEpoch = bridge.epoch;
         }
         if (session == null) {
             final String accountId = selected.getStringExtra("reply_watch_scope");
@@ -277,8 +279,12 @@ public final class MainActivity extends Activity {
         if (notifiedMessage == null || notifiedMessage.length() > 160) notifiedMessage = "";
         String clickTarget = "conversation".equals(selected.getStringExtra("reply_click_target")) ? "conversation" : "message";
         web.evaluateJavascript("Boolean(window.AsteriaChatUI&&typeof window.AsteriaChatUI.openConversation==='function'"
-                + "&&(window.AsteriaChatUI.openConversation(" + JSONObject.quote(session) + "," + JSONObject.quote(notifiedMessage) + "," + JSONObject.quote(clickTarget) + "),true))", result -> {
-            if ("true".equals(result) && pendingReplyIntent == selected) pendingReplyIntent = null;
+                + "&&window.AsteriaChatUI.openConversation(" + JSONObject.quote(session) + "," + JSONObject.quote(notifiedMessage) + "," + JSONObject.quote(clickTarget)
+                + "," + json("server", sourceServer, "username", sourceUser) + "))", result -> {
+            synchronized (bridge.lock) {
+                // A queued UI call must not later switch back after the user chose another account.
+                if (pendingReplyIntent == selected && ("true".equals(result) || bridge.epoch != sourceEpoch)) pendingReplyIntent = null;
+            }
         });
     }
 
@@ -322,7 +328,7 @@ public final class MainActivity extends Activity {
         private final TokenVault vault = new TokenVault(MainActivity.this);
         private final ThreadPoolExecutor executor = new ThreadPoolExecutor(2, 2, 0L, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<Runnable>(32), runnable -> {
-                    Thread thread = new Thread(runnable, "asteria-chat-http");
+                    Thread thread = new Thread(runnable, "texas-chat-http");
                     thread.setDaemon(true);
                     return thread;
                 }, new ThreadPoolExecutor.AbortPolicy());
@@ -367,7 +373,7 @@ public final class MainActivity extends Activity {
                 epoch++;
                 runOnUiThread(() -> {if(voice!=null)voice.stop();}); server = selected.server; token = selected.token; visibleSession = selected.session;
             }
-            ReplyWatchService.setVisibleAccount(selected.server, selected.token);
+            ReplyWatchService.setVisibleAccount(selected.server, selected.token, selected.session);
             return json("ok", true, "config", decode(getConfig(), "application/json"));
         }
 
@@ -375,6 +381,40 @@ public final class MainActivity extends Activity {
             if (!trusted() || !foreground.get()) return json("ok", false, "error", "foreground_required").toString();
             try { return activateSavedReplyAccount(accountId).toString(); }
             catch (Exception unavailable) { return json("ok", false, "error", "saved_account_unavailable").toString(); }
+        }
+
+        @JavascriptInterface public String rememberReplyAccount(String sessionId, String title, String lastId, String excerpt) {
+            if (!trusted() || !foreground.get()) return json("ok", false, "error", "foreground_required").toString();
+            try {
+                AttachmentPolicy.session(sessionId);
+                AuthState auth = attachmentAuth();
+                synchronized (lock) {
+                    requireCurrent(auth);
+                    if (!sessionId.equals(visibleSession) || !auth.token.equals(vault.load(auth.server)))
+                        throw new IllegalStateException("saved_login_required");
+                    ReplyWatchService.rememberAccount(MainActivity.this, auth.server, auth.token, sessionId, title, lastId, excerpt);
+                }
+                return json("ok", true, "service_started", false).toString();
+            } catch (RuntimeException unavailable) { return json("ok", false, "error", "saved_account_unavailable").toString(); }
+        }
+
+        @JavascriptInterface public String startReplyWatchAccount(String accountId) {
+            if (!trusted() || !foreground.get()) return json("ok", false, "error", "foreground_required").toString();
+            try {
+                ReplyWatchAccounts.Record record = ReplyWatchAccounts.find(MainActivity.this, accountId);
+                if (record == null) throw new IllegalStateException("saved_account_unavailable");
+                if (!NotificationPreferences.load(MainActivity.this).enabled)
+                    throw new IllegalStateException("notifications_disabled");
+                if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) throw new IllegalStateException("notification_permission");
+                runOnUiThread(() -> {
+                    if (foreground.get() && ReplyWatchAccounts.matches(MainActivity.this, record)) {
+                        try { ReplyWatchService.start(MainActivity.this, record.server, record.token, record.session, record.title, record.baseline); }
+                        catch (RuntimeException unavailable) { /* Read actual target status; never report started here. */ }
+                    }
+                });
+                return json("ok", true, "account_id", accountId, "state", "starting").toString();
+            } catch (RuntimeException unavailable) { return json("ok", false, "error", unavailable.getMessage()).toString(); }
         }
 
         @JavascriptInterface public String stopReplyWatchAccount(String accountId) {
@@ -405,7 +445,7 @@ public final class MainActivity extends Activity {
                     requireCurrent(auth);
                     NotificationIdentity.save(MainActivity.this, ReplyWatchService.scope(auth.server, auth.token, sessionId), name, avatarDataUrl);
                     synchronized (lock) { visibleSession = sessionId; }
-                    ReplyWatchService.setVisibleAccount(auth.server, auth.token);
+                    ReplyWatchService.setVisibleAccount(auth.server, auth.token, sessionId);
                 }
                 return json("ok", true).toString();
             } catch (Exception invalid) { return json("ok", false, "error", "notification_identity_unavailable").toString(); }
@@ -426,6 +466,46 @@ public final class MainActivity extends Activity {
         @JavascriptInterface public String getNotificationStatus() {
             return trusted() ? ReplyWatchService.notificationStatus(MainActivity.this)
                     : json("ok", false, "error", "local_page_required", "heads_up_guaranteed", false).toString();
+        }
+
+        @JavascriptInterface public String openNotificationCategorySettings(String kind) {
+            if (!trusted() || !foreground.get()) return json("ok", false, "error", "foreground_required").toString();
+            if (!NotificationChannels.validKind(kind)) return json("ok", false, "error", "invalid_category").toString();
+            Intent settings = new Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName())
+                    .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, NotificationChannels.id(kind));
+            if (settings.resolveActivity(getPackageManager()) == null) settings = new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName());
+            if (settings.resolveActivity(getPackageManager()) == null) return json("ok", false, "error", "notification_settings_unavailable").toString();
+            final Intent destination = settings;
+            runOnUiThread(() -> {
+                if (!trusted() || !foreground.get()) return;
+                try { startActivity(destination); }
+                catch (RuntimeException unavailable) { Toast.makeText(MainActivity.this, "请从手机设置查看 Asteria Chat 的通知类别。", Toast.LENGTH_LONG).show(); }
+            });
+            return json("ok", true, "settings_opening", true, "category", kind).toString();
+        }
+
+        @JavascriptInterface public String testLocalNotification(String kind) {
+            if (!trusted() || !foreground.get()) return json("ok", false, "error", "foreground_required").toString();
+            if (!NotificationChannels.validKind(kind)) return json("ok", false, "error", "invalid_category").toString();
+            try {
+                NotificationManager manager = getSystemService(NotificationManager.class);
+                if (manager == null || !manager.areNotificationsEnabled() || (Build.VERSION.SDK_INT >= 33
+                        && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED))
+                    return json("ok", false, "error", "notification_permission").toString();
+                if (!NotificationChannels.allowed(manager, kind)) return json("ok", false, "error", "notification_channel_blocked").toString();
+                if (!NotificationPreferences.load(MainActivity.this).allows(kind, java.util.Calendar.getInstance()))
+                    return json("ok", false, "error", "notification_preference_or_quiet").toString();
+                android.app.PendingIntent open = android.app.PendingIntent.getActivity(MainActivity.this, 5290,
+                        new Intent(MainActivity.this, MainActivity.class), android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+                android.app.Notification note = new android.app.Notification.Builder(MainActivity.this, NotificationChannels.id(kind))
+                        .setSmallIcon(R.drawable.ic_notification).setContentTitle("Asteria Chat 通知检查")
+                        .setContentText("这是本机显示检查，没有发送消息或联系服务器。")
+                        .setContentIntent(open).setAutoCancel(true).build();
+                manager.notify("texas-chat.local-check." + kind, 5290, note);
+                return json("ok", true, "posted", true, "delivered", false, "local_only", true).toString();
+            } catch (RuntimeException unavailable) { return json("ok", false, "error", "notification_test_unconfirmed").toString(); }
         }
 
         @JavascriptInterface public String openNotificationSettings() {
@@ -696,12 +776,21 @@ public final class MainActivity extends Activity {
         @JavascriptInterface public String clearAuth() {
             if (!trusted()) return json("ok", false, "error", "local_page_required").toString();
             synchronized (lock) {
-                PhonePerceptionService.stop(MainActivity.this, "logged_out");
-                ReplyWatchService.stopAccount(MainActivity.this, server, token, "logged_out");
+                try {
+                    PhonePerceptionService.stop(MainActivity.this, "logged_out");
+                    ReplyWatchService.stopAccount(MainActivity.this, server, token, "logged_out");
+                } catch (RuntimeException failure) {
+                    // Keep the account identity so an explicit retry can remove its saved watches.
+                    return json("ok", false, "authenticated", ApiPolicy.jwt(token),
+                            "error", "notification_logout_failed").toString();
+                }
                 epoch++;
                 runOnUiThread(() -> {if(voice!=null)voice.stop();});
-                token = null;
-                boolean saved = vault.clear();
+                token = null; visibleSession = "";
+                ReplyWatchService.setVisibleAccount(server, null);
+                boolean saved;
+                try { saved = vault.clear(); }
+                catch (RuntimeException failure) { saved = false; }
                 return json("ok", saved, "authenticated", false,
                         "error", saved ? JSONObject.NULL : "persistent_logout_failed").toString();
             }

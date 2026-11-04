@@ -6,7 +6,7 @@ function mount(container,{api,getScope=()=>null}){
  let scope=null,version=0,last=null,busy=false,disposed=false;
  const make=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
  container.replaceChildren();container.classList.add('daily-brief');
- const head=make('section',undefined,'panel brief-hero'),title=make('h2','角色的今日简报'),lead=make('p','把今天的安排和临近的重要日期放在一起。','hint');
+ const head=make('section',undefined,'panel brief-hero'),title=make('h2','德克萨斯的今日简报'),lead=make('p','把今天的安排和临近的重要日期放在一起。','hint');
  const actions=make('div',undefined,'actions'),zone=make('select'),label=make('label','简报时区 '),refresh=make('button','刷新简报'),download=make('button','导出本次简报');
  for(const z of ['UTC+08:00','UTC','UTC+09:00','UTC-05:00']){const o=make('option',z);o.value=z;zone.append(o);}label.append(zone);refresh.type=download.type='button';download.disabled=true;actions.append(label,refresh,download);head.append(title,lead,actions);
  const status=make('p','请选择上方完整会话。','hint');status.setAttribute('role','status');const body=make('div',undefined,'brief-grid');container.append(head,status,body);
@@ -26,7 +26,7 @@ function mount(container,{api,getScope=()=>null}){
  }
  function setScope(s){const next=full(s)?Object.fromEntries(FIELDS.map(k=>[k,s[k]])):null;if(JSON.stringify(next)===JSON.stringify(scope))return;scope=next;version++;busy=false;last=null;body.replaceChildren();download.disabled=true;refresh.disabled=false;status.textContent=scope?'会话已切换，点击刷新读取当前资料。':'请选择上方完整会话。';}
  refresh.addEventListener('click',load);zone.addEventListener('change',()=>{version++;busy=false;last=null;download.disabled=true;refresh.disabled=false;body.replaceChildren();load();});
- download.addEventListener('click',()=>{if(!last||disposed||!same(last.scope,scope||getScope())||last.timezone!==zone.value)return;const blob=new Blob([JSON.stringify(last,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=make('a');a.href=url;a.download='asteria-daily-brief-'+last.day+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),0);});
+ download.addEventListener('click',()=>{if(!last||disposed||!same(last.scope,scope||getScope())||last.timezone!==zone.value)return;const blob=new Blob([JSON.stringify(last,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=make('a');a.href=url;a.download='texas-daily-brief-'+last.day+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),0);});
  return {setScope,activate:load,dispose(){disposed=true;version++;last=null;download.disabled=refresh.disabled=true;body.replaceChildren();}};
 }
 global.TLSDailyBrief=Object.freeze({mount});

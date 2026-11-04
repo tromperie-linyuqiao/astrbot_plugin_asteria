@@ -38,7 +38,7 @@ def settings(plugin):
 
 def availability(plugin):
     cfg = settings(plugin)
-    return dict(available=cfg['enabled'] and cfg['configured'], label=cfg['label'],
+    return dict(available=cfg['enabled'] and cfg['configured'], configured=cfg['configured'], reachability='not_probed', label=cfg['label'],
                 model=cfg['model'], models=cfg['models'], max_characters=MAX_TEXT,
                 asr=False, format='mp3', pitch=False, speed=True, credentials_on_server=True,
                 reason='' if cfg['enabled'] and cfg['configured'] else '服务端尚未启用或配置云端语音')
@@ -69,7 +69,29 @@ class CloudVoice:
         self.profile.current()
         return path, row['data']
 
-    def _reserve(self, identity, data):
+    def recent(self):
+        self.profile.current()
+        items = []
+        for row in self.journal.list(NS, self.scope, limit=8):
+            data = row['data']
+            state = data.get('state', 'unknown')
+            cached = False
+            if state == 'ready':
+                try:
+                    self.read(row['key'])
+                    cached = True
+                except VoiceError:
+                    pass
+            items.append(dict(audio_id=row['key'], state=state, cached=cached,
+                revision=row['revision'], updated_at=row['updated_at'],
+                model=data.get('model', ''), preview=data.get('message_id') == 'preview',
+                message_id=data.get('message_id', ''), size=data.get('size', 0),
+                error=data.get('error_message', '') if state == 'failed' else '',
+                retryable=state == 'failed'))
+        self.profile.current()
+        return items
+
+    def _reserve(self, identity, data, retry_failed=False):
         self.profile.current()
         old = self.journal.fetch(NS, identity, self.scope)
         if old:
@@ -80,8 +102,11 @@ class CloudVoice:
                     return dict(cached, audio_id=identity, cached=True), None
                 except VoiceError:
                     pass  # Known completed synthesis, but its expendable cache was evicted.
+            elif old['data'].get('state') == 'failed':
+                if not retry_failed:
+                    raise VoiceError('上次合成已失败，未重复调用。'+(old['data'].get('error_message') or '')+' 如需再次调用，请点击明确重试。', 409)
             else:
-                raise VoiceError('这次合成仍在处理或结果不明，未重复调用付费接口。可重新读取声音设置或改用设备音色。', 409)
+                raise VoiceError('这次合成仍在处理或结果不明。请刷新语音记录；不会重复调用付费接口。', 409)
         row = self.journal.put(NS, identity, self.scope, dict(data, state='generating'),
             expected_revision=old['revision'] if old else 0, authorize=self.profile.current)
         return None, row
@@ -103,7 +128,7 @@ class CloudVoice:
             os.chmod(path, 0o600); stream.write(raw)
         return path
 
-    async def synthesize(self, text, message_id, chosen=None):
+    async def synthesize(self, text, message_id, chosen=None, *, retry_failed=False):
         cfg = settings(self.plugin)
         if not cfg['enabled'] or not cfg['configured']:
             raise VoiceError('当前服务器未配置可用的云端语音', 503)
@@ -120,7 +145,7 @@ class CloudVoice:
         identity = hashlib.sha256(canonical([scope_key(self.scope), cfg['base_url'], model, message_id, body]).encode()).hexdigest()
         data = dict(message_id=str(message_id), model=model, source='fish_tts', mime_type='audio/mpeg',
                     text_sha256=hashlib.sha256(text.encode()).hexdigest(), characters=len(text), created_at=time.time())
-        cached, row = await asyncio.to_thread(self._reserve, identity, data)
+        cached, row = await asyncio.to_thread(self._reserve, identity, data, retry_failed)
         if cached: return cached
         try:
             self.profile.current()
@@ -147,7 +172,7 @@ class CloudVoice:
             # Preserve an indeterminate request as such across restarts; no blind POST retry.
             try:
                 await asyncio.shield(asyncio.to_thread(self._finish, identity, row,
-                    dict(data, state='failed' if isinstance(exc, VoiceError) else 'unknown', error_type=type(exc).__name__)))
+                    dict(data, state='failed' if isinstance(exc, VoiceError) else 'unknown', error_type=type(exc).__name__, error_message=str(exc) if isinstance(exc, VoiceError) else '')))
             except Exception: pass
             if isinstance(exc, (VoiceError, asyncio.CancelledError, PermissionError)): raise
             raise VoiceError('云端语音未完成，结果不明；没有自动重试或改用其他模型。') from None

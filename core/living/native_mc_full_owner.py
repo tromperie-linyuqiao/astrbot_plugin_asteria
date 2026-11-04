@@ -25,12 +25,14 @@ from .native_mc.task_drain import source_codes, task_chain, task_codes
 from .native_mc.companion_identity import native_companion
 from .native_mc_owned_runtime import NativeOwnedMCContextRuntime
 from .native_mc_takeover_runtime import NativeMCTakeoverRuntime
+from .native_mc_retirement import NativeMCRetirement, SCHEMA as RETIREMENT_SCHEMA
 
 
 LEGACY = 'astrbot_plugin_memory_companion'
 FLAG = 'living_mc_full_native_enabled'
 CONFIG = 'living_mc'
 RETIRED_SLOT = '_tls_native_mc_retired_service'
+NATIVE_SLOT = '_tls_native_mc_lifecycle'
 BRANCH_FLAGS = ('living_mc_context_native_enabled', 'living_mc_explicit_native_enabled',
     'living_mc_relationship_native_enabled', 'living_mc_profile_native_enabled',
     'living_mc_summary_native_enabled')
@@ -38,6 +40,10 @@ HOOKS = ('handle_llm_request', 'handle_group_message', 'handle_llm_response')
 TOOLS = ('tool_recall', 'tool_navigate', 'tool_remember', 'tool_core_memory',
          'tool_note_create', 'tool_note_read', 'tool_note_delete')
 DISPATCHERS = ('_maintenance_dispatch_task', '_portrait_dispatch_task', '_wal_checkpoint_task')
+
+
+class NativeMCLifecyclePending(RuntimeError):
+    """No new native store may open until the retained lifecycle closes."""
 
 
 class NativeMCFullOwner:
@@ -59,6 +65,101 @@ class NativeMCFullOwner:
         self._last_config = None
         self._old_off_attempted = self._old_off_confirmed = False
         self._drain = dict(tasks=None, threads=None, queued=None, unknown=None)
+        self._native_record = None
+        self._pre_anchor_report = None
+
+    def inspect_predecessors(self):
+        self._pre_anchor_report = NativeMCRetirement(self, self._native_directory()).inspect()
+        return dict(self._pre_anchor_report)
+
+    def _native_pending(self, code):
+        self.phase, self.last_error = 'waiting_native_predecessor', code
+        raise NativeMCLifecyclePending(code)
+
+    def _native_directory(self):
+        from astrbot.api.star import StarTools
+        record = getattr(self.context, RETIRED_SLOT, None)
+        if self._legacy_service is not None:
+            return Path(self._legacy_service.data_dir).resolve()
+        if type(record) is dict and record.get('context') is self.context:
+            return Path(record['service'].data_dir).resolve()
+        return Path(StarTools.get_data_dir(LEGACY)).resolve()
+
+    def _claim_native(self, directory, adapter):
+        if getattr(self.context, NATIVE_SLOT, None) is not None:
+            self._native_pending('native_lifecycle_anchor_changed')
+        record = dict(schema='tls.mc.native.lifecycle.v1', context=self.context,
+            pid=os.getpid(), loop=asyncio.get_running_loop(), directory=directory,
+            owner=self, close=self.close, adapter=adapter, service=None,
+            work=adapter._work, adapter_close=adapter.close, stopping=False)
+        self._native_record = record
+        setattr(self.context, NATIVE_SLOT, record)
+
+    def _release_native(self):
+        record = self._native_record
+        if record is None:
+            return
+        if getattr(self.context, NATIVE_SLOT, None) is not record:
+            self._native_pending('native_lifecycle_anchor_changed')
+        delattr(self.context, NATIVE_SLOT)
+        self._native_record = None
+
+    async def _settle_native(self, directory):
+        record = getattr(self.context, NATIVE_SLOT, None)
+        if record is None:
+            return
+        if (type(record) is not dict or record.get('schema') != 'tls.mc.native.lifecycle.v1'
+                or record.get('context') is not self.context or record.get('pid') != os.getpid()
+                or record.get('loop') is not asyncio.get_running_loop()
+                or record.get('directory') != directory):
+            self._native_pending('native_lifecycle_reference_unverified')
+        previous, close = record.get('owner'), record.get('close')
+        kind = type(previous)
+        if (kind.__module__ != __name__ or kind.__name__ != type(self).__name__
+                or getattr(previous, 'context', None) is not self.context
+                or getattr(previous, '_native_record', None) is not record
+                or type(close) is not MethodType or close.__self__ is not previous
+                or close.__func__ is not vars(kind).get('close')):
+            self._native_pending('native_lifecycle_callback_unverified')
+        adapter = previous.adapter
+        if (adapter is None or record.get('adapter') is not adapter
+                or adapter.context is not self.context or adapter.data_dir != directory
+                or adapter.service is not record.get('service')):
+            self._native_pending('native_lifecycle_objects_changed')
+        for key, name in (('work', '_work'), ('adapter_close', 'close')):
+            saved, actual = record.get(key), getattr(adapter, name, None)
+            if (type(saved) is not MethodType or type(actual) is not MethodType
+                    or saved.__self__ is not adapter or actual.__self__ is not adapter
+                    or saved.__func__ is not actual.__func__
+                    or saved.__func__ is not vars(type(adapter)).get(name)):
+                self._native_pending('native_lifecycle_callback_unverified')
+        if record.get('stopping') is not True:
+            self._native_pending('previous_native_lifecycle_active')
+        if previous is not self and previous._lock.locked():
+            self._native_pending('previous_native_close_in_progress')
+        service = adapter.service
+        if not adapter.closed:
+            if adapter.active or service is not None and service._closing is not True:
+                self._native_pending('previous_native_lifecycle_not_stopped')
+            # This is a read of the original adapter's work, not adoption of
+            # its business. A pending unit is neither cancelled nor retried.
+            tasks = record['work']()
+            current = asyncio.current_task()
+            if current in adapter._calls or service is not None and current in service._background_tasks:
+                tasks.add(current)
+            if tasks:
+                self._native_pending('previous_native_memory_work_pending')
+        try:
+            if previous is self:
+                await self._stop_locked(False)
+            else:
+                await close()
+        except RuntimeError:
+            self._native_pending('previous_native_close_pending')
+        if (previous.adapter is not adapter or adapter.service is not service or not adapter.closed
+                or service is not None and (not service._closed or not service.store._closed)
+                or getattr(self.context, NATIVE_SLOT, None) is not None):
+            self._native_pending('previous_native_close_not_confirmed')
 
     def _rows(self):
         return [row for row in self.context.get_all_stars()
@@ -66,9 +167,9 @@ class NativeMCFullOwner:
 
     def _row(self):
         rows = self._rows()
-        if len(rows) != 1:
-            raise RuntimeError('original memory registry is not unique')
-        return rows[0]
+        if len(rows) > 1:
+            raise RuntimeError('conflicting memory registry entries')
+        return rows[0] if rows else None
 
     def _flags(self):
         return {name: self.plugin.config.get(name, False) is True for name in BRANCH_FLAGS}
@@ -337,7 +438,7 @@ class NativeMCFullOwner:
     def legacy_quiesced(self):
         try:
             row = self._row()
-            if getattr(row, 'activated', None) is not False:
+            if getattr(row, 'activated', False) is not False:
                 return False
             record = getattr(self.context, RETIRED_SLOT, None)
             if type(record) is dict:
@@ -353,7 +454,8 @@ class NativeMCFullOwner:
             if getattr(row, 'star_cls', None) is not None:
                 return False
             module = getattr(row, 'module', None)
-            if module is not None and vars(module).get('_ACTIVE_BRIDGE') is not None:
+            modules = [module, sys.modules.get('data.plugins.' + LEGACY + '.main'), sys.modules.get(LEGACY + '.main')]
+            if any(getattr(item, '_ACTIVE_BRIDGE', None) is not None for item in modules):
                 return False
             for entry in getattr(self.context, 'registered_web_apis', ()):
                 if str(entry[0]).startswith('/' + LEGACY + '/page'):
@@ -367,43 +469,52 @@ class NativeMCFullOwner:
 
     def _companion_api(self):
         selected, _, api = native_companion(self.context)
-        if selected:
-            return api
-        old = self.integrations.legacy('astrbot_plugin_private_companion')
-        if old is None or getattr(old, 'context', None) is not self.context:
-            return None
-        module = sys.modules.get(type(old).__module__)
-        getter = vars(module).get('get_private_companion_api') if module is not None else None
-        if not callable(getter):
-            return None
-        api = getter()
-        return api if getattr(api, '_plugin', None) is old else None
+        return api if selected else None
 
-    async def _prepare_native(self):
-        from astrbot.api.star import StarTools
+    async def _prepare_native(self, reconcile_previous=False):
         host = self.integrations._host()
         if host is None or host._closed:
             raise RuntimeError('current TLS Host required')
-        record = getattr(self.context, RETIRED_SLOT, None)
-        if self._legacy_service is not None:
-            directory = Path(self._legacy_service.data_dir)
-        elif type(record) is dict and record.get('context') is self.context:
-            directory = Path(record['service'].data_dir)
-        else:
-            directory = Path(StarTools.get_data_dir(LEGACY))
+        directory = self._native_directory()
+        record = getattr(self.context, NATIVE_SLOT, None)
+        if reconcile_previous and (record is None or type(record) is dict and record.get('schema') == RETIREMENT_SCHEMA):
+            retirement = NativeMCRetirement(self, directory)
+            self._pre_anchor_report = retirement.inspect()
+            if self._pre_anchor_report['eligible']:
+                try:
+                    result = await retirement.retire()
+                    self._pre_anchor_report = dict(eligible=False, state='retired', **result)
+                except RuntimeError as exc:
+                    self._native_pending(str(exc))
+            elif self._pre_anchor_report.get('reason') != 'pre_anchor_original_owner_not_found':
+                self._native_pending(self._pre_anchor_report['reason'])
+        await self._settle_native(directory)
+        if self.adapter is not None and not self.adapter.closed:
+            self._native_pending('previous_native_reference_unverified')
         config = self.plugin.config.get(CONFIG)
-        if type(config) is not dict or not config:
-            raise RuntimeError('complete persisted living_mc configuration required')
+        if type(config) is not dict:
+            raise RuntimeError('TLS memory configuration required')
         self._last_config = deepcopy(config)
         companion_api = self._companion_api()
         companion = NativeMemoryCompanion(self.context, config, data_dir=directory,
             plugin_root=Path(inspect.getfile(type(self.plugin))).resolve().parent,
             legacy_quiesced=self.legacy_quiesced, companion_api=companion_api)
+        # Older releases have no lifecycle record. Visible same-store work
+        # still blocks a bootstrap; never manufacture a recovery reference.
+        if companion._work():
+            self._native_pending('untracked_native_memory_work_pending')
+        self._claim_native(directory, companion)
         companion.persist_config = self.persist_config
         companion.companion_api_getter = self._companion_api
         self.adapter = companion
         self.integrations.mc_full = companion
-        await companion.prepare()
+        record = self._native_record
+        try:
+            await companion.prepare()
+        finally:
+            # A partly prepared service must remain reachable if cleanup also
+            # cannot finish; it is still the original adapter's responsibility.
+            record['service'] = companion.service
         companion.service.persist_native_config = self.persist_config
         runtime = NativeOwnedMCContextRuntime(self.plugin, host, companion)
         self.runtime = runtime
@@ -471,11 +582,13 @@ class NativeMCFullOwner:
         self._hook_slots.clear(); self._page_slots.clear()
         self.phase = 'legacy_retained'
 
-    async def activate(self):
+    async def activate(self, *, reconcile_previous=False):
         async with self._lock:
             if self.adapter is not None and self.adapter.active:
+                if self._native_record is None or self._native_record is not getattr(self.context, NATIVE_SLOT, None):
+                    self._native_pending('native_lifecycle_anchor_changed')
                 return self.status()
-            if self.phase in {'blocked', 'turnoff_unknown', 'drain_pending'}:
+            if self.phase in {'blocked', 'turnoff_unknown'}:
                 raise RuntimeError('previous transition needs explicit status and restore')
             self._old_off_attempted = self._old_off_confirmed = False
             self._hook_slots.clear(); self._page_slots.clear()
@@ -483,36 +596,26 @@ class NativeMCFullOwner:
             self._command_slot = None
             self.phase, self.last_error = 'preparing', None
             try:
-                row = self._row()
-                if getattr(row, 'activated', None) is True:
-                    config = self._guard_legacy()
-                    existing = self.plugin.config.get(CONFIG)
-                    if (type(existing) is dict and existing and existing != config
-                            and not self.integrations._native_config_is_default(CONFIG,existing)):
-                        raise RuntimeError('existing native memory settings need explicit reconciliation with original settings')
-                    self._save({CONFIG: config})
-                    self._freeze_admission()
-                    self.phase = 'old_admission_closed'
-                    await self._release_slices()
-                    self.phase = 'draining_original'
-                    await self._drain_legacy()
-                    self._old_off_attempted = True
-                    self.phase = 'turning_off_original'
-                    await self.context._star_manager.turn_off_plugin(LEGACY)
-                    self._record_retirement()
-                elif not self.legacy_quiesced():
-                    raise RuntimeError('inactive original memory RAM is not proven retired')
-                await self._prepare_native()
+                if not self.legacy_quiesced():
+                    raise RuntimeError('another memory executor is active or has unretired work')
+                await self._prepare_native(reconcile_previous=reconcile_previous)
                 return self.status()
+            except NativeMCLifecyclePending:
+                # Retain configured intent and the exact predecessor. This
+                # is a waiting state, not a failed new installation.
+                raise
             except BaseException as exc:
                 self.last_error = type(exc).__name__
                 self.last_error_sha256 = hashlib.sha256(str(exc).encode()).hexdigest()
+                retained = getattr(self.context, NATIVE_SLOT, None)
+                if (isinstance(exc, asyncio.CancelledError) and type(retained) is dict
+                        and retained.get('schema') == RETIREMENT_SCHEMA
+                        and retained.get('context') is self.context):
+                    self.phase = 'waiting_native_predecessor'
+                    raise
                 if self.adapter is not None and not self.adapter.closed:
-                    self.adapter.begin_stop()
                     try:
-                        if self.runtime is not None:
-                            await self.runtime.close()
-                        await self.adapter.close()
+                        await self._stop_locked(False)
                     except BaseException as close_error:
                         self.last_error += '/native_close:' + type(close_error).__name__
                     try:
@@ -552,15 +655,35 @@ class NativeMCFullOwner:
             if any(self._drain.values()):
                 self.phase, self.last_error = 'blocked', 'retired_original_has_inflight_work'
                 return self.status()
-        return await self.activate()
+        try:
+            return await self.activate()
+        except NativeMCLifecyclePending:
+            # Other TLS services can initialize. A later explicit activate
+            # uses the same original owner to finish closing, then starts fresh.
+            return self.status()
 
     async def _stop_locked(self, persist):
+        record = getattr(self.context, NATIVE_SLOT, None)
+        if persist and record is not None and record is not self._native_record:
+            await self._settle_native(self._native_directory())
         if self.adapter is not None:
             self._last_enabled_flags = self._flags()
             self.adapter.begin_stop()
-            if self.runtime is not None:
-                await self.runtime.close()
-            await self.adapter.close()
+            if self._native_record is not None:
+                self._native_record['stopping'] = True
+            self.phase = 'draining_native'
+            try:
+                if self.runtime is not None:
+                    await self.runtime.close()
+                await self.adapter.close()
+                service = self.adapter.service
+                if not self.adapter.closed or service is not None and (
+                        not service._closed or not service.store._closed):
+                    raise RuntimeError('native memory store close not confirmed')
+                self._release_native()
+            except BaseException as exc:
+                self.phase, self.last_error = 'drain_pending', type(exc).__name__
+                raise
         if persist:
             self._save({FLAG: False})
         self.phase = 'native_stopped' if self.adapter is not None else 'inactive'
@@ -576,44 +699,23 @@ class NativeMCFullOwner:
             return await self._stop_locked(False)
 
     async def restore_legacy(self):
-        async with self._lock:
-            await self._stop_locked(True)
-            row = self._row()
-            if getattr(row, 'activated', None) is True:
-                if self._hook_slots and not self._old_off_attempted:
-                    await self._undo_before_off()
-                return self.status()
-            if self.adapter is not None and self.adapter.closed is not True:
-                raise RuntimeError('native memory service has not fully closed')
-            if not self.legacy_quiesced():
-                raise RuntimeError('original memory retirement cannot be reconciled')
-            self.phase = 'restoring_original'
-            await self.context._star_manager.turn_on_plugin(LEGACY)
-            if getattr(self._row(), 'activated', None) is not True:
-                raise RuntimeError('normal original memory activation not confirmed')
-            host = self.integrations._host()
-            if host is None or host._closed:
-                raise RuntimeError('current Host required to restore existing partial owners')
-            desired = self._last_enabled_flags or self._saved_flags or self._flags()
-            self._save({**desired, FLAG: False})
-            legacy_runtime = NativeMCTakeoverRuntime(self.plugin, host)
-            self.integrations.mc = legacy_runtime
-            await legacy_runtime.start()
-            self.phase, self.last_error = 'legacy_restored', None
-            if getattr(self.context, RETIRED_SLOT, None) is not None:
-                delattr(self.context, RETIRED_SLOT)
-            return self.status()
+        raise RuntimeError('legacy plugin restoration is retired; TLS is a standalone plugin')
 
     def status(self):
         try:
-            original_active = getattr(self._row(), 'activated', None)
+            original_active = getattr(self._row(), 'activated', False)
         except Exception:
             original_active = None
         adapter = self.adapter.status() if self.adapter is not None else None
         runtime = self.runtime.status() if self.runtime is not None else None
         return dict(backend='tls_native_memory_companion_full', phase=self.phase,
+            execution_model='standalone_tls', original_installation_required=False,
             active=bool(adapter and adapter.get('active') is True and runtime and runtime.get('active') is True
-                        and original_active is False), configured=self.plugin.config.get(FLAG, False) is True,
+                        and original_active is False and self._native_record is not None
+                        and getattr(self.context, NATIVE_SLOT, None) is self._native_record),
+            configured=self.plugin.config.get(FLAG, False) is True,
+            native_lifecycle_retained=getattr(self.context, NATIVE_SLOT, None) is not None,
+            pre_anchor_retirement=dict(self._pre_anchor_report) if self._pre_anchor_report else None,
             generation=self.generation, original_plugin_active=original_active,
             old_off_attempted=self._old_off_attempted, old_off_confirmed=self._old_off_confirmed,
             original_source_pinned=bool(self._source_identities), drain=dict(self._drain),

@@ -2,18 +2,20 @@
 
 /* Session scope only: the server saves these values and injects finite hints. */
 window.ChatSessionPreferences=(()=>{
-  let dialog,form,status,save,reset,expressionSave,expressionReset,owner='',session='',epoch=0,busy=false,saved=null,expressions=null;
-  const fields={};
-  const scope=()=>JSON.stringify([state.server,state.username,state.activeId]);
+  let dialog,form,status,save,reset,expressionSave,expressionReset,busy=false,saved=null,expressions=null,unconfirmed=false;
+  const fields={},lifetime=window.ChatSessionScope.create(()=>state,()=>!!dialog?.open),contract=window.ChatPreferenceContract;
+  const replyFields=['reply_style','reply_length','rp_intensity','reply_format'];
   const node=(tag,text)=>{const item=document.createElement(tag);if(text!==undefined)item.textContent=text;return item;};
   const button=(text,fn)=>{const item=node('button',text);item.type='button';item.className='text-button';item.addEventListener('click',fn);return item;};
-  const ticket=()=>({owner,session,epoch});
-  const current=t=>dialog?.open&&state.authenticated&&t.owner===owner&&owner===scope()&&t.epoch===epoch;
+  const ticket=lifetime.ticket;
+  const current=lifetime.current;
   function say(value){status.textContent=value;}
-  function controls(){for(const item of [save,reset])item.disabled=busy||!saved;for(const item of [expressionSave,expressionReset])item.disabled=busy||!expressions;}
+  function controls(){for(const item of [save,reset])item.disabled=busy||!saved;for(const item of [expressionSave,expressionReset])item.disabled=busy||!expressions;
+    for(const [key,item]of Object.entries(fields))item.disabled=busy||!(replyFields.includes(key)?saved:expressions);}
   function select(key,label,options){const row=node('label'),input=node('select');input.id='session-preference-'+key;
     for(const [value,text]of options){const option=node('option',text);option.value=value;input.append(option);}row.append(node('span',label),input);form.append(row);fields[key]=input;return input;}
-  function close(){epoch++;owner='';saved=null;expressions=null;busy=false;if(dialog?.open)dialog.close();}
+  function close(){lifetime.invalidate();saved=null;expressions=null;busy=false;unconfirmed=false;
+    for(const item of Object.values(fields)){item.value='';if(item.type==='checkbox')item.checked=false;}controls();if(status)status.textContent='';if(dialog?.open)dialog.close();}
   function setup(){
     if(dialog)return;dialog=node('dialog');dialog.id='session-preferences-dialog';dialog.className='settings-dialog session-preferences-dialog';dialog.setAttribute('aria-labelledby','session-preferences-title');
     const header=node('div');header.className='dialog-heading';const title=node('h2','本会话偏好');title.id='session-preferences-title';header.append(title,button('关闭',close));form=node('div');form.className='settings-form';
@@ -42,33 +44,43 @@ window.ChatSessionPreferences=(()=>{
   async function read(){
     const t=ticket();if(!current(t)||busy)return;busy=true;controls();say('正在读取当前会话的实际偏好…');
     try{
-      const results=await Promise.allSettled([apiClient.json('GET','/chat/session-state?session_id='+encodeURIComponent(t.session)),apiClient.json('GET','/chat/expression-settings?session_id='+encodeURIComponent(t.session))]);
+      if(lifetime.waiting(t))say('正在等待先前保存结束，再读取当前会话偏好…');
+      if(!await lifetime.settlePrevious(t))return;
+      const results=await Promise.allSettled([
+        apiClient.json('GET','/chat/session-state?session_id='+encodeURIComponent(t.session)).then(value=>contract.reply(value,t.session)),
+        apiClient.json('GET','/chat/expression-settings?session_id='+encodeURIComponent(t.session)).then(value=>contract.expression(value,t.session))]);
       if(!current(t))return;saved=results[0].status==='fulfilled'?results[0].value:null;expressions=results[1].status==='fulfilled'?results[1].value:null;render();
       const sources=expressions?Object.entries(expressions.sources).map(([key,value])=>({frequency:'频率',per_unit:'语义配图',cooldown_seconds:'冷却',fragment_display:'展示',mode_policies:'模式策略'}[key]||key)+'：'+({session:'本会话',role:'角色默认',default:'系统默认'}[value]||value)).join(' · '):'表情策略暂不可用';
-      say((saved?'已读取会话偏好。':'会话偏好暂不可用。')+' '+sources);
+      const unavailable=(result,label)=>result.status==='fulfilled'?'':result.reason?.status===404?'当前服务器未提供'+label+'。':label+'暂不可用：'+errorText(result.reason);
+      say((saved?'已读取会话偏好。':unavailable(results[0],'会话偏好'))+' '+(expressions?sources:unavailable(results[1],'表情策略'))
+        +(unconfirmed?' 已读取的当前值不证明上次保存请求成功；不会自动重试。':''));
     }catch(error){if(current(t))say(errorText(error));}
     finally{if(current(t)){busy=false;controls();}}
   }
   async function write(inherit){
-    const t=ticket();if(!current(t)||busy||!saved)return;busy=true;controls();say('正在保存本会话的回复偏好…');
-    try{const value=await apiClient.json('POST','/chat/session-state',{session_id:t.session,expected_revision:saved.revision,
-      ...(inherit?{reset_preferences:true,reply_format:'auto'}:Object.fromEntries(['reply_style','reply_length','rp_intensity','reply_format'].map(key=>[key,fields[key].value])))});
-      if(!current(t))return;saved=value;const row=state.sessions.find(item=>item.session_id===t.session);if(row)row.tls_state=value;render();say(inherit?'已恢复继承；后续回复沿用原有偏好。':'已保存到当前会话，后续回复会读取这些表达偏好。');
-    }catch(error){if(current(t)){saved=null;say(errorText(error)+' 请重新读取核对，表单保留。');}}
-    finally{if(current(t)){busy=false;controls();}}
+    const t=ticket();if(!current(t)||busy||!saved)return;let request;busy=true;controls();say('正在保存本会话的回复偏好…');
+    const revision=saved.revision,expected=inherit?{reply_style:'inherit',reply_length:'inherit',rp_intensity:'inherit',reply_format:'auto'}:Object.fromEntries(replyFields.map(key=>[key,fields[key].value]));
+    try{request=apiClient.json('POST','/chat/session-state',{session_id:t.session,expected_revision:saved.revision,
+      ...(inherit?{reset_preferences:true,reply_format:'auto'}:Object.fromEntries(replyFields.map(key=>[key,fields[key].value])))});
+      lifetime.track(t,request);const value=await request;
+      if(!current(t))return;saved=contract.confirmReply(value,t.session,revision,expected);const row=state.sessions.find(item=>item.session_id===t.session);if(row)row.tls_state=saved;render();say(inherit?'已恢复继承；后续回复沿用原有偏好。':'已保存到当前会话，后续回复会读取这些表达偏好。');
+    }catch(error){if(current(t)){saved=null;unconfirmed=true;say('保存结果未确认。'+errorText(error)+' 请重新读取核对，表单保留；不会自动重试。');}}
+    finally{if(request)lifetime.release(t,request);if(current(t)){busy=false;controls();}}
   }
   async function writeExpressions(inherit){
     const t=ticket();if(!current(t)||busy||!expressions)return;const seconds=Number(fields.cooldown_seconds.value);
     if(!inherit&&(!Number.isInteger(seconds)||seconds<0||seconds>86400)){say('冷却时间须为0到86400的整数秒。');return;}
-    busy=true;controls();say('正在保存本会话表情策略…');
-    try{const value=await apiClient.json('POST','/chat/expression-settings',{session_id:t.session,level:'session',expected_revision:expressions.session_revision,
-      ...(inherit?{reset:true}:{changes:{frequency:fields.frequency.value,per_unit:fields.per_unit.checked,cooldown_seconds:seconds,fragment_display:fields.fragment_display.value,
-        mode_policies:Object.fromEntries(['chat','roleplay','technical'].map(mode=>[mode,fields['policy_'+mode].value]))}})});
-      if(!current(t))return;expressions=value;render();say(inherit?'已恢复本会话表情策略继承。':'已保存本会话表情策略，后续回复会使用。');
-    }catch(error){if(current(t)){expressions=null;say(errorText(error)+' 请重新读取核对，表单保留。');}}
-    finally{if(current(t)){busy=false;controls();}}
+    let request;busy=true;controls();say('正在保存本会话表情策略…');
+    const revision=expressions.session_revision,expected=inherit?null:{frequency:fields.frequency.value,per_unit:fields.per_unit.checked,cooldown_seconds:seconds,fragment_display:fields.fragment_display.value,
+      mode_policies:Object.fromEntries(['chat','roleplay','technical'].map(mode=>[mode,fields['policy_'+mode].value]))};
+    try{request=apiClient.json('POST','/chat/expression-settings',{session_id:t.session,level:'session',expected_revision:expressions.session_revision,
+      ...(inherit?{reset:true}:{changes:expected})});
+      lifetime.track(t,request);const value=await request;
+      if(!current(t))return;expressions=contract.confirmExpression(value,t.session,revision,expected);render();say(inherit?'已恢复本会话表情策略继承。':'已保存本会话表情策略，后续回复会使用。');
+    }catch(error){if(current(t)){expressions=null;unconfirmed=true;say('保存结果未确认。'+errorText(error)+' 请重新读取核对，表单保留；不会自动重试。');}}
+    finally{if(request)lifetime.release(t,request);if(current(t)){busy=false;controls();}}
   }
-  function open(){if(!state.authenticated||!state.activeId){showNotice('请先打开自己的聊天会话。');return;}setup();close();owner=scope();session=state.activeId;epoch++;dialog.showModal();controls();void read();}
-  return{open,openSessionPreferences:open,closeActive:()=>{if(!dialog?.open)return false;close();return true;},scopeChanged:()=>{if(owner&&(!state.authenticated||owner!==scope()))close();}};
+  function open(){if(!state.authenticated||!state.activeId){showNotice('请先打开自己的聊天会话。');return;}setup();close();lifetime.enter();dialog.showModal();controls();void read();}
+  return{open,openSessionPreferences:open,closeActive:()=>{if(!dialog?.open)return false;close();return true;},scopeChanged:()=>{if(dialog?.open&&!lifetime.active())close();}};
 })();
 window.openSessionPreferences=()=>window.ChatSessionPreferences.open();

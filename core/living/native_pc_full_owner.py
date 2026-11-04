@@ -78,9 +78,9 @@ class NativePCFullOwner:
 
     def _row(self):
         rows = self._rows()
-        if len(rows) != 1:
-            raise RuntimeError('original PC registry is not unique')
-        return rows[0]
+        if len(rows) > 1:
+            raise RuntimeError('conflicting PC registry entries')
+        return rows[0] if rows else None
 
     @staticmethod
     def _fingerprint(path):
@@ -450,7 +450,7 @@ class NativePCFullOwner:
     def legacy_closed(self):
         try:
             row = self._row()
-            if getattr(row, 'activated', None) is not False or not self._source_current():
+            if getattr(row, 'activated', False) is not False:
                 return False
             record = getattr(self.context, RETIRED_SLOT, None)
             if isinstance(record, dict):
@@ -468,7 +468,8 @@ class NativePCFullOwner:
             if getattr(row, 'star_cls', None) is not None:
                 return False
             module = getattr(row, 'module', None)
-            if module is not None and getattr(module, '_private_companion_plugin', None) is not None:
+            modules = [module, sys.modules.get('data.plugins.' + LEGACY + '.main'), sys.modules.get(LEGACY + '.main')]
+            if any(getattr(item, '_private_companion_plugin', None) is not None for item in modules):
                 return False
             return not any(str(entry[0]).startswith('/' + LEGACY + '/page')
                 for entry in getattr(self.context, 'registered_web_apis', ()))
@@ -624,8 +625,8 @@ class NativePCFullOwner:
         if not self.legacy_closed():
             raise RuntimeError('original PC executor closure is not proven')
         raw = self.plugin.config.get(CONFIG)
-        if not isinstance(raw, dict) or not raw:
-            raise RuntimeError('complete persisted native PC configuration required')
+        if not isinstance(raw, dict):
+            raise RuntimeError('TLS companion configuration required')
         self._host()
         self._save({FLAG: True})
         config = NestedConfig(self, raw)
@@ -654,17 +655,7 @@ class NativePCFullOwner:
                 raise RuntimeError('previous PC handoff needs explicit status/restore')
             self.phase, self.last_error = 'preparing', None
             try:
-                if getattr(self._row(), 'activated', None) is True:
-                    self._capture_old()
-                    self._freeze_admission()
-                    self.phase = 'draining_original'
-                    await self._drain_old()
-                    self._old_off_attempted = True
-                    self.phase = 'turning_off_original'
-                    await self.context._star_manager.turn_off_plugin(LEGACY)
-                    self._record_retirement()
-                elif not self.legacy_closed():
-                    await self._load_retirement()
+                await self._load_retirement()
                 await self._start_native()
                 return self.status()
             except BaseException as exc:
@@ -675,29 +666,31 @@ class NativePCFullOwner:
                 raise
 
     async def _load_retirement(self):
+        """Load TLS's durable memo identity, without consulting an old installation.
+
+        The method name remains an internal compatibility entry. Existing
+        migration identities are retained verbatim so their ledgers still match.
+        New installations receive a TLS identity, never fabricated old proof.
+        """
         value = self.plugin.config.get(BINDING)
-        if (not isinstance(value, dict) or set(value) != {'binding_sha256', 'source_kind',
-                'legacy_source_sha256', 'legacy_config_sha256'} or value['source_kind'] != 'retired_legacy_pc'
-                or any(not isinstance(value[name], str) or _HEX.fullmatch(value[name]) is None
-                    for name in ('binding_sha256', 'legacy_source_sha256', 'legacy_config_sha256'))):
-            raise RuntimeError('persisted genuine retired PC memo binding unavailable')
-        row = self._row()
-        module = getattr(row, 'module', None)
-        filename = getattr(module, '__file__', None)
-        if filename is None:
-            filename = self.integrations.data_dir.parent.parent / 'plugins' / LEGACY / 'main.py'
-        source_sha, old_config = self._pin(Path(filename).resolve().parent)
+        if value in (None, {}):
+            if not self.legacy_closed():
+                raise RuntimeError('another PC executor is active or has unretired work')
+            value = dict(source_kind='tls_pc', binding_sha256=hashlib.sha256(os.urandom(32)).hexdigest())
+            self._save({BINDING: value})
+        kind = value.get('source_kind') if type(value) is dict else None
+        fields = ({'binding_sha256', 'source_kind'} if kind == 'tls_pc' else
+                  {'binding_sha256', 'source_kind', 'legacy_source_sha256', 'legacy_config_sha256'})
+        if (kind not in {'tls_pc', 'retired_legacy_pc'} or set(value) != fields
+                or any(type(value[key]) is not str or _HEX.fullmatch(value[key]) is None
+                       for key in fields - {'source_kind'})):
+            raise RuntimeError('persisted TLS memo identity invalid; do not replace it')
         self.binding_state = dict(value)
-        if source_sha != value['legacy_source_sha256'] or self._config_sha != value['legacy_config_sha256']:
-            raise RuntimeError('retired PC source/configuration fingerprint changed')
         record = getattr(self.context, RETIRED_SLOT, None)
         if isinstance(record, dict) and record.get('context') is self.context:
-            self._legacy, self._legacy_module = record['owner'], record['module']
-            self._retired_config = deepcopy(record.get('original_config', old_config))
-        else:
-            self._retired_config = old_config
+            self._legacy, self._legacy_module = record.get('owner'), record.get('module')
         if not self.legacy_closed():
-            raise RuntimeError('disabled original PC retains an unretired runtime')
+            raise RuntimeError('another PC executor is active or has unretired work')
 
     async def start_if_configured(self):
         if self.plugin.config.get(FLAG) is not True:
@@ -800,24 +793,7 @@ class NativePCFullOwner:
         self._hook_slots.clear(); self._tool_slots.clear(); self._page_slots.clear(); self._method_slots.clear()
 
     async def restore_legacy(self):
-        async with self._lock:
-            await self._stop_locked(True)
-            if not self._source_current():
-                raise RuntimeError('original PC source/configuration changed; explicit reconciliation required')
-            row = self._row()
-            if getattr(row, 'activated', None) is True:
-                if self._hook_slots or self._tool_slots or self._page_slots or self._method_slots:
-                    await self._unfreeze_existing()
-            elif self.legacy_closed():
-                await self.context._star_manager.turn_on_plugin(LEGACY)
-                if getattr(self._row(), 'activated', None) is not True:
-                    self.phase = 'restore_unknown'
-                    raise RuntimeError('normal original PC startup result unknown')
-                setattr(self.context, RETIRED_SLOT, None)
-            else:
-                raise RuntimeError('original PC retirement outcome unknown; do not start a second executor')
-            self.phase, self.last_error = 'legacy', None
-            return self.status()
+        raise RuntimeError('legacy plugin restoration is retired; TLS is a standalone plugin')
 
     async def tick(self):
         if not self.active or self.service is None or self._host()._closed:
@@ -865,7 +841,8 @@ class NativePCFullOwner:
         return dict(ok=True, active=self.active, phase=self.phase, generation=self.generation,
             configured=self.plugin.config.get(FLAG) is True, last_error=self.last_error,
             last_error_sha256=self.last_error_sha256,
-            source_current=self._source_current(), legacy_closed=self.legacy_closed(),
+            source_current=bool(service and service.native_source_current()), legacy_closed=self.legacy_closed(),
+            execution_model='standalone_tls', original_installation_required=False,
             old_admission_fenced=bool(self._hook_slots or self._tool_slots or self._page_slots),
             legacy_turnoff_attempted=self._old_off_attempted, legacy_turnoff_confirmed=self._old_off_confirmed,
             binding_state=dict(self.binding_state) if isinstance(self.binding_state, dict) else None,

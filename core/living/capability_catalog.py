@@ -21,14 +21,14 @@ DOMAINS = (
 # API entries are only existing route families, not a promise that every user
 # or conversation currently has permission to mutate them.
 CATALOG = (
- ('tls.memory.full_service','完整原生记忆服务','memory','memory','memory','native',
+ ('tls.memory.full_service','记忆服务','memory','memory','memory','native',
   '由TLS管理记忆捕获、画像、摘要、关系图谱、原历史与原生管理接口的完整生命周期。',
-  ('原MC配置与原历史路径','同库来源与审核状态'),('旧MC正常停用与实际排空','真实运行对象和原P5策略'),
+  ('Asteria当前记忆配置与兼容历史路径','同库来源与审核状态'),('当前记忆服务与同库单执行者保护','真实运行对象和原P5策略'),
   ('server-integration/status',),('astrbot_plugin_memory_companion',),'full_runtime',
-  '完整运行实例接管与具体记忆命中分别记录；不因部署成功而声称新QQ样本或长测已通过。'),
- ('tls.pc.full_service','完整原生角色陪伴服务','role','pc_daily','pc_daily_native','native',
-  'TLS原生承载原PC角色状态、日记、穿搭、技能、创作、查询、工具与管理能力。',
-  ('原PC持久状态与配置副本','明确来源的新角色计划'),('原PC唯一执行者退休','真实SDK事件与人格选择','现有统一发送'),
+  '服务运行与具体记忆命中分别记录；不因部署成功而声称新QQ样本或长测已通过。'),
+ ('tls.pc.full_service','角色陪伴服务','role','pc_daily','pc_daily_native','native',
+  'Asteria 管理角色状态、日记、穿搭、技能、创作、查询、工具与维护功能，兼容已有资料。',
+  ('现有陪伴资料与Asteria配置','明确来源的新角色计划'),('当前陪伴服务与单执行者保护','真实SDK事件与人格选择','现有统一发送'),
   ('server-integration/status','pc-daily-native/status'),('astrbot_plugin_private_companion',),'full_runtime',
   '保留原全局历史与未决任务；不按旧无归属计划猜用户，也不重启旧随机、便签或日期发送链。'),
  ('tls.pc.virtual_daily','角色日常、日记与穿搭','role','pc_daily','pc_daily_native','native',
@@ -51,9 +51,9 @@ CATALOG = (
   ('同一journal的计划发生与目标收据','持久分享候选映射'),('唯一目标执行者','当前真实会话与来源','原冷却与最终发送许可'),
   ('pc-daily-native/status','pc-daily-native/settings','pc-daily-native/tick'),('astrbot_plugin_private_companion',),'native_source',
   '自动开关、实例、真实来源、旧职责交接分别核对；UNKNOWN不重发，不提前把排队当作已分享。'),
- ('tls.proactive.independent','原生独立主动聊天','interaction','proactive_chat','status','native',
+ ('tls.proactive.independent','主动聊天服务','interaction','proactive_chat','status','native',
   '原生管理独立主动聊天的会话计划，复用现TLS生成、统一发送和真实平台确认。',
-  ('原session_data与会话覆盖配置','现持久投递状态'),('旧独立插件停止','真实会话范围','统一发送许可'),
+  ('原session_data与会话覆盖配置','现持久投递状态'),('当前主动服务与单执行者保护','真实会话范围','统一发送许可'),
   ('proactive-chat/status',),('astrbot_plugin_proactive_chat',),'full_runtime',
   '活动宿主与每条任务的来源、排队、确认、等待复核分别展示；不是手机后台推送验收。'),
  ('tls.personal_goals.plan','目标专用日计划','role','scoped_daily_plans','scoped_daily_plan','native',
@@ -141,12 +141,11 @@ CATALOG = (
   ('当前真实入站','实际分类器多画像结果'),('当前完整范围授权','独立画像执行权'),
   (),('astrbot_plugin_memory_companion',),'partial','旧历史画像、原始时间线、portrait及摘要仍有保留职责。'),
  ('tls.memory.summary_algorithm','记忆摘要算法','system','memory_summary','mc_summary','native',
-  '沿用原时间线、模型选择和存储，只把当前MC摘要算法实例交给TLS原生实现。',
-  ('旧MC摘要输入与原参数',),('准确运行实例','固定来源与已排空的摘要调用'),
-  ('server-integration/mc/summary/status','server-integration/mc/summary/inspect',
-   'server-integration/mc/summary/activate','server-integration/mc/summary/restore'),
-  ('astrbot_plugin_memory_companion',),'partial',
-  '默认关闭，须明确交接；摘要worker、时间线、provider、旧库和audit静态调用仍保留原实现。'),
+  '查看当前记忆服务的摘要算法、时间线、模型选择、存储与工作器状态。',
+  ('当前摘要输入、参数与同库历史',),('当前记忆服务','实际摘要管线来源'),
+  ('server-integration/mc/summary/status','server-integration/mc/summary/inspect'),
+  ('astrbot_plugin_memory_companion',),'service_pipeline',
+  '摘要随当前记忆服务运行；此入口只看状态与参数，不切换旧插件或调用模型。'),
  ('legacy.memory.automatic','旧自动记忆与画像','memory','','','legacy',
   '旧自动捕获、画像、核心记忆、总结及既有桥仍保留原实现。',('旧记忆数据',),
   ('原记忆插件',),(),('astrbot_plugin_memory_companion',),'none','责任来自既有迁移矩阵，未由本投影验证其当前进程状态。'),
@@ -355,9 +354,9 @@ TEST_ENTRIES = {
 
 _LABELS = {'source_unavailable':'曲库读取异常','implemented':'已实现，尚未运行','unknown':'当前状态待核验','disabled':'已关闭','ready':'运行时已挂载',
     'warming':'过渡等待中','awaiting_scope':'等待真实会话授权','legacy_scope':'原实现仍挂载',
-    'unavailable':'运行时未挂载','not_implemented':'尚未完整实现','native_full':'TLS原生运行',
-    'preparing':'准备或交接中','blocked':'存在未解决阻塞'}
-_IMPLEMENTATIONS = {'native':'TLS 原生业务','legacy':'原插件业务',
+    'unavailable':'运行时未挂载','not_implemented':'尚未完整实现','native_full':'服务运行中',
+    'preparing':'正在准备','blocked':'存在未解决阻塞','historical_reference':'历史来源参考'}
+_IMPLEMENTATIONS = {'native':'Asteria 自身能力','legacy':'历史来源与外部执行观察',
     'external_adapter':'外部协议适配器','not_implemented':'待迁移能力'}
 
 
@@ -489,8 +488,18 @@ def build_capability_catalog(*, modules=(), registry_snapshot=None, flags=None,
                 'unknown' if row['recovery_required'] else 'ready' if active is True
                 and row['source_current'] else 'legacy_scope' if algorithm_active is False
                 else 'implemented')
-            row['owner']=row['algorithm_owner']+'；旧MC继续拥有时间线、模型选择、存储和摘要worker'
-            row['evidence']=['实际算法指针、所属控制器、当前MC注册实例和来源校验；不由开关推断，不调用模型或摘要业务']
+            owned_pipeline=(summary_algorithm.get('owner')=='tls_native_memory_companion'
+                and summary_algorithm.get('algorithm_only') is False
+                and all((summary_algorithm.get('responsibilities') or {}).get(key)=='native' for key in
+                    ('algorithm','timeline','provider_selection','store','worker','audit_static_calls')))
+            row['owner']=('Asteria 记忆服务：算法、时间线、模型选择、存储与摘要工作器'
+                if owned_pipeline else '摘要执行归属待核对；尚未收到当前完整管线证明')
+            if owned_pipeline:
+                row['implementation_location']=['core/living/native_mc_owned_runtime.py:NativeOwnedMCContextRuntime',
+                    'core/living/native_mc/host_adapter.py:NativeMemoryCompanion']
+                row['evidence']=['当前自有记忆运行类的完整摘要职责、实际活动状态与来源校验；不调用模型或摘要业务']
+            else:
+                row['evidence']=['已收到的摘要状态；未据旧字段推断当前时间线、模型选择、存储或工作器归属']
         elif identity=='tls.personal_goals.plan':
             selected=scope_selected is True
             management=authenticated is True and selected and row['runtime_active']is True
@@ -675,7 +684,30 @@ def build_capability_catalog(*, modules=(), registry_snapshot=None, flags=None,
                 row['owner']='旧插件已退休；对应完整TLS原生服务运行'
                 row['legacy_runtime_active']=False
                 row['evidence'].append('实际完整原生owner/Host active与旧插件关闭证据；保留此旧ID用于历史职责索引')
+        # The existing controller supplies this fact. It does not relax any
+        # source-current, active-writer, scope or lifecycle check above.
+        full=(mc_full if identity in {'tls.memory.full_service','legacy.memory.automatic'} else
+              pc_full if identity in {'tls.pc.full_service','tls.pc.virtual_daily','legacy.pc.nonrandom'} else
+              independent_proactive if identity in {'tls.proactive.independent','legacy.proactive_chat'} else {})
+        standalone=(full.get('execution_model')=='standalone_tls' and full.get('original_installation_required') is False)
+        if standalone:
+            row['execution_model']='standalone_tls'
+            row['original_installation_required']=False
+            if identity.startswith('tls.'):
+                row['owner']=('Asteria 自身服务' if status in {'native_full','awaiting_scope'} else 'Asteria 服务状态待核对')
+                row['evidence']=['当前自身服务状态、源码校验、单执行者与会话范围；无需旧插件安装或退休证明']
+                row['replacement']['detail']=row['detail']+' 当前服务独立运行，旧名称仅用于资料和来源兼容。'
+            elif row['replacement']['whole_plugin_replaced'] is True:
+                status='historical_reference'
+                row['historical_reference_only']=True
+                row['runtime_active']=False
+                row['implementation_label']='历史来源参考'
+                row['purpose']='保留既有代码与资料来源索引，不是当前业务执行者，也不是安装依赖。'
+                row['owner']='对应 Asteria 服务运行；此条仅为历史来源索引'
+                row['dependencies']=[]
+                row['detail']='来源名称保留，不表示旧插件已安装、当前执行或需要恢复。'
+                row['replacement']['detail']=row['detail']
         row['status']=status;row['status_label']=_LABELS[status]
         result.append(row)
     return dict(capability_domains=deepcopy(list(DOMAINS)),capabilities=result,
-        capability_boundary='只读能力与职责投影；挂载、配置、注册、平台确认、手机可见分别记录。部分职责迁移不代表整插件替代。')
+        capability_boundary='只读能力与职责投影；挂载、配置、注册、平台确认、手机可见分别记录。来源索引不代表运行依赖；当前服务以实际对象状态为准。')

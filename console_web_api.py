@@ -307,7 +307,8 @@ class NativeConsoleWebApi:
         independent_status=actual_status(getattr(integrations,'proactive_chat',None))
         independent_owner_status=actual_status(getattr(integrations,'_proactive_full_owner',None))
         if independent_owner_status:
-            for key in ('active','phase','configured','original_plugin_active','last_error'):
+            for key in ('active','phase','configured','original_plugin_active','last_error',
+                        'execution_model','original_installation_required'):
                 if key in independent_owner_status:
                     independent_status[key]=independent_owner_status[key]
         daily=getattr(runtime,'pc_daily_lifecycle',None)

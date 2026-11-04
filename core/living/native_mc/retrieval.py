@@ -169,6 +169,7 @@ class RetrievalEngine:
         ctx: SessionContext,
         *,
         reason: str = "navigation_candidate",
+        acl_state: dict[str, object] | None = None,
     ) -> tuple[list[SearchResult], list[dict[str, str]]]:
         """Apply the current visibility and ACL state to externally selected rows.
 
@@ -177,7 +178,8 @@ class RetrievalEngine:
         content so callers cannot turn visibility diagnostics into a side
         channel.
         """
-        acl_state = await self._acl_state() if self.policy.enable_acl_rules else self._empty_acl_state()
+        if acl_state is None:
+            acl_state = await self._acl_state() if self.policy.enable_acl_rules else self._empty_acl_state()
         visible: list[SearchResult] = []
         blocked: list[dict[str, str]] = []
         seen: set[str] = set()
@@ -1217,15 +1219,10 @@ class RetrievalEngine:
     ) -> tuple[list[SearchResult], list[dict[str, str]]]:
         query = clean_text(query, 1000)
         terms = self._terms(query)
+        acl_state = await self._acl_state() if self.policy.enable_acl_rules else self._empty_acl_state()
         graph_terms = []
         if self.knowledge_graph_enabled and self.knowledge_graph_expansion_limit > 0:
-            graph_labels = await self.store.related_knowledge_terms(
-                terms,
-                scope=ctx.scope,
-                session_id=ctx.session_id,
-                group_id=ctx.group_id,
-                limit=self.knowledge_graph_expansion_limit,
-            )
+            graph_labels = await self._visible_graph_labels(terms, ctx, acl_state)
             graph_terms = self._knowledge_graph_anchor_terms(
                 graph_labels,
                 seed_terms=terms,
@@ -1347,7 +1344,6 @@ class RetrievalEngine:
                 "keyword_candidates": len(keyword_candidates),
             }
         )
-        acl_state = await self._acl_state() if self.policy.enable_acl_rules else self._empty_acl_state()
         block_profile_retrieval = self._query_blocks_profile_retrieval(query)
         ranking_started = time.perf_counter()
         results, blocked, ranking_info = await asyncio.to_thread(
@@ -1371,6 +1367,33 @@ class RetrievalEngine:
         self._rank_path_info["ranking_cpu_ms"] = int((time.perf_counter() - ranking_started) * 1000)
         self._rank_path_info["ranking_offloaded"] = True
         return results, blocked
+
+    async def _visible_graph_labels(
+        self, terms: list[str], ctx: SessionContext, acl_state: dict[str, object],
+    ) -> list[str]:
+        # Labels influence the actual search query. Apply source visibility before
+        # expansion, not only to the memories eventually returned by that query.
+        paths = await self.store.query_knowledge_paths(
+            terms, limit=200, session_id=ctx.session_id, scope=ctx.scope,
+            group_id=ctx.group_id, user_id=ctx.user_id,
+        )
+        source_ids = list(dict.fromkeys(path["source_memory_id"] for path in paths))
+        current = await self.store.get_memories_by_ids(source_ids)
+        visible, _ = await self.filter_visible_candidates(
+            list(current.values()), ctx, reason="graph_expansion", acl_state=acl_state,
+        )
+        allowed = {item.memory.id for item in visible}
+        labels: list[str] = []
+        for path in paths:
+            if path["source_memory_id"] not in allowed or path.get("review_status") == "rejected":
+                continue
+            if self.policy.hide_pending_review and path.get("review_status") == "pending":
+                continue
+            for key in ("source_label", "target_label"):
+                label = clean_text(path.get(key), 160)
+                if label and label not in labels:
+                    labels.append(label)
+        return labels
 
     def _rank_candidates_sync(
         self,

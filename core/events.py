@@ -342,7 +342,10 @@ def extract_events(text: str, profile: dict[str, Any]) -> list[dict[str, Any]]:
         return []
     # 长词占优去重：命中区间被更长命中词覆盖的部位让位（"腰侧"里不再同时算"腰"）
     kept = [t for t in hit_parts if not any(
-        op < t[0] + t[1] and t[0] < op + ol and ol > t[1] for op, ol, _, _ in hit_parts
+        op < t[0] + t[1] and t[0] < op + ol and (ol > t[1] or
+        (op == t[0] and ol == t[1] and other.get('label') == text[op:op+ol]
+         and t[3].get('label') != text[t[0]:t[0]+t[1]]))
+        for op, ol, _, other in hit_parts
     )]
     kept.sort(key=lambda x: x[0])
     # 材质识别：材质词（materials.json 的 label+别名）落在部位词就近窗口内 → 事件挂 material 字段
@@ -413,12 +416,12 @@ def extract_stops(text: str, profile: dict[str, Any]) -> list[str]:
         pid = str(part.get("id") or "")
         if not pid:
             continue
-        found = False
+        candidates = []
         for w in [str(part.get("label") or "")] + [str(a) for a in part.get("aliases") or []]:
             if not w:
                 continue
             start = 0
-            while not found:
+            while True:
                 pos = text.find(w, start)
                 if pos < 0:
                     break
@@ -429,12 +432,17 @@ def extract_stops(text: str, profile: dict[str, Any]) -> list[str]:
                     continue
                 seg = _clip_seg(observed_text[max(0, pos - _STOP_WINDOW):pos], keep_head=False)[0]
                 if any(neg in seg for neg in CONFIG.NEGATION_PREFIXES):
-                    hits.append((pos, len(w), pid))
-                    found = True
-            if found:
-                break
+                    candidates.append((pos, len(w), pid))
+        if candidates:
+            # Match the event parser's earliest/longest choice. A short label
+            # must not hide a longer alias (e.g. 指尖 / 手指尖).
+            hits.append(min(candidates, key=lambda item: (item[0], -item[1])))
+    labels = {str(part.get('id')): part.get('label') for part in profile.get('parts') or []
+              if isinstance(part, dict)}
     kept = [t for t in hits if not any(
-        op < t[0] + t[1] and t[0] < op + ol and ol > t[1] for op, ol, _ in hits)]
+        op < t[0] + t[1] and t[0] < op + ol and (ol > t[1] or
+        (op == t[0] and ol == t[1] and labels.get(other) == text[op:op+ol]
+         and labels.get(t[2]) != text[t[0]:t[0]+t[1]])) for op, ol, other in hits)]
     out: list[str] = []
     for _, _, pid in sorted(kept, key=lambda x: x[0]):
         if pid not in out:

@@ -92,7 +92,7 @@ class ChatIdentityLinks:
                 issued_at=self.clock(), used=False, notifications=notifications))
             self._check()
         return dict(code=code, command='/TLS绑定 ' + code, expires_at=self.clock() + 600,
-            note='只发送到你与角色Bot的QQ私聊；确认后共享长期记忆，可随时解除。')
+            note='只发送到你与德克萨斯Bot的QQ私聊；确认后共享长期记忆，可随时解除。')
 
     def confirm(self, code, qq_scope, message_id, *, authorize):
         match = CODE.fullmatch(code) if isinstance(code, str) else None

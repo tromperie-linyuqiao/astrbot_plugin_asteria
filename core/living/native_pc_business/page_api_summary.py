@@ -496,7 +496,7 @@ class PrivateCompanionPageApiSummaryMixin:
                     pattern_label = f"{scene}表达模式"
             observation_status = "supported" if self._int(raw.get("evidence_count")) >= 2 else "single"
             return {
-                "id": self._single_line(raw.get("id"), 40) or str(index),
+                "id": self._single_line(raw.get("id"), 40),
                 "index": index,
                 "text": text,
                 "phrase": self._single_line(raw.get("phrase"), 80),
@@ -989,13 +989,15 @@ class PrivateCompanionPageApiSummaryMixin:
         sample_id = self._single_line(payload.get("sample_id"), 40)
         rule_id = self._single_line(payload.get("rule_id"), 100)
         rule_family_id = self._single_line(payload.get("rule_family_id"), 100)
-        sample_index = self._int(payload.get("sample_index"))
+        sample_index = self._int(payload.get("sample_index"), -1)
 
         def find_index(items: list[Any]) -> int:
             if sample_id:
                 for idx, item in enumerate(items):
                     if isinstance(item, dict) and self._single_line(item.get("id"), 40) == sample_id:
                         return idx
+                # A stable ID must never fall back to a different current position.
+                return -1
             if 0 <= sample_index < len(items):
                 return sample_index
             return -1
@@ -7189,13 +7191,14 @@ class PrivateCompanionPageApiSummaryMixin:
                 pending_items.append(
                     {
                         "id": self._single_line(raw.get("id"), 40),
-                        "title": self._single_line(raw.get("title"), 60) or "群聊观察",
-                        "content": self._single_line(raw.get("content"), 260),
+                        "title": self._single_line(raw.get("title"), 60) or "待确认观察",
+                        "content": str(raw.get("content") or "").strip()[:500],
                         "evidence": self._single_line(raw.get("evidence"), 160),
                         "group_id": self._single_line(raw.get("group_id"), 40),
                         "weight": self._clamp_int(raw.get("weight"), 35, 0, 100),
                         "count": self._clamp_int(raw.get("count"), 1, 1, 999),
                         "created_at": self.plugin._format_timestamp_elapsed(raw.get("created_at", 0)),
+                        **self._worldbook_observation_provenance(raw),
                     }
                 )
             profile_items.append(
@@ -7217,7 +7220,7 @@ class PrivateCompanionPageApiSummaryMixin:
                     "boundary_note": self._single_line(item.get("boundary_note"), 500),
                     "important_memories": memories,
                     "pending_observations": pending_items,
-                    "pending_observation_count": len(pending_items),
+                    "pending_observation_count": sum(isinstance(row, dict) for row in pending),
                     "source_entries": item.get("source_entries") if isinstance(item.get("source_entries"), list) else [],
                     "note": self._single_line(item.get("note"), 500),
                 }
@@ -7263,6 +7266,18 @@ class PrivateCompanionPageApiSummaryMixin:
             "groups": group_items[:80],
         }
 
+    def _worldbook_observation_provenance(self, raw: dict[str, Any]) -> dict[str, Any]:
+        # Preserve only existing bounded source fields; do not invent old provenance.
+        result = {}
+        for key, limit in (("source", 40), ("group_id", 40), ("import_batch_id", 120),
+                           ("observed_at", 80), ("evidence", 500)):
+            if raw.get(key):
+                result[key] = self._single_line(raw[key], limit)
+        if isinstance(raw.get("source_event_ids"), list):
+            result["source_event_ids"] = [self._single_line(value, 120)
+                for value in raw["source_event_ids"][:16] if self._single_line(value, 120)]
+        return result
+
     def _normalize_important_memories(self, value: Any) -> list[dict[str, Any]]:
         if not isinstance(value, list):
             return []
@@ -7285,6 +7300,7 @@ class PrivateCompanionPageApiSummaryMixin:
                     "source": self._single_line(raw.get("source"), 40),
                     "enabled": bool(raw.get("enabled", True)),
                     "updated_at": float(raw.get("updated_at") or time.time()),
+                    **self._worldbook_observation_provenance(raw),
                 }
             )
         memories.sort(key=lambda item: (item.get("enabled", True), item.get("weight", 50), item.get("updated_at", 0)), reverse=True)
@@ -9174,7 +9190,7 @@ class PrivateCompanionPageApiSummaryMixin:
             chunk_items.append(
                 {
                     "index": idx,
-                    "text": self._single_line(chunk.get("text"), 8000),
+                    "text": str(chunk.get("text") or ""),
                     "chars": self._int(chunk.get("chars")),
                     "at": chunk_ts,
                     "created": self.plugin._format_timestamp_elapsed(chunk_ts),

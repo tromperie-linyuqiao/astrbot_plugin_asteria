@@ -5,7 +5,7 @@ window.ChatReceipts = (() => {
   const phases = ['client_received', 'system_notification_posted', 'user_opened'];
   function context(id) {
     return state.authenticated && state.server && state.username && id
-      ? { id, key: 'asteria-chat.receipts.' + JSON.stringify([state.server, state.username, id]) } : null;
+      ? { id, key: 'texas-chat.receipts.' + JSON.stringify([state.server, state.username, id]) } : null;
   }
   const current = selected => selected && context(state.activeId)?.key === selected.key;
   function clearOpenedNotification(selected, messageId) {
@@ -29,11 +29,26 @@ window.ChatReceipts = (() => {
     const pending = read(selected);
     for (const id of ids) {
       const confirmed = lastState?.messages?.find(row => row.message_id === id);
-      if (!confirmed?.[phase + '_at']) pending[id] = { ...(pending[id] || {}), [phase]: true };
+      if (!confirmed?.[phase + '_at']) {
+        pending[id] = { ...(pending[id] || {}), [phase]: true };
+        // Only a newly observed saved row may reopen a previously unavailable ID.
+        delete pending[id].unavailable;
+      }
     }
     const keys = Object.keys(pending);
     while (keys.length > 64) delete pending[keys.shift()];
     return write(selected, pending);
+  }
+  function unavailableIds(result, ids, phase) {
+    const outcome = result?.receipt_result, remaining = new Set(ids), unavailable = new Set();
+    if (outcome?.phase !== phase || !Array.isArray(outcome.accepted) || !Array.isArray(outcome.unavailable))
+      throw Error('receipt_result_incomplete');
+    for (const field of ['accepted', 'unavailable']) for (const id of outcome[field]) {
+      if (typeof id !== 'string' || !remaining.delete(id)) throw Error('receipt_result_mismatch');
+      if (field === 'unavailable') unavailable.add(id);
+    }
+    if (remaining.size) throw Error('receipt_result_incomplete');
+    return unavailable;
   }
   async function flush(selected) {
     if (busy || !current(selected) || active?.key !== selected.key) return;
@@ -45,15 +60,25 @@ window.ChatReceipts = (() => {
         // starving the older half every time new replies arrive.
         for (let batch = 0; batch < 2; batch++) {
         if (!current(selected) || active?.key !== selected.key) break;
-        const ids = Object.entries(read(selected)).filter(([id, value]) => known.has(id) && value?.[phase] === true)
+        // These entries were queued only after actual saved rows were observed.
+        // A later history window need not contain the old row again; the server
+        // validates the ID against the same owned session before accepting it.
+        const ids = Object.entries(read(selected)).filter(([id, value]) => /^[1-9][0-9]{0,18}$/.test(id) && value?.[phase] === true)
           .map(([id]) => id).slice(-32);
         if (!ids.length) break;
-        const result = await apiClient.json('POST', '/chat/receipts', { session_id: selected.id, phase, message_ids: ids });
+        const partial = active.partial === true;
+        const body = { session_id: selected.id, phase, message_ids: ids };
+        if (partial) body.allow_partial = true;
+        const result = await apiClient.json('POST', '/chat/receipts', body);
         if (!current(selected)) break;
+        const unavailable = partial ? unavailableIds(result, ids, phase) : new Set();
         lastState = result; lastError = '';
         const pending = read(selected);
         for (const id of ids) {
           if (!pending[id]) continue;
+          // Keep a bounded explanation in the same metadata, not a success
+          // receipt. No other phase can be confirmed for an unavailable row.
+          if (unavailable.has(id)) { pending[id] = { unavailable: true }; continue; }
           delete pending[id][phase];
           if (!Object.keys(pending[id]).length) delete pending[id];
         }
@@ -76,7 +101,8 @@ window.ChatReceipts = (() => {
     receivedKey = selected.key;
     known = new Set((Array.isArray(snapshot?.history) ? snapshot.history : [])
       .filter(row => row?.content?.type === 'bot' && row.id != null).map(row => String(row.id)));
-    active = snapshot?.receipt_transport?.schema === 1 && snapshot.receipt_transport.supported === true ? selected : null;
+    active = snapshot?.receipt_transport?.schema === 1 && snapshot.receipt_transport.supported === true
+      ? { ...selected, partial: snapshot.receipt_transport.partial_reports === true } : null;
     const opened = read(selected).$opened;
     if (typeof opened === 'string' && known.has(opened) && !state.cacheDisplay && recoveryForeground()) {
       clearOpenedNotification(selected, opened);
@@ -113,6 +139,8 @@ window.ChatReceipts = (() => {
     const line = text => { const node = document.createElement('p'); node.textContent = text; box.append(node); };
     if (!current(active)) { line('同步当前对话后查看收件状态；旧服务器可能未提供此能力。'); return; }
     if (lastError) line(lastError);
+    const unavailable = Object.values(read(active)).filter(row => row?.unavailable === true).length;
+    if (unavailable) line(unavailable + ' 条原消息已不可用于确认；保留此记录，其他消息继续同步。');
     const item = lastState?.messages?.at(-1);
     if (!item) { line('尚未读取最近消息的收件记录。'); return; }
     line('服务器：消息已保存');
@@ -126,7 +154,7 @@ window.ChatReceipts = (() => {
     try {
       const result = await apiClient.json('GET', '/chat/receipts?session_id=' + encodeURIComponent(selected.id));
       if (!current(selected)) return;
-      if (result?.schema === 1) { active = selected; lastState = result; lastError = ''; }
+      if (result?.schema === 1) { active = { ...selected, partial: result.partial_reports === true }; lastState = result; lastError = ''; }
     } catch (_) { if (current(selected)) lastError = '服务器收件记录暂不可读取。'; }
     render();
   }

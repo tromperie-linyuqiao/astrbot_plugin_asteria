@@ -437,3 +437,15 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .action-editor-target{display:grid;gap:10px;margin:8px 0 14px}
 .action-editor-target label{display:grid;gap:7px;font-size:12px;color:var(--text-soft)}
 .action-editor-target input,.action-editor-target select{max-width:100%;min-width:0}
+
+/* Short, transform-only feedback; no timeline/layout or media recreation. */
+@keyframes asteria-enter{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:no-preference){
+dialog[open].settings-dialog{animation:asteria-enter .18s ease-out}
+.compose-panel:not([hidden]),[data-compose-pane]:not([hidden]){animation:asteria-enter .16s ease-out}
+.message-enter,.composition-enter{animation:asteria-enter .18s ease-out}
+.touch-choice,.chat-main-navigation button,.composition-control,.contact-card,.primary-button,.secondary-button{transition:transform .12s ease,background-color .12s ease}
+.touch-choice:active,.chat-main-navigation button:active,.composition-control:active,.contact-card:active,.primary-button:active,.secondary-button:active{transform:scale(.98)}
+}
+
+#body-state-interaction .secondary-button{background:var(--surface-sunken);color:var(--text-strong);border:1px solid var(--line)}#body-state-interaction .appearance-help{color:var(--text-soft)}

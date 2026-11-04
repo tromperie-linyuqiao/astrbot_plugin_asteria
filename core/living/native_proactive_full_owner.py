@@ -29,6 +29,7 @@ LEGACY = 'astrbot_plugin_proactive_chat'
 FLAG = 'living_proactive_chat_native_enabled'
 CONFIG = 'living_proactive_chat'
 RETIRED_SLOT = '_tls_native_proactive_chat_retired'
+CONTINUITY_SLOT = '_tls_proactive_lifecycle_continuity'
 _ENTRY_METHODS = ('on_friend_message', 'on_group_message', 'on_after_message_sent',
     'check_and_chat', '_handle_auto_trigger_callback', '_handle_group_silence_callback')
 
@@ -57,9 +58,9 @@ class NativeProactiveChatFullOwner:
     def _row(self):
         rows = [row for row in self.context.get_all_stars()
                 if getattr(row, 'root_dir_name', None) == LEGACY]
-        if len(rows) != 1:
-            raise RuntimeError('original proactive registry is not unique')
-        return rows[0]
+        if len(rows) > 1:
+            raise RuntimeError('conflicting proactive registry entries')
+        return rows[0] if rows else None
 
     def _save(self, values):
         with self.integrations._config_lock:
@@ -393,21 +394,34 @@ class NativeProactiveChatFullOwner:
     def legacy_closed(self):
         try:
             row = self._row()
-            if row.activated is not False:
+            if getattr(row, 'activated', False) is not False:
                 return False
             old = getattr(row, 'star_cls', None)
-            if old is None:
-                return True  # a cold SDK registry has no former RAM executor
             record = getattr(self.context, RETIRED_SLOT, None)
-            return (isinstance(record, dict) and record.get('context') is self.context
-                and record.get('pid') == os.getpid() and record.get('owner') is old
-                and record.get('drained') is True and getattr(old.scheduler, 'running', None) is False)
+            if isinstance(record, dict):
+                owner = record.get('owner')
+                return (record.get('context') is self.context and record.get('pid') == os.getpid()
+                    and owner is not None and old in (None, owner) and record.get('drained') is True
+                    and getattr(getattr(owner, 'scheduler', None), 'running', None) is False)
+            if old is not None:
+                return False
+            return not any(str(entry[0]).startswith('/' + LEGACY + '/')
+                           for entry in getattr(self.context, 'registered_web_apis', ()))
         except Exception:
             return False
 
     async def _prepare_native(self):
         if not self.legacy_closed() or getattr(self.integrations, '_closed', False):
             raise RuntimeError('confirmed retired proactive executor and a live TLS Host required')
+        retained = getattr(self.context, CONTINUITY_SLOT, None)
+        if retained is not None:
+            if (type(retained) is not dict or retained.get('context') is not self.context
+                    or retained.get('pid') != os.getpid() or retained.get('schema') != 'tls.proactive.continuity.v1'):
+                raise RuntimeError('TLS proactive continuity identity changed')
+            previous = retained.get('native_adapter')
+            if (previous is None or getattr(previous, '_closed', False) is not True
+                    or any(not task.done() for task in getattr(previous, '_running', ()))):
+                raise RuntimeError('preceding TLS proactive service is not closed')
         current = getattr(self.integrations, 'proactive_chat', None)
         if current is not None and getattr(current, 'active', False):
             if self.adapter is current:
@@ -427,7 +441,12 @@ class NativeProactiveChatFullOwner:
 
     async def _transfer_dates(self):
         adapter = self.adapter
-        record = getattr(self.context, RETIRED_SLOT, None)
+        record = getattr(self.context, CONTINUITY_SLOT, None)
+        if record is not None and (type(record) is not dict or record.get('context') is not self.context
+                or record.get('pid') != os.getpid()):
+            raise RuntimeError('TLS proactive continuity identity changed')
+        if record is None:
+            record = getattr(self.context, RETIRED_SLOT, None)
         if not isinstance(record, dict) or record.get('drained') is not True:
             return
         first_transfer = record.get('transferred') is not True
@@ -541,61 +560,10 @@ class NativeProactiveChatFullOwner:
         self._idle_cancelled.clear()
 
     async def activate(self):
-        async with self._lock:
-            if self.active:
-                return self.status()
-            if self._old_off_attempted and not self._old_off_confirmed:
-                raise RuntimeError('original proactive shutdown outcome unknown; use status only')
-            try:
-                row = self._row()
-                if getattr(row, 'activated', None) is True:
-                    owner = getattr(row, 'star_cls', None)
-                    if owner is None:
-                        raise RuntimeError('actual original proactive instance missing')
-                    self._pin_sources(owner)
-                    value = json.loads(json.dumps(dict(owner.config), ensure_ascii=False, allow_nan=False))
-                    existing = self.plugin.config.get(CONFIG)
-                    if (isinstance(existing, dict) and existing and existing != value
-                            and not self.integrations._native_config_is_default(CONFIG,existing)):
-                        raise RuntimeError('native and original proactive configuration differ; reconcile before switching')
-                    self._save({CONFIG: value})
-                    probe = self.integrations._make_proactive_chat()
-                    if probe is None or probe.context is not self.context or probe.migration_blockers():
-                        raise RuntimeError('enabled original proactive features are not supported by the current unified lane')
-                    delivery = getattr(getattr(probe, 'runtime', None), 'delivery', None)
-                    if delivery is None or getattr(delivery, 'active', False) is not True:
-                        raise RuntimeError('existing unified proactive delivery lane is inactive')
-                    self.phase = 'closing_legacy_admission'
-                    await self._freeze_admission()
-                    self.phase = 'draining_legacy'
-                    await self._wait_drained()
-                    self._capture_final_state()
-                    self._old_off_attempted = True
-                    await self.context._star_manager.turn_off_plugin(LEGACY)
-                    await self._wait_drained(cancel_idle=False)
-                    self._record_retirement()
-                elif not self.legacy_closed():
-                    raise RuntimeError('original proactive RAM executor retirement is unconfirmed')
-                adapter = await self._prepare_native()
-                await adapter.activate()
-                await self._transfer_dates()
-                self._save({FLAG: True})
-                self.phase, self.last_error, self.last_error_sha256 = 'native', None, None
-                self.generation += 1
-                return self.status()
-            except BaseException as exc:
-                self.last_error = type(exc).__name__
-                self.last_error_sha256 = hashlib.sha256(str(exc).encode('utf-8')).hexdigest()
-                self.phase = 'blocked' if self._old_off_attempted else 'transition_failed'
-                if not self._old_off_attempted and (self._hook_slots or self._method_slots or self._page_slots):
-                    try:
-                        await self._unfreeze_existing()
-                        self.phase = 'legacy_restored'
-                    except BaseException:
-                        self.phase = 'legacy_restore_unknown'
-                if self.adapter is not None and self.adapter.active:
-                    await self.adapter.stop()
-                raise
+        if not self.legacy_closed():
+            raise RuntimeError('another proactive executor is active or has unretired work')
+        self._save({FLAG: True})
+        return await self.start_if_configured()
 
     async def start_if_configured(self):
         if self.plugin.config.get(FLAG) is not True:
@@ -627,6 +595,9 @@ class NativeProactiveChatFullOwner:
             if (isinstance(record, dict) and record.get('context') is self.context
                     and record.get('native_adapter') is self.adapter):
                 record['native_snapshot'] = snapshot
+            setattr(self.context, CONTINUITY_SLOT, dict(schema='tls.proactive.continuity.v1',
+                context=self.context, pid=os.getpid(), drained=True, transferred=True,
+                native_adapter=self.adapter, native_snapshot=snapshot))
         self.phase = 'native_stopped'
         return self.status()
 
@@ -656,36 +627,16 @@ class NativeProactiveChatFullOwner:
             return await self._stop_locked(False)
 
     async def restore_legacy(self):
-        async with self._lock:
-            await self._stop_locked(True)
-            if self.adapter is not None and (self.adapter._unknown or self.adapter._frames):
-                raise RuntimeError('native proactive unknown outcomes require per-task reconciliation before legacy restart')
-            row = self._row()
-            if row.activated is True:
-                await self._unfreeze_existing()
-            elif self.legacy_closed():
-                if self.adapter is not None and self.adapter._overdue:
-                    raise RuntimeError('legacy startup would clear overdue dates; reconcile them before restoring')
-                await self.context._star_manager.turn_on_plugin(LEGACY)
-                if self._row().activated is not True:
-                    self.phase = 'legacy_restore_unknown'
-                    raise RuntimeError('normal original proactive startup outcome unknown')
-                setattr(self.context, RETIRED_SLOT, None)
-                self._hook_slots.clear(); self._method_slots.clear(); self._page_slots.clear()
-                self._timer_snapshot.clear(); self._job_snapshot.clear(); self._idle_cancelled.clear()
-                self._old_off_attempted = self._old_off_confirmed = False
-            else:
-                raise RuntimeError('original proactive shutdown outcome unknown; do not create a second executor')
-            self.phase, self.last_error, self.last_error_sha256 = 'legacy_restored', None, None
-            return self.status()
+        raise RuntimeError('legacy plugin restoration is retired; TLS is a standalone plugin')
 
     def status(self):
         try:
             row = self._row()
-            old_active = getattr(row, 'activated', None)
+            old_active = getattr(row, 'activated', False)
         except Exception:
             old_active = None
         return dict(ok=True, protocol='tls.native_proactive.full_owner.r60.v1',
+            execution_model='standalone_tls', original_installation_required=False,
             phase=self.phase, active=self.active, configured=self.plugin.config.get(FLAG) is True,
             generation=self.generation, original_plugin_active=old_active,
             old_off_attempted=self._old_off_attempted, old_off_confirmed=self._old_off_confirmed,

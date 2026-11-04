@@ -15,9 +15,11 @@ import sys
 import threading
 import types
 
+from ...identity import PLUGIN_NAME, LEGACY_PLUGIN_NAME
 
 PC_ROOT = 'astrbot_plugin_private_companion'
-TLS_ROOT = 'astrbot_plugin_virtual_body'
+TLS_ROOT = PLUGIN_NAME
+TLS_ROOTS = (PLUGIN_NAME, LEGACY_PLUGIN_NAME)
 PROTOCOL = 'tls.native.memo_tool.pc_router.v1'
 SLOT = '_pc_manage_memo_impl'
 LEGACY_SLOT = '_tls_legacy_pc_manage_memo_impl'
@@ -108,7 +110,8 @@ def _registry(context):
 
 
 def _metadata(context, root, expected=None):
-    rows = [row for row in _registry(context) if getattr(row, 'root_dir_name', None) == root]
+    roots = TLS_ROOTS if root in TLS_ROOTS else (root,)
+    rows = [row for row in _registry(context) if getattr(row, 'root_dir_name', None) in roots]
     if len(rows) != 1:
         raise ValueError('unique current plugin required')
     row = rows[0]
@@ -280,7 +283,7 @@ def _native_pc_successor(context, tls_plugin):
     """A genuine TLS owner after normal old-PC retirement, not a fake Star."""
     _metadata(context, TLS_ROOT, tls_plugin)
     old = [row for row in _registry(context) if getattr(row, 'root_dir_name', None) == PC_ROOT]
-    if len(old) != 1 or getattr(old[0], 'activated', None) is not False: return None
+    if len(old) > 1 or any(getattr(row, 'activated', None) is not False for row in old): return None
     integrations = getattr(tls_plugin, '_native_server_integrations', None)
     owner = getattr(integrations, 'pc_full', None)
     pc = getattr(owner, 'service', None)
@@ -300,11 +303,12 @@ class NativeMemoSuccessorProof:
     def __init__(self, context, plugin, owner, pc):
         self.context, self.plugin, self.owner, self.pc = context, plugin, owner, pc
         state = getattr(owner, 'binding_state', None)
-        if (type(state) is not dict or state.get('source_kind') != 'retired_legacy_pc'
+        keys = ('binding_sha256',) if type(state) is dict and state.get('source_kind') == 'tls_pc' else ('binding_sha256', 'legacy_source_sha256', 'legacy_config_sha256')
+        if (type(state) is not dict or state.get('source_kind') not in {'tls_pc', 'retired_legacy_pc'}
+                or set(state) != {'source_kind', *keys}
                 or any(type(state.get(key)) is not str or len(state[key]) != 64
-                       or any(c not in '0123456789abcdef' for c in state[key])
-                       for key in ('binding_sha256', 'legacy_source_sha256', 'legacy_config_sha256'))):
-            raise ValueError('actual retired PC memo binding state required')
+                       or any(c not in '0123456789abcdef' for c in state[key]) for key in keys)):
+            raise ValueError('persisted TLS memo binding state required')
         self._state = _canonical(state); self.binding_sha256 = state['binding_sha256']
         original = getattr(pc, SLOT, None)
         if not inspect.ismethod(original) or original.__self__ is not pc:
@@ -407,42 +411,7 @@ class NativeMemoRuntimeBridge:
                 record.closed = True
                 raise ValueError('native PC source or retired binding changed during attachment')
             return self.diagnostics()
-        _, pc = _metadata(self.context, PC_ROOT)
-        if self._binding is not None:
-            if self.source_current():
-                return self.diagnostics()
-            raise ValueError('stop old bridge before rebinding replaced PC')
-        proof = NativeMemoPCSourceProof(pc)
-        record = _retained_binding(pc)
-        if record is not None:
-            if record.closed is not True:
-                raise ValueError('only reviewed stopped binding may be reused')
-            if record.proof.binding_sha256 == proof.binding_sha256:
-                if not record.current():raise ValueError('reviewed stopped binding changed')
-                record.closed = False
-            elif (record.proof.binding_sha256 == proof.previous_binding_sha256
-                    and type(record.legacy_inflight) is int and record.legacy_inflight==0
-                    and proof.current() and _originals_drained(self._loop,proof.legacy_code_sha256)):
-                # Replace the stopped record and slot together. Never mutate
-                # its old proof or reopen an unwrapped legacy implementation.
-                # Captured old _memo_compat references re-read the current PC
-                # slot record and therefore cannot revive the old controller.
-                record=NativeMemoPCBinding(self.context,pc,proof,proof.original(record.original))
-                setattr(pc,_BINDING,record)
-                setattr(pc,SLOT,record.wrapper)
-            else:raise ValueError('retained binding migration requires exact source and complete old drain')
-        else:
-            original = proof.original(getattr(pc, SLOT, None))
-            record = NativeMemoPCBinding(self.context, pc, proof, original)
-            # One SDK implementation slot. No SDK registry/tool mutation.
-            setattr(pc, _BINDING, record)
-            setattr(pc, SLOT, record.wrapper)
-        record.controller = self
-        self._binding, self._pc, self._tls_metadata = record, pc, tls_metadata
-        if not self.source_current():
-            record.closed = True
-            raise ValueError('source or registry changed during binding')
-        return self.diagnostics()
+        raise ValueError('TLS companion service unavailable; external plugin fallback is retired')
 
     def source_current(self):
         try:

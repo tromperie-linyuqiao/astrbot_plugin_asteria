@@ -53,7 +53,7 @@ window.ChatNotificationCenter = (() => {
     const close = button('×', closeActive, 'icon-button'); close.setAttribute('aria-label', '关闭通知中心'); heading.append(title, close); form.append(heading);
     form.append(text('p', '先看她说了什么，再按需查看提醒和同步状态。', 'notification-center-intro'));
     const tabs = text('div', '', 'notification-center-tabs'); tabs.setAttribute('role', 'group'); tabs.setAttribute('aria-label', '通知分类');
-    for (const [name, label] of [['texas', '伙伴'], ['reminder', '提醒'], ['tasks', '待处理'], ['sync', '同步'], ['all', '全部消息']]) {
+    for (const [name, label] of [['texas', '角色消息'], ['reminder', '提醒'], ['tasks', '待处理'], ['sync', '同步'], ['all', '全部消息']]) {
       const item = button(label, () => select(name), 'notification-center-filter'); item.id = 'notification-center-filter-' + name; tabs.append(item);
     }
     form.append(tabs);
@@ -94,7 +94,7 @@ window.ChatNotificationCenter = (() => {
   function messageCard(item) {
     const view = viewed(item), row = text('article', '', 'notification-center-card' + (view ? '' : ' notification-center-unseen'));
     row.setAttribute('data-notification-message', item.message_id);
-    const heading = text('div', '', 'notification-center-card-heading'); heading.append(text('strong', item.kind === 'reminder' ? '日程提醒' : '伙伴'), text('span', kinds[item.kind] || '消息', 'notification-center-kind')); row.append(heading);
+    const heading = text('div', '', 'notification-center-card-heading'); heading.append(text('strong', item.kind === 'reminder' ? '日程提醒' : currentRoleName()), text('span', kinds[item.kind] || '消息', 'notification-center-kind')); row.append(heading);
     row.append(text('p', preview(savedMessage(item.message_id)), 'notification-center-preview'));
     row.append(text('p', stageLabel(item), 'notification-center-stage'));
     const open = button('打开这条消息', () => navigate(item), 'notification-center-open'); open.setAttribute('aria-label', '打开' + (kinds[item.kind] || '消息')); row.append(open);
@@ -133,6 +133,7 @@ window.ChatNotificationCenter = (() => {
   function render() {
     if (!dialog?.open || !ready() || owner !== key()) return;
     const box = get('notification-center-list'); box.replaceChildren();
+    get('notification-center-filter-texas').textContent = currentRoleName();
     for (const name of ['texas', 'reminder', 'tasks', 'sync', 'all']) get('notification-center-filter-' + name).setAttribute('aria-pressed', String(filter === name));
     const isMessages = ['texas', 'reminder', 'all'].includes(filter);
     get('notification-center-pending').disabled = !isMessages; get('notification-center-collapse').disabled = !isMessages;
@@ -149,7 +150,7 @@ window.ChatNotificationCenter = (() => {
     if (error) note(error);
     else if (reading) note('正在读取当前会话的真实记录…');
     else if (updatedAt) note('更新于 ' + new Date(updatedAt).toLocaleTimeString('zh-CN', { hour12: false }) + ' · 最近至多 ' + LIMIT + ' 条已保存助手消息；更多历史仍在聊天记录中。' + (state.cacheDisplay ? ' 正文预览来自本机缓存。' : ''));
-    if (typeof window.CustomEvent === 'function' && typeof document.dispatchEvent === 'function') document.dispatchEvent(new window.CustomEvent('asteria-chat-notification-summary', { detail: summary() }));
+    if (typeof window.CustomEvent === 'function' && typeof document.dispatchEvent === 'function') document.dispatchEvent(new window.CustomEvent('texas-chat-notification-summary', { detail: summary() }));
   }
   async function read() {
     const selected = { owner, epoch }; if (!current(selected) || reading) return;
@@ -165,7 +166,7 @@ window.ChatNotificationCenter = (() => {
     } finally { if (current(selected) && request === serial) { reading = false; render(); } }
   }
   async function open() {
-    if (!ready()) { showNotice('请先连接伙伴，再打开通知中心。'); return; }
+    if (!ready()) { showNotice('请先连接一个 Bot，再打开通知中心。'); return; }
     mount(); window.ChatSettingsHub?.close(); hideMoreMenu(); window.ChatDeliveryCenter?.closeActive();
     if (owner !== key()) { invalidate(); owner = key(); filter = 'texas'; onlyPending = false; collapsed = false; get('notification-center-pending').checked = false; }
     if (!dialog.open) dialog.showModal(); render(); await read();

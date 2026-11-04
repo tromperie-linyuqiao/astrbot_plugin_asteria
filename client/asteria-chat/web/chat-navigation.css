@@ -21,3 +21,43 @@
 .hub-search-bar{display:flex;align-items:center;gap:7px}.hub-search-bar input{flex:1;min-width:0;border:1px solid var(--line);border-radius:12px;padding:11px 12px;background:var(--surface-base);color:var(--text);font:inherit;font-size:13px}.hub-search-bar button{flex:none;font-size:12px}.hub-search-status:empty,.hub-search-results:empty{display:none}.hub-search-status{margin:0;color:var(--text-soft);font-size:12px}.hub-search-results{display:grid;gap:7px;overflow:auto;max-height:55dvh}.hub-search-result{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px;border:1px solid var(--line);border-radius:12px;background:var(--surface-base);text-align:left;color:var(--text)}.hub-search-result strong{font-size:13px;font-weight:500;overflow-wrap:anywhere}.hub-search-result small{flex:none;font-size:10px;color:var(--text-soft)}
 
 .connection-shortcuts{display:grid;gap:7px;padding:12px;border:1px solid var(--line);border-radius:13px;background:var(--surface-base);min-width:0}.connection-shortcuts select{width:100%;min-width:0;background:var(--surface-sunken);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:10px;font:inherit;font-size:12px}.connection-shortcuts .text-button{justify-self:start;font-size:11px}.connection-shortcuts p{margin:0}
+
+/* Task-oriented settings: small groups, retained original controls. */
+.hub-organized{display:block!important}.hub-organized .hub-category{margin:22px 0 0;padding:0}.hub-category h3,.hub-bots h3{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.04em;margin:0 0 8px}.hub-organized .hub-section-card{display:grid;grid-template-columns:1fr auto;width:100%;text-align:left;gap:3px 12px;padding:13px 14px;border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent;box-shadow:none;min-height:0}.hub-organized .hub-section-card strong{font-size:14px;font-weight:600}.hub-organized .hub-section-card span{grid-column:1;font-size:12px;color:var(--muted)}.hub-organized .hub-section-card small{grid-column:2;grid-row:1/3;align-self:center;font-size:20px;color:var(--muted)}.hub-organized .hub-section-card:hover{background:var(--surface)}.hub-bots{display:grid;grid-template-columns:1fr 1fr;gap:8px}.hub-bots h3{grid-column:1/-1}.hub-bot{display:flex;flex-direction:column;align-items:flex-start;gap:5px;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--text);text-align:left}.hub-bot strong{font-size:14px}.hub-bot small{font-size:11px;color:var(--muted)}.settings-hub-dialog .settings-form{gap:10px}.hub-organized .hub-category:last-child{margin-bottom:10px}
+
+/* Single-purpose settings pages, preserving the original controls. */
+.settings-pane{display:flex;flex-direction:column;gap:12px;min-width:0}
+.settings-pane[hidden]{display:none!important}
+.settings-page-intro{color:var(--muted);font-size:13px;line-height:1.65;margin:0 0 4px}
+.settings-pane>section{margin:0;padding:14px;border:1px solid var(--border);border-radius:16px}
+.settings-pane>.connection-presets{padding:0;border:0}
+.settings-pane label{font-size:13px;font-weight:600}
+.settings-pane input:not([type=checkbox]):not([type=radio]),.settings-pane select{max-width:100%;box-sizing:border-box}
+.settings-pane .about-app{margin-top:12px}
+.hub-bot-inbox{grid-column:1/-1;padding:11px 14px;border:1px solid var(--border);border-radius:14px;background:var(--surface);color:var(--text);font:inherit;text-align:left}
+.reply-account-preview{margin:10px 0;padding:10px 12px;border-radius:12px;background:var(--surface);white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.6}
+.reply-account-preview small{display:block;color:var(--muted);font-size:11px;margin-bottom:5px}
+.personal-availability{padding:10px 14px;border-radius:12px;background:var(--surface);color:var(--muted);font-size:12px;line-height:1.6;margin:0}
+
+[data-settings-page] .notify-settings>[hidden]{display:none!important}
+
+/* Two contacts, with the original account scope and theme. */
+.contacts-dialog{width:min(540px,calc(100vw - 24px));max-height:85dvh;background:var(--surface-panel);color:var(--text);border:1px solid var(--line)}
+.contacts-dialog .settings-form{gap:16px}
+.contacts-help,.contacts-note{font-size:13px;line-height:1.65;color:var(--text-soft);margin:0;overflow-wrap:anywhere}
+.contacts-note:empty{display:none}
+.contact-list,.contact-group{display:grid;gap:10px}
+.contact-card{display:flex;align-items:center;gap:12px;padding:16px;min-width:0;width:100%;border:1px solid var(--line);border-radius:16px;background:var(--surface-raised);color:var(--text);text-align:left}
+.contact-card[data-current="true"]{border-color:var(--accent)}
+.contact-card:hover{background:var(--surface-sunken)}
+.contact-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.contact-avatar{display:grid;place-items:center;flex:0 0 44px;height:44px;border-radius:14px;background:var(--accent-soft);color:var(--accent-strong);font-size:22px;font-weight:600}
+.contact-body{display:grid;gap:6px;flex:1;min-width:0}
+.contact-heading{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
+.contact-heading strong{font-size:16px;color:var(--text-strong)}
+.contact-state{font-size:11px;color:var(--text-soft)}
+.contact-account{font-size:12px;overflow-wrap:anywhere;color:var(--text)}
+.contact-preview{font-size:12px;color:var(--text-soft);line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.contact-open{font-size:12px;color:var(--accent-strong);flex:none}
+.contacts-manage{width:100%;font-size:13px}
+@media(max-width:600px){.contacts-dialog .settings-form{padding:20px}.contact-card{padding:13px;gap:10px}.contact-open{font-size:11px}}

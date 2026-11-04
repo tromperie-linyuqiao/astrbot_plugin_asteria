@@ -10,14 +10,16 @@ from pathlib import Path
 from typing import Any
 
 from .config import ConfigView
+from .memory_atom import VALIDITY_STATUSES, DURABILITY_LEVELS, SENSITIVITY_LEVELS
 from .models import EntityRef, MemoryRecord, clean_text, json_loads
 from .sensitive_data import redact_sensitive_value
 
 
 PORTABLE_FORMAT = "astrbot-memory-jsonl"
-PORTABLE_VERSION = 1
+PORTABLE_VERSION = 2
 MAX_PORTABLE_BYTES = 64 * 1024 * 1024
 PORTABLE_EXPORT_PAGE_SIZE = 500
+PORTABLE_V1_WARNING = "旧版v1档案可能缺少有效期、Bot归属与修订历史；仅恢复文件已有信息，不能重建遗失来源。"
 
 
 PRESETS: dict[str, dict[str, Any]] = {
@@ -396,7 +398,7 @@ class PortableMemoryArchive:
         }
         now = datetime.now(timezone.utc)
         self.export_dir.mkdir(parents=True, exist_ok=True)
-        path = self.export_dir / f"memory-companion-{now.strftime('%Y%m%d-%H%M%S')}.jsonl"
+        path = self.export_dir / f"memory-companion-{now.strftime('%Y%m%d-%H%M%S-%f')}.jsonl"
         header = {
             "record_type": "header",
             "format": PORTABLE_FORMAT,
@@ -405,14 +407,28 @@ class PortableMemoryArchive:
             "exported_at": now.isoformat(timespec="seconds"),
             "encoding": "utf-8",
             "counts": counts,
-            "excluded": ["memory_embeddings", "injection_logs", "provider_credentials"],
+            "excluded": ["memory_embeddings", "injection_logs", "provider_credentials", "active_knowledge_graph"],
+            "revision_history": "included_per_memory; historical_graph_is_not_reactivated",
         }
         fd, temp_name = tempfile.mkstemp(suffix=".tmp", prefix=path.stem, dir=str(path.parent))
+        revision_count = 0
         try:
             with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
                 self._write_line(handle, header)
+                offset = 0
+                while True:
+                    page = await self.store.portable_memory_page(limit=PORTABLE_EXPORT_PAGE_SIZE, offset=offset)
+                    if not page:
+                        break
+                    for memory, revisions in page:
+                        data = self._memory_payload(memory)
+                        data.update(revisions=revisions, revision_count=len(revisions))
+                        revision_count += len(revisions)
+                        self._write_line(handle, {"record_type": "memory", "data": data})
+                    offset += len(page)
+                    if len(page) < PORTABLE_EXPORT_PAGE_SIZE:
+                        break
                 for record_type, loader, normalizer in (
-                    ("memory", self.store.list_memories, self._memory_payload),
                     ("identity", self.store.list_identities, self._normalized_row),
                     ("relationship", self.store.list_relationships, self._normalized_row),
                     ("timeline", self.store.recent_timeline, self._normalized_row),
@@ -440,7 +456,8 @@ class PortableMemoryArchive:
             except OSError:
                 pass
             raise
-        return {"path": str(path), "counts": counts, "format": PORTABLE_FORMAT, "version": PORTABLE_VERSION}
+        return {"path": str(path), "counts": counts, "format": PORTABLE_FORMAT,
+            "version": PORTABLE_VERSION, "revision_count": revision_count}
 
     def preview(self, path: str) -> dict[str, Any]:
         header, records = self._read(path)
@@ -452,6 +469,10 @@ class PortableMemoryArchive:
             "exported_at": header.get("exported_at"),
             "counts": dict(counts),
             "total_records": len(records),
+            "revision_count": sum(len(item.get("data", {}).get("revisions", [])) for item in records
+                if item.get("record_type") == "memory" and isinstance(item.get("data"), dict)),
+            "conflict_policy": "保留当前资料；不同内容或归属的同ID记录跳过并报告，不自动覆盖或合并。",
+            "warnings": [PORTABLE_V1_WARNING] if header["version"] == 1 else [],
             "valid": True,
         }
 
@@ -462,12 +483,13 @@ class PortableMemoryArchive:
         batch_id = await self.store.add_import_batch(
             source_plugin=clean_text(header.get("plugin"), 120) or "portable_jsonl",
             source_path=str(Path(path).expanduser().resolve()),
-            mode=f"portable_v{PORTABLE_VERSION}",
+            mode=f"portable_v{header['version']}",
             stats={"preview_counts": dict(preview_counts)},
         )
         imported: Counter[str] = Counter()
         skipped: Counter[str] = Counter()
         errors: list[str] = []
+        revision_count = 0
         for index, item in enumerate(records, start=2):
             kind = clean_text(item.get("record_type"), 40)
             data = item.get("data")
@@ -480,7 +502,8 @@ class PortableMemoryArchive:
                     if not record.content:
                         skipped[kind] += 1
                         continue
-                    await self.store.insert_memory(record)
+                    await self.store.restore_portable_memory(record, data.get("revisions", []))
+                    revision_count += len(data.get("revisions", []))
                 elif kind == "identity":
                     await self.store.upsert_identity(
                         platform=clean_text(data.get("platform"), 80),
@@ -569,6 +592,9 @@ class PortableMemoryArchive:
             "imported": dict(imported),
             "skipped": dict(skipped),
             "errors": errors,
+            "revision_count": revision_count,
+            "revision_count_note": "成功核对或恢复的修订条目；重复导入不新增同一修订。",
+            "warnings": [PORTABLE_V1_WARNING] if header["version"] == 1 else [],
         }
 
     @staticmethod
@@ -605,6 +631,17 @@ class PortableMemoryArchive:
             "evidence": memory.evidence,
             "confidence": memory.confidence,
             "importance": memory.importance,
+            "owner_bot_id": memory.owner_bot_id,
+            "validity_status": memory.validity_status,
+            "valid_from": memory.valid_from,
+            "valid_to": memory.valid_to,
+            "salience": memory.salience,
+            "durability": memory.durability,
+            "sensitivity": memory.sensitivity,
+            "reinforcement_score": memory.reinforcement_score,
+            "injection_count": memory.injection_count,
+            "last_injected_at": memory.last_injected_at,
+            "canonical_key": memory.canonical_key,
             "review_status": memory.review_status,
             "tags": memory.tags,
             "metadata": memory.metadata,
@@ -614,6 +651,7 @@ class PortableMemoryArchive:
             "last_accessed_at": memory.last_accessed_at,
             "access_count": memory.access_count,
             "source_plugin": memory.source_plugin,
+            "import_batch_id": memory.import_batch_id,
             "content_fingerprint": memory.content_fingerprint,
             "merged_count": memory.merged_count,
             "supersedes_id": memory.supersedes_id,
@@ -623,6 +661,9 @@ class PortableMemoryArchive:
     def _memory_record(cls, data: dict[str, Any], batch_id: str) -> MemoryRecord:
         subject = cls._dict(data.get("subject"))
         object_ = cls._dict(data.get("object"))
+        metadata = dict(cls._dict(data.get("metadata")))
+        if data.get("import_batch_id"):
+            metadata.setdefault("portable_origin_import_batch_id", clean_text(data["import_batch_id"], 120))
         return MemoryRecord(
             id=clean_text(data.get("id"), 120),
             memory_type=clean_text(data.get("memory_type"), 80) or "imported_memory",
@@ -651,9 +692,20 @@ class PortableMemoryArchive:
             evidence=clean_text(data.get("evidence"), 4000),
             confidence=cls._float(data.get("confidence"), 0.5),
             importance=cls._float(data.get("importance"), 0.3),
+            owner_bot_id=clean_text(data.get("owner_bot_id"), 120),
+            validity_status=clean_text(data.get("validity_status"), 40) or "active",
+            valid_from=clean_text(data.get("valid_from"), 80),
+            valid_to=clean_text(data.get("valid_to"), 80),
+            salience=cls._float(data.get("salience"), 0.3),
+            durability=clean_text(data.get("durability"), 40) or "normal",
+            sensitivity=clean_text(data.get("sensitivity"), 40) or "private",
+            reinforcement_score=cls._float(data.get("reinforcement_score"), 0.0),
+            injection_count=max(0, _int(data.get("injection_count"))),
+            last_injected_at=clean_text(data.get("last_injected_at"), 80),
+            canonical_key=clean_text(data.get("canonical_key"), 160),
             review_status=clean_text(data.get("review_status"), 40) or "auto",
             tags=cls._list(data.get("tags")),
-            metadata=cls._dict(data.get("metadata")),
+            metadata=metadata,
             created_at=clean_text(data.get("created_at"), 80),
             updated_at=clean_text(data.get("updated_at"), 80),
             occurred_at=clean_text(data.get("occurred_at"), 80),
@@ -726,9 +778,24 @@ class PortableMemoryArchive:
                     header = item
                     if item.get("record_type") != "header" or item.get("format") != PORTABLE_FORMAT:
                         raise ValueError("unsupported portable archive header")
-                    if int(item.get("version") or 0) != PORTABLE_VERSION:
+                    if int(item.get("version") or 0) not in {1, PORTABLE_VERSION}:
                         raise ValueError("unsupported portable archive version")
+                    header["version"] = int(item["version"])
                     continue
+                if header.get("version") == 2 and item.get("record_type") == "memory":
+                    data = item.get("data")
+                    if not isinstance(data, dict) or not isinstance(data.get("revisions"), list):
+                        raise ValueError(f"line {line_number}: memory revision history is missing")
+                    if data.get("revision_count") != len(data["revisions"]):
+                        raise ValueError(f"line {line_number}: memory revision history is incomplete")
+                    for field in ("owner_bot_id", "validity_status", "valid_from", "valid_to", "salience", "durability",
+                                  "sensitivity", "reinforcement_score", "injection_count", "last_injected_at", "canonical_key"):
+                        if field not in data:
+                            raise ValueError(f"line {line_number}: memory field {field} is missing")
+                    for field, choices in (("validity_status", VALIDITY_STATUSES), ("durability", DURABILITY_LEVELS),
+                                           ("sensitivity", SENSITIVITY_LEVELS)):
+                        if data[field] not in choices:
+                            raise ValueError(f"line {line_number}: memory field {field} is invalid")
                 records.append(item)
         if not header:
             raise ValueError("portable archive header is missing")

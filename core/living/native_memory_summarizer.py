@@ -9,6 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .native_memory_summary_text import clean_text, json_dumps, json_loads, message_terms
+from .structured_reply import visible_timeline_rows
 
 
 class NativeMemorySummarizer:
@@ -201,7 +202,7 @@ class NativeMemorySummarizer:
         consumed_rows: list[dict[str, Any]] = []
         total = 0
         routine_check_window = 0
-        for row in rows:
+        for row in visible_timeline_rows(rows):
             event_type = clean_text(row.get("event_type"), 40)
             metadata = json_loads(row.get("metadata"), {})
             if event_type == "bot_response" or row.get("subject_id") == "self":

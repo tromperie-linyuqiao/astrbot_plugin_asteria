@@ -2,7 +2,7 @@
 /* Read-only TLS projection. This panel keeps no independent ledger, invokes no
    model or scheduler, and only appends a draft after an explicit user click. */
 window.ChatPersonalSpace = (() => {
-  const kinds = { all: '概览', space: '私人空间', item: '物品', interest: '兴趣', exploration: '探索', collection: '收藏' };
+  const kinds = { all: '画卷', space: '私人空间', item: '物品', interest: '兴趣', exploration: '探索', collection: '收藏' };
   const states = { active: '进行中', paused: '已暂停', completed: '已完成', planned: '计划中', cancelled: '已取消' };
   const categories = { music: '音乐', book: '书籍', image: '图片', place: '地点', note: '笔记', event: '经历', topic: '话题' };
   const origins = { ordinary: '普通物品', selected: '自行挑选', user_gift: '用户赠予（管理端记录，未核验）', event: '经历获得' };
@@ -12,7 +12,7 @@ window.ChatPersonalSpace = (() => {
   let dialog, body, note, back, title, tabs, searchForm, searchInput, searchGo, clearSearch, refresh;
   let owner = '', session = '', ownerAuth = null, epoch = 0, serial = 0, busy = false, serverScope = null;
   let kind = 'all', query = '', offset = 0, listing = null, selected = null, record = null, related = null, ready = false;
-  let listPosition = 0;
+  let listPosition = 0, availability;
   const trail = [];
   const scope = () => JSON.stringify([state.server, state.username, state.activeId, state.sessionPersonaConfig?.configuredId || '']);
   const auth = () => typeof chatAuthEpoch === 'number' ? chatAuthEpoch : null;
@@ -90,6 +90,7 @@ window.ChatPersonalSpace = (() => {
     if (dialog) return;
     dialog = make('dialog', undefined, 'settings-dialog personal-dialog'); dialog.id = 'personal-dialog'; dialog.setAttribute('aria-labelledby', 'personal-title');
     const form = make('div', undefined, 'settings-form'), heading = make('div', undefined, 'dialog-heading');
+    availability=make('p','正在读取档案可用状态…','personal-availability');availability.setAttribute('role','status');
     back = button('‹', returnBack, 'icon-button'); back.id = 'personal-back'; back.setAttribute('aria-label', '返回私人空间列表');
     title = make('h2', '私人空间与兴趣'); title.id = 'personal-title';
     const close = button('×', closeActive, 'icon-button'); close.id = 'personal-close'; close.setAttribute('aria-label', '关闭私人空间与兴趣'); heading.append(back, title, close);
@@ -101,7 +102,7 @@ window.ChatPersonalSpace = (() => {
     tabs = make('nav', undefined, 'personal-tabs'); tabs.setAttribute('aria-label', '私人空间资料分类');
     for (const [value, label] of Object.entries(kinds)) { const node = button(label, () => changeList(value, query), 'personal-tab'); node.dataset.personalKind = value; tabs.append(node); }
     archiveFilters = make('div', undefined, 'personal-archive-filters');
-    for(const [id,label,values] of [['status','探索状态',[['','全部状态'],['planned','待探索'],['active','正在关注'],['completed','已完成'],['paused','暂时搁置']]],['category','收藏类别',[['','全部类别'],...Object.entries(categories)]],['sort','排序',[['updated','最近更新'],['created','首次记录'],['name','名称']]]]) {
+    for(const [id,label,values] of [['status','探索状态',[['','全部状态'],['planned','待探索'],['active','正在关注'],['completed','已完成'],['paused','暂时搁置'],['cancelled','已取消']]],['category','收藏类别',[['','全部类别'],...Object.entries(categories)]],['sort','排序',[['updated','最近更新'],['created','首次记录'],['name','名称']]]]) {
       const wrap=make('label',label), select=make('select');select.dataset.archiveFilter=id;
       for(const [value,text] of values){const option=make('option',text);option.value=value;select.append(option);}
       select.addEventListener('change',()=>changeList(kind,query));wrap.append(select);archiveFilters.append(wrap);
@@ -131,12 +132,45 @@ window.ChatPersonalSpace = (() => {
     }
     body.append(grid);
   }
+
+  let visualSection='spaces', browsingAll=false;
+  function renderVisual(data) {
+    const top=card('私人数字档案');top.classList.add('personal-visual-hero');
+    top.append(make('p',data.last_updated_at?'最近整理 · '+time(data.last_updated_at):'从一个空间、一件物品，慢慢留下生活的轮廓。','personal-muted'));
+    const counts=listing.overview.display_counts||listing.overview.counts||{},stats=make('div',undefined,'personal-visual-stats');
+    for(const [id,label]of [['space','空间'],['item','物品'],['interest','兴趣'],['collection','收藏']]){
+      const b=button('',()=>changeList(id,''),'personal-visual-stat');b.append(make('strong',String(counts[id]??'—')),make('span',label));stats.append(b);
+    }top.append(stats);body.append(top);
+    const nav=make('nav',undefined,'personal-visual-tabs');nav.setAttribute('aria-label','生活画卷分区');
+    for(const [id,label]of [['spaces','空间'],['interests','兴趣'],['explorations','探索'],['collections','收藏'],['recent','更新']]){const b=button(label,()=>{visualSection=id;listPosition=0;renderList();},'personal-tab');b.dataset.personalScene=id;b.setAttribute('aria-pressed',String(id===visualSection));nav.append(b);}body.append(nav);
+    const grid=make('section',undefined,'personal-visual-grid');grid.dataset.personalSceneBody=visualSection;body.append(grid);
+    const entry=(parent,row)=>{if(!validRecord(row))return;const b=button('',()=>openRecord(row.kind,row.id),'personal-visual-entry');b.append(make('strong',name(row)),make('small',[kinds[row.kind],recordState(row)].filter(Boolean).join(' · ')));parent.append(b);};
+    const section=(label,copy)=>{const box=card(label);if(copy)box.append(make('p',copy,'personal-muted'));grid.append(box);return box;};
+    if(visualSection==='spaces'){
+      for(const group of data.spaces||[]){const box=section(group.record.fields?.area||'私人空间',group.item_count+' 件物品');entry(box,group.record);const branch=make('div',undefined,'personal-visual-branch');for(const row of group.items||[])entry(branch,row);if(!branch.children.length)branch.append(make('p','尚未放置物品','personal-muted'));box.append(branch);}
+      if(data.unplaced_items?.count){const box=section('尚未归入空间',data.unplaced_items.count+' 件物品');for(const row of data.unplaced_items.records)entry(box,row);}
+    }else if(visualSection==='interests'){
+      for(const group of data.interests||[]){const box=section(states[group.record.fields?.status]||'兴趣',group.collection_count+' 项收藏 · '+group.exploration_count+' 段探索');entry(box,group.record);if(group.record.fields?.next_direction)box.append(make('p',group.record.fields.next_direction,'personal-preview'));const branch=make('div',undefined,'personal-visual-branch');for(const row of [...group.explorations||[],...group.collections||[]])entry(branch,row);if(branch.children.length)box.append(branch);}
+    }else if(visualSection==='explorations'){
+      for(const id of ['planned','active','paused','completed','cancelled']){const group=(data.exploration_states||[]).find(x=>x.value===id);if(id==='cancelled'&&!group)continue;const box=section((states[id]||id)+' · '+(group?.count||0));box.dataset.personalLane=id;for(const row of group?.records||[])entry(box,row);if(!group?.count)box.append(make('p','暂无记录','personal-muted'));const b=button('查看这个状态',()=>{archiveFilters.querySelector('[data-archive-filter="status"]').value=id;changeList('exploration','');},'personal-link');box.append(b);}
+    }else if(visualSection==='collections'){
+      for(const group of data.collection_categories||[]){const box=section(categories[group.value]||group.value,group.count+' 项收藏');for(const row of group.records||[])entry(box,row);box.append(button('查看这一类',()=>{archiveFilters.querySelector('[data-archive-filter="category"]').value=group.value;changeList('collection','');},'personal-link'));}
+    }else{
+      grid.classList.add('personal-visual-timeline');for(const row of data.recent_updates||[]){const box=section(time(row.updated_at));entry(box,row);}body.append(make('p','按档案更新时间排列，不代表生活事件发生时间。','personal-muted'));
+    }
+    if(!grid.children.length)grid.append(make('p',({spaces:'尚未记录私人空间。',interests:'目前没有持续兴趣，一次收藏不会自动形成兴趣。',collections:'个人收藏仍为空；服务器资料库不会自动成为个人收藏。',recent:'还没有档案更新。'})[visualSection]||'这里还没有记录。','personal-empty'));
+    if(data.review_count)body.append(make('p',data.review_count+' 条资料来源待复核，可查看详情；完整修正请在 TLS 后台进行。','personal-resource-note'));
+    body.append(button('浏览全部资料 · '+listing.total,()=>{browsingAll=true;listPosition=0;renderList();},'personal-browse-all'));
+  }
+
   function renderList() {
     title.textContent = '私人空间与兴趣'; tabs.hidden = searchForm.hidden = archiveFilters.hidden = false;
     for(const element of archiveFilters.querySelectorAll('select')){element.closest('label').hidden=element.dataset.archiveFilter==='status'&&!['interest','exploration'].includes(kind)||element.dataset.archiveFilter==='category'&&kind!=='collection';} body.replaceChildren();
     for (const node of tabs.querySelectorAll('button')) node.setAttribute('aria-pressed', String(node.dataset.personalKind === kind));
     if (!listing) { body.append(make('p', '正在读取当前角色的私人空间资料…', 'personal-empty')); controls(); return; }
-    if (kind === 'all' && !query) renderOverview(listing.overview);
+    if(kind==='all'&&!query&&listing.overview?.visual&&!browsingAll){tabs.hidden=archiveFilters.hidden=true;renderVisual(listing.overview.visual);say('同一份 TLS 档案 · 查看不会推进生活或调用模型。');controls();body.scrollTop=listPosition;return;}
+    if (kind === 'all' && !query && !listing.overview?.visual) renderOverview(listing.overview);
+    if(kind==='all'&&browsingAll)body.append(button('返回生活画卷',()=>{browsingAll=false;listPosition=0;renderList();},'personal-link'));
     body.append(make('p', (query ? '“' + query + '” · ' : kind === 'all' ? '全部资料 · ' : kinds[kind] + ' · ') + listing.total + ' 条记录', 'personal-count'));
     for (const value of listing.records) body.append(recordCard(value));
     if (!listing.records.length) body.append(make('p', offset ? '当前页已无资料，请返回上一页或重新读取。' : query ? '没有找到匹配资料，可以换个词再找找。' : '这里还没有资料；生活可以保留空白，不必补出故事。', 'personal-empty'));
@@ -197,11 +231,17 @@ window.ChatPersonalSpace = (() => {
     if (data.evidence_kind !== 'roleplay_event') throw Error('服务器未标明虚构生活资料来源，请更新服务端后再读取。');
     const responseScope = data.scope == null ? null : JSON.stringify(data.scope);
     if (serverScope !== null && responseScope !== serverScope) { closeActive(); showNotice('当前角色资料范围已变化，请重新打开私人空间。'); return null; }
-    serverScope = responseScope; return data.personal;
+    serverScope = responseScope;
+    if(availability){const status=data.status||{};availability.textContent=status.state==='paused_budget'
+      ? '私人空间已接通，可浏览已有资料。自动生活推进暂停：当前模型预算为 0；浏览不调用模型。'
+      : status.can_advance===false?'私人空间已接通，可浏览已有资料。自动生活推进当前未运行。'
+      :'私人空间已接通，显示当前服务器保存的生活资料。';}
+    return data.personal;
   }
   async function read(preservePosition = true) {
     if (!active() || busy) return false;
     if (!selected && listing && preservePosition) listPosition = body.scrollTop;
+    if(availability){availability.textContent='正在读取档案状态…';if(!availability.isConnected)dialog.querySelector('.dialog-heading').after(availability);}
     const t = ticket(), chosen = selected && { ...selected }; busy = true; ready = false; controls(); say('正在读取私人空间资料…');
     const params = new URLSearchParams({ view: 'personal', session_id: t.session, kind: chosen?.kind || kind, query: chosen ? '' : query, limit: String(limit), offset: String(chosen ? 0 : offset) }); if (chosen) params.set('id', chosen.id);
     else for(const select of archiveFilters.querySelectorAll('select')) if(!select.closest('label').hidden && select.value && !(select.dataset.archiveFilter==='sort' && select.value==='updated')) params.set(select.dataset.archiveFilter,select.value);
@@ -216,13 +256,14 @@ window.ChatPersonalSpace = (() => {
         const unsupported = error.unsupported || [404, 405, 501].includes(error.status) && !chosen;
         const message = unsupported ? '当前服务器尚未提供私人空间与兴趣。独立服务端需更新并连接支持此功能的 TLS 后再读取。' : chosen && error.status === 404 ? '这条资料已不可用，请返回列表重新读取。' : errorText(error);
         if (!listing && !record || unsupported) body.replaceChildren(make('p', message, 'personal-empty'));
+        if(availability)availability.textContent='档案当前未能更新；不能据此判断自动推进状态。';
         say(message + (listing || record ? ' 当前保留的是上次读取的资料，请重新读取后再操作。' : ''));
       } return false;
     } finally { if (current(t)) { busy = false; controls(); } }
   }
   function changeList(nextKind, nextQuery) {
     if (!active() || busy || !Object.hasOwn(kinds, nextKind)) return;
-    kind = nextKind; query = nextQuery.slice(0, 120); offset = 0; selected = record = related = listing = null; trail.length = 0; listPosition = 0; searchInput.value = query; ready = false; renderList(); void read();
+    browsingAll=false;kind = nextKind; query = nextQuery.slice(0, 120); offset = 0; selected = record = related = listing = null; trail.length = 0; listPosition = 0; searchInput.value = query; ready = false; renderList(); void read();
   }
   function changePage(nextOffset) { if (!active() || busy) return; offset = nextOffset; listPosition = 0; void read(false); }
   function openRecord(nextKind, id) {
@@ -248,7 +289,7 @@ window.ChatPersonalSpace = (() => {
   }
   function open() {
     if (!state.authenticated || !state.activeId) { showNotice('请先打开自己的聊天会话。'); return; }
-    setup(); if (active()) return;
+    setup(); if (active()) return;visualSection='spaces';browsingAll=false;
     closeActive(); owner = scope(); session = state.activeId; ownerAuth = auth(); epoch++; serial++; serverScope = null; kind = 'all'; query = ''; offset = 0; listing = selected = record = related = null; trail.length = 0; busy = ready = false; listPosition = 0; searchInput.value = '';for(const select of archiveFilters.querySelectorAll('select'))select.selectedIndex=0;
     window.ChatSettingsHub?.close(); window.ChatExperience?.close(); window.ChatLife?.closeActive(); dialog.showModal(); renderList(); void read();
   }

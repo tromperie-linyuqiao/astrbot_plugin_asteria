@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-native-workspace="companion">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>角色角色资料 · TLS</title>
-  <link rel="stylesheet" href="./app.css?v=20260716-proactive-deep-bridge-v10" />
+  <title>角色与陪伴 · Asteria</title>
+  <link rel="stylesheet" href="./app.css?v=asteria-r162" />
   <link rel="stylesheet" href="./css/header-tools.css?v=20260713-font-options" />
   <link rel="stylesheet" href="./css/qzone-mobile.css?v=20260711-qzone-image-preview" />
   <link rel="stylesheet" href="./css/polish.css?v=20260715-learning-nav-merged-v1" />
@@ -32,75 +32,23 @@ body h1{font-size:clamp(21px,2vw,28px);line-height:1.35}body h2{line-height:1.45
 body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto}body pre{overflow-wrap:anywhere;white-space:pre-wrap}body .table-wrap,body .twrap{max-width:100%;overflow:auto}
 @media(max-width:640px){.aw-leaf-header{padding:14px;margin:8px 0 18px;gap:10px}.aw-leaf-path{font-size:12px}.aw-leaf-tools{width:100%}.aw-leaf-tools label{flex:1;min-width:0}.aw-leaf-tools select{min-width:0;width:100%;max-width:100%}.aw-leaf-tools button{flex-shrink:0}body h1{font-size:22px}}
 </style>
+<script>
+    (() => {
+      const value = new URLSearchParams(location.search).get('theme');
+      document.documentElement.dataset.adminTheme = ['light','dark','black'].includes(value)
+        ? value : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    })();
+  </script>
 </head>
 <body>
 <header id="asteria-leaf-header" class="aw-leaf-header" data-area="area-companion"><span class="aw-leaf-brand">✧ 星栖 Asteria</span><span class="aw-leaf-path">陪伴与消息 / 完整陪伴管理</span><div class="aw-leaf-tools"><label>本页<select aria-label="定位本页分区"><option>定位本页分区</option></select></label><button type="button">返回陪伴与消息</button></div><p class="aw-leaf-message" role="status"></p></header>
   <main class="shell">
     <section class="folio">
-      <div class="folio-plate" aria-hidden="true">
-        <div class="plate-cv-grid"></div>
-        <img id="dailyOutfitLogo" class="daily-outfit-logo" alt="今日穿搭照片" />
-        <svg class="vitruvian" viewBox="0 0 200 200" role="img" aria-label="维特鲁威人手稿">
-          <g class="vitruvian-geometry" fill="none">
-            <circle cx="100" cy="100" r="92"/>
-            <circle cx="100" cy="100" r="69"/>
-            <rect x="16" y="16" width="168" height="168"/>
-            <rect x="40" y="40" width="120" height="120"/>
-            <path d="M24 118 C52 58 91 33 146 48"/>
-            <path d="M52 170 C78 134 121 132 148 170"/>
-            <path d="M100 22 V190"/>
-            <path d="M28 150 H172"/>
-          </g>
-          <g class="vitruvian-measure" fill="none">
-            <path d="M52 30 C88 12 122 12 158 30"/>
-            <path d="M48 178 C80 194 120 194 152 178"/>
-            <path d="M18 92 C36 72 54 58 76 50"/>
-          </g>
-          <g class="vitruvian-body" stroke="#0f2a4a" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="100" cy="62" r="8.5" fill="#f6e1df" stroke="#0f2a4a"/>
-            <line x1="100" y1="70.5" x2="100" y2="116"/>
-            <line x1="100" y1="82" x2="64" y2="98"/>
-            <line x1="100" y1="82" x2="136" y2="98"/>
-            <line x1="100" y1="116" x2="72" y2="156"/>
-            <line x1="100" y1="116" x2="128" y2="156"/>
-            <line x1="100" y1="116" x2="80" y2="160"/>
-            <line x1="100" y1="116" x2="120" y2="160"/>
-          </g>
-          <g class="vitruvian-leads" stroke="#c8362f" stroke-width="0.7" opacity="0.75" fill="#c8362f">
-            <line x1="64" y1="98" x2="28" y2="150"/>
-            <line x1="136" y1="98" x2="172" y2="150"/>
-            <line x1="72" y1="156" x2="44" y2="190"/>
-            <line x1="128" y1="156" x2="156" y2="190"/>
-            <line x1="100" y1="62" x2="100" y2="22"/>
-            <line x1="100" y1="116" x2="100" y2="190"/>
-            <circle cx="28" cy="150" r="1.6"/>
-            <circle cx="172" cy="150" r="1.6"/>
-            <circle cx="44" cy="190" r="1.6"/>
-            <circle cx="156" cy="190" r="1.6"/>
-            <circle cx="100" cy="22" r="1.6"/>
-            <circle cx="100" cy="190" r="1.6"/>
-          </g>
-          <g class="vitruvian-notes" fill="#1a4b8c" font-family="Consolas, monospace" font-size="6" font-weight="700">
-            <text x="30" y="146">a</text>
-            <text x="166" y="146">b</text>
-            <text x="46" y="186">c</text>
-            <text x="150" y="186">d</text>
-            <text x="104" y="20">e</text>
-            <text x="26" y="36">ratio 1:1</text>
-            <text x="128" y="64">axis</text>
-            <text x="24" y="174">field note</text>
-          </g>
-        </svg>
-        <div class="plate-block plate-block--red"></div>
-        <div class="plate-block plate-block--blue"></div>
-        <div class="plate-diagonal"></div>
-        <div class="plate-stamp">FOLIO&nbsp;·&nbsp;I</div>
-        <div class="plate-caption">VITRUVIAN STUDY<br><span>人 · 比例 · 陪伴</span></div>
-      </div>
+      <div class="aw-companion-portrait"><img id="dailyOutfitLogo" class="daily-outfit-logo" alt="今日穿搭照片" /><span aria-hidden="true">✧</span></div>
 
       <div class="folio-meta">
-        <div class="folio-eyebrow"><b>●</b> COMPANION · 人本仪表 / HUMAN-CENTERED INSTRUMENT</div>
-        <h1 class="folio-title">陪伴<br><i>面板</i></h1>
+        <div class="folio-eyebrow">角色 · 日常 · 交流</div>
+        <h1 class="folio-title">角色与陪伴</h1>
         <p id="subtitle">读取运行态中...</p>
         <div class="folio-rule"></div>
         <div class="folio-stats" id="stats"></div>
@@ -109,30 +57,20 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
       <div class="folio-tools">
         <button id="refreshBtn" class="seal" title="刷新" aria-label="刷新">
           <span class="seal-mark">↻</span>
-          <small>REFRESH</small>
+          <small>刷新状态</small>
         </button>
         <button id="setupGuideStartBtn" class="setup-guide-entry" type="button" data-setup-guide-open>配置引导</button>
       </div>
     </section>
 
     <section class="layout">
-      <nav class="annotations" aria-label="视图">
-        <div class="annot-axis" aria-hidden="true"></div>
-        <button class="tab is-active" data-tab="dashboard"><i>01</i><span>总览</span></button>
-        <button class="tab" data-tab="roleplay"><i>02</i><span>世界知识</span></button>
-        <button class="tab" data-tab="private"><i>03</i><span>私聊</span></button>
-        <button class="tab" data-tab="group"><i>04</i><span>群聊</span></button>
-        <button class="tab" data-tab="learning"><i>05</i><span>学习</span></button>
-        <button class="tab" data-tab="memory"><i>06</i><span>观察</span></button>
-        <button class="tab" data-tab="proactive"><i>07</i><span>主动</span></button>
-        <button class="tab" data-tab="bookshelf"><i>08</i><span>书柜</span></button>
-        <button class="tab" data-tab="qzone"><i>09</i><span>QQ空间</span></button>
-        <button class="tab" data-tab="tokens"><i>10</i><span>Token</span></button>
-        <button class="tab" data-tab="troubleshooting"><i>11</i><span>排障</span></button>
-        <button class="tab" data-tab="config"><i>12</i><span>配置</span></button>
-        <button class="tab" data-tab="models"><i>13</i><span>模型</span></button>
-        <button class="tab" data-tab="experimental"><i>14</i><span>实验</span></button>
-      </nav>
+      <details id="nativeCompanionNavigation" class="aw-native-navigation" open>
+        <summary id="nativeCompanionNavigationTitle">今日概览</summary>
+        <label class="aw-nav-search">查找功能<input id="nativeCompanionSearch" type="search" placeholder="例如：模型、主动、书籍" autocomplete="off" /></label>
+        <nav class="annotations" aria-label="角色与陪伴功能"><section class="aw-nav-group"><h2>日常与角色</h2><button class="tab" data-tab="dashboard" type="button"><span>今日概览</span></button><button class="tab" data-tab="memory" type="button"><span>生活与状态</span></button><button class="tab" data-tab="roleplay" type="button"><span>角色与世界知识</span></button></section><section class="aw-nav-group"><h2>交流与陪伴</h2><button class="tab" data-tab="private" type="button"><span>私聊对象</span></button><button class="tab" data-tab="group" type="button"><span>群聊对象</span></button><button class="tab" data-tab="proactive" type="button"><span>主动陪伴</span></button><button class="tab" data-tab="learning" type="button"><span>学习与偏好</span></button></section><section class="aw-nav-group"><h2>资料与分享</h2><button class="tab" data-tab="bookshelf" type="button"><span>书籍与创作</span></button><button class="tab" data-tab="qzone" type="button"><span>QQ 空间</span></button></section><section class="aw-nav-group"><h2>管理</h2><button class="tab" data-tab="models" type="button"><span>模型分配</span></button><button class="tab" data-tab="tokens" type="button"><span>用量统计</span></button><button class="tab" data-tab="config" type="button"><span>运行配置</span></button><button class="tab" data-tab="troubleshooting" type="button"><span>诊断与恢复</span></button><button class="tab" data-tab="experimental" type="button"><span>实验功能</span></button></section></nav>
+        <p class="aw-nav-empty" hidden>没有匹配的功能，请换个关键词。</p>
+        <details class="aw-native-note"><summary>能力与来源</summary><p>当前由 TLS 原生服务执行。已迁入的 Private Companion 管理能力与来源声明保留。日程和目标的旧维护入口会引导到现有 TLS 管理页。</p></details>
+      </details>
 
       <section class="panel dashboard-overview is-active" id="panel-dashboard">
         <div class="section-head dashboard-overview-head">
@@ -253,7 +191,7 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
         <div class="section-head">
           <div>
             <h2>世界知识</h2>
-            <span class="muted">维护陪伴插件使用的背景资料；真正决定聊天人格的是 AstrBot 主回复人格。</span>
+            <span class="muted">维护 Asteria 陪伴功能使用的背景资料；真正决定聊天人格的是 AstrBot 主回复人格。</span>
           </div>
         </div>
         <div class="world-knowledge-brief" aria-label="人格与世界知识区别">
@@ -283,7 +221,8 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
               <input id="currentPersonaDisplay" readonly value="读取中..." />
             </label>
             <p class="section-desc">主回复人格会影响被动回复、群聊人格、关系评估和主动消息口吻；本页下方的资料只是背景知识，不应拿来当完整人格覆盖它。</p>
-            <p class="section-desc">如需指定人格，请到 AstrBot 插件配置页，打开“我会永远陪着你”的配置项，在“插件指定人格 ID”里使用人格选择器选择；留空即继承 AstrBot 当前默认人格。</p>
+            <p class="section-desc">指定人格沿当前 TLS 陪伴配置的“插件指定人格 ID”；留空继承 AstrBot 默认人格。本页保留原陪伴功能的数据来源，不修改主回复人格。</p>
+            <details id="roleplayExtract" class="world-workspace-details"><summary>从主回复人格提取草稿</summary><p class="section-desc">会请求配置的模型，解析失败时还可能请求修复模型；可能产生调用用量。结果可含推断，失败时可能退回本地原文摘要，均需人工核对。</p>
             <div class="persona-draft-actions">
               <div class="persona-draft-scope" aria-label="草稿生成范围">
                 <label><input type="checkbox" data-roleplay-draft-scope="persona" checked /> 角色资料</label>
@@ -291,11 +230,14 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
                 <label><input type="checkbox" data-roleplay-draft-scope="user" /> 用户与关系</label>
               </div>
               <button type="button" id="generateRoleplayDraftBtn">提取为世界知识草稿</button>
-              <span>只抽取主回复人格里明确写出的信息；生成后先预览，不会自动保存，也不会修改人格。</span>
+              <span>仅填入本页草稿，不自动保存或修改人格。来源预览是摘要，模型结果与推断不等于已核实事实。</span>
             </div>
-            <div id="roleplayPersonaDraftPanel" class="persona-draft-panel" hidden></div>
+            <div id="roleplayPersonaDraftPanel" class="persona-draft-panel" hidden></div></details>
           </div>
         </article>
+        <div id="roleplaySavedReading" aria-live="polite"></div>
+        <div id="roleplaySaveResult" aria-live="polite"></div>
+        <details id="roleplayEdit" class="world-workspace-details"><summary>编辑背景资料与知识库引用</summary><p class="section-desc">收起保留本页输入；刷新、离页无持久草稿。标准字段只修改对应段落，未识别原文保留，可切到原文填写检查全文。角色、世界、用户资料各限 2000 字，转写与图片线索各限 1200 字，引用最多 80 项，沿原保存容量。</p>
         <article class="roleplay-studio module-card" data-roleplay-mode="standard">
           <div class="module-card-head">
             <div>
@@ -305,11 +247,11 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
             <span class="module-badge">知识</span>
           </div>
           <div class="roleplay-mode-switch" role="group" aria-label="设定填写模式">
-            <button type="button" data-roleplay-mode="freeform">旧版文案</button>
+            <button type="button" data-roleplay-mode="freeform">原文填写</button>
             <button type="button" class="is-active" data-roleplay-mode="standard">标准化填写</button>
           </div>
           <form id="roleplayProfileForm" class="roleplay-form">
-            <section class="persona-card">
+            <details class="persona-card world-editor-section"><summary>角色资料与图片线索</summary>
               <div class="persona-card-head">
                 <span class="persona-avatar" aria-hidden="true">设</span>
                 <div>
@@ -363,9 +305,9 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
 例如：常见头像、发色/瞳色、服装、代表物、表情包文字风格。
 不要写用户性别、用户职业、与用户关系。"></textarea>
               </label>
-            </section>
+            </details>
 
-            <section class="world-blueprint">
+            <details class="world-blueprint world-editor-section"><summary>世界背景与知识库引用</summary>
               <div class="blueprint-head">
                 <div>
                   <span>世界蓝图</span>
@@ -430,15 +372,15 @@ QQ空间 = 公开札记
                 <div class="roleplay-knowledge-head">
                   <div>
                     <h4>AstrBot 知识库参考</h4>
-                    <p>选择已有知识库或文档，给日程模拟和世界观适配提供背景。</p>
+                    <p>选择已有知识库或文档，给日程模拟和世界观适配提供背景。选中整库会按原规则参考库内文档；这里只列当前返回的目录，选中或可见不保证每次使用或全文注入。</p>
                   </div>
                   <span id="roleplayKnowledgeCount" class="module-badge">0</span>
                 </div>
                 <div id="roleplayKnowledgeSources" class="roleplay-knowledge-list"></div>
               </div>
-            </section>
+            </details>
 
-            <section class="roleplay-user-card">
+            <details class="roleplay-user-card world-editor-section"><summary>用户与关系资料</summary>
               <div>
                 <h3>用户与关系资料</h3>
                 <p>稳定称呼、关系和相处方式；用于理解这位用户，不会覆盖群聊里其他人的身份。</p>
@@ -464,11 +406,11 @@ QQ空间 = 公开札记
                 <label>与角色的相处方式 <textarea data-roleplay-user-part="interaction" rows="2"></textarea></label>
                 <label class="wide-field">其他补充信息 <textarea data-roleplay-user-part="extra" rows="2"></textarea></label>
               </div>
-            </section>
+            </details>
 
             <button type="submit">保存世界知识</button>
           </form>
-        </article>
+        </article></details>
       </section>
 
       <section class="panel" id="panel-private">
@@ -477,17 +419,23 @@ QQ空间 = 公开札记
             <h2>私聊对象</h2>
             <p class="section-desc">管理关系角色、主动额度、行为习惯、陪伴状态和已整理的对话片段。</p>
           </div>
-          <input id="userFilter" type="search" placeholder="筛选用户 ID / 昵称" />
+          <div class="aw-user-filter"><label>查找对象<input id="userFilter" type="search" placeholder="称呼、展示名、身份或 ID" /></label>
+          <label>陪伴状态<select id="userStatusFilter"><option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select></label></div>
         </div>
+        <details class="aw-private-setup"><summary>新增私聊对象</summary>
         <form id="addUserForm" class="inline-form manage-form">
           <label>用户 ID <input name="user_id" placeholder="OneBot 填 QQ；官方机器人填 openid" required /></label>
           <label>称呼 <input name="nickname" placeholder="可选" /></label>
           <button type="submit">新增对象</button>
         </form>
+        </details>
+        <details class="aw-private-setup"><summary>身份归并规则</summary><p class="muted">将同一人的不同平台身份关联到原主用户 ID。它会影响资料归属；只添加已确认属于同一人的映射。</p>
         <form id="privateAliasForm" class="inline-form manage-form">
           <label>身份别名归并 <textarea name="private_user_aliases" rows="3" placeholder="临时ID=主用户ID&#10;机器人侧ID=主用户ID"></textarea></label>
           <button type="submit">保存归并规则</button>
         </form>
+        </details>
+        <p id="userListCoverage" class="muted" role="status"></p>
         <div class="table-wrap">
           <table class="private-user-table">
             <thead>
@@ -520,29 +468,30 @@ QQ空间 = 公开札记
         <section id="learningPanelSkills" class="learning-section" role="tabpanel" aria-labelledby="learningTabSkills" data-learning-section-panel="skills" hidden>
           <header class="learning-section-head">
             <div><span>能力成长</span><h3>技能学习</h3></div>
-            <p>检视 Bot 已经掌握的能力、熟练度和成长状态。</p>
+            <p>阅读角色的技能熟悉度记录、成长依据与当前维护结果。</p>
           </header>
           <article id="skillGrowthModule" class="learning-workspace-surface learning-growth-section" aria-label="技能成长管理">
             <details class="skill-manage-drawer">
-              <summary>新增或管理技能</summary>
+              <summary>新增或按名称维护技能</summary><p class="skill-editor-note">同名会更新已有记录；别名请到原记录编辑。这里只维护角色记录，不训练或更换模型。</p>
               <form id="skillAddForm" class="inline-form manage-form skill-add-form">
                 <label>技能 <input name="name" maxlength="32" required /></label>
                 <label>分类 <input name="category" maxlength="20" placeholder="能力" /></label>
                 <label>等级
                   <select name="level">
-                    <option value="1">还不太熟</option>
-                    <option value="2">能慢慢试</option>
-                    <option value="3">能自己做</option>
-                    <option value="4">已经顺手</option>
-                    <option value="5">很拿手</option>
-                    <option value="6">有自己的办法</option>
+                    <option value="1">一窍不通</option>
+                    <option value="2">会一点点</option>
+                    <option value="3">勉强能做</option>
+                    <option value="4">基本熟练</option>
+                    <option value="5">很熟练</option>
+                    <option value="6">很有心得</option>
                   </select>
                 </label>
                 <label>关键词 <input name="keywords" maxlength="160" placeholder="逗号分隔" /></label>
                 <label>别名 <input name="aliases" maxlength="160" placeholder="同义叫法，逗号分隔" /></label>
-                <button type="submit">新增技能</button>
+                <div class="skill-operation-result wide-field" role="status" aria-live="polite"></div><button type="submit">保存此名称</button>
               </form>
             </details>
+            <div class="skill-workspace-note"><p>这是角色熟悉度记录，不是模型实际能力的测量或训练。日程、角色提示和自动成长仍受原开关及使用条件控制。</p><details><summary>范围、成长与维护说明</summary><p>分类与折叠保留；查找仅覆盖当前返回窗口。成长来自原日程匹配的经验结算，不表示执行了真实训练。隐藏不删除记录；冻结仅停止自动加经验，原状态仍可被参考。</p><p>总览刷新可能同步整理现有日程和表达资料，不是纯只读检查，也不证明之前保存已落盘。此页没有持久草稿；收起和筛选保留输入，主动刷新、切换后重载或离页会丢失输入。本页不会自动重交未确认操作，也不能撤销已开始的后台操作。</p></details></div>
             <div id="skillGrowthPanel" class="skill-growth-panel"></div>
           </article>
         </section>
@@ -575,17 +524,20 @@ QQ空间 = 公开札记
             </div>
             <div class="actions compact">
               <button id="worldbookImportBtn" type="button">同步资料</button>
-              <button id="worldbookClearPendingBtn" type="button" class="danger-outline">清理待确认观察</button>
+              <details class="aw-worldbook-maintenance"><summary>批量维护</summary><p>清理会移除所有对象的全部待确认观察，包括当前筛选以外的记录；不删除已确认的重要记忆、原聊天或导入文件。</p><button type="button" id="worldbookClearPendingBtn" class="danger-outline">清理全部待确认观察</button></details>
             </div>
           </div>
 
           <div id="worldbookSummary" class="worldbook-summary relationship-summary"></div>
+          <p class="aw-worldbook-help">当前总览最多显示 120 个对象、每对象前 8 条待确认观察；来源筛选只检索这些已返回记录。数量包含未展开记录，不等于全部资料已展示。确认写入本关系节点的重要记忆（最多 8 条），按原启用、范围与优先级规则参与上下文，不等于新增记忆中心记录。</p>
+          <div id="worldbookObservationNotice" class="aw-worldbook-notice" role="status" hidden><span></span><button type="button" id="worldbookObservationCheckBtn">仅核对当前记录</button></div>
 
           <div class="relationship-commandbar">
             <label class="relationship-search">
               <span>查找成员</span>
               <input id="worldbookMemberFilter" type="search" placeholder="QQ、B站身份、名称、别名或群名片" />
             </label>
+            <label class="aw-worldbook-filter">待确认来源<select id="worldbookObservationFilter"><option value="all">全部对象</option><option value="pending">有待确认观察</option><option value="historical">含历史聊天导入</option><option value="group">含群聊观察</option><option value="other">含其他或未标明来源</option></select></label>
             <span id="worldbookSourceFiles" class="relationship-source muted"></span>
           </div>
 
@@ -633,15 +585,19 @@ QQ空间 = 公开札记
             <h2>群聊观测</h2>
             <span class="muted">管理群聊观察、名单状态、话题线和插话反馈</span>
           </div>
-          <input id="groupFilter" type="search" placeholder="筛选群号 / 群名" />
+          <div class="aw-group-filter">
+            <label>搜索群聊<input id="groupFilter" type="search" placeholder="群号、群名或摘要" /></label>
+            <label>状态<select id="groupStatusFilter"><option value="all">全部</option><option value="enabled">本群已启用</option><option value="disabled">本群已停用</option><option value="blocked">名单拦截</option></select></label>
+          </div>
         </div>
-        <div class="group-add-card">
+        <details class="group-add-card aw-group-setup"><summary>新增群聊观测</summary><p class="muted">创建记录与加入名单分别保存；本群启用仍受总开关和名单模式约束。已有群的名单在常用配置中维护。</p>
           <form id="addGroupForm" class="inline-form manage-form">
             <label>群号 <input name="group_id" placeholder="例如 987654321" required /></label>
             <label>名单 <select name="list_mode"><option value="none">只创建观测</option><option value="whitelist">加入白名单</option><option value="blacklist">加入黑名单</option></select></label>
             <button type="submit">新增群聊</button>
           </form>
-        </div>
+        </details>
+        <p class="aw-group-coverage" id="groupListCoverage" role="status"></p>
         <div class="group-workbench">
           <aside class="group-list-panel">
             <div class="group-list-head">
@@ -657,8 +613,9 @@ QQ空间 = 公开札记
       <section class="panel" id="panel-memory">
         <div class="section-head">
           <h2>生活观察</h2>
-          <span class="muted">状态、梦境、日记碎片与当天生活线索</span>
+          <span class="muted">角色状态、日记与梦境留存</span>
         </div>
+        <div class="life-workspace-note"><b>角色生活记录</b><p>状态与创作留存分别保留日期；日程线索不等同已经发生的经历。</p><small id="lifeSnapshotMeta">状态记录日期：未记录</small></div>
         <div class="life-hero">
           <article class="life-card energy">
             <span>心理能量</span>
@@ -677,7 +634,7 @@ QQ空间 = 公开札记
           </article>
         </div>
         <div class="current-life-strip">
-          <span>当前片段</span>
+          <span>当前日程线索</span>
           <b id="lifeCurrentActivity">--</b>
           <small id="lifeCurrentSeed">--</small>
         </div>
@@ -694,23 +651,25 @@ QQ空间 = 公开札记
             <div id="dreamFactors" class="fragment-cloud"></div>
           </article>
           <article>
-            <h2>当前扮演状态</h2>
+            <h2>留存角色状态</h2>
             <div id="statePillBoard" class="state-pill-board"></div>
           </article>
           <article>
-            <h2>今日状态原始值</h2>
+            <h2>留存状态原始值</h2>
             <dl id="dailyState"></dl>
           </article>
           <article class="wide">
-            <h2>日记碎片</h2>
+            <h2>日记留存</h2>
+            <p id="lifeDiaryScope" class="muted">最近 4 条的阅读摘要；不代表全部历史或原始全文。较早记录沿书籍与创作中的原访问入口阅读。</p>
             <div id="diaryCards" class="diary-grid"></div>
           </article>
           <article class="wide">
             <h2>梦境碎片池</h2>
+            <p class="muted">最多 14 条近期碎片，按原权重排序。展开查看记录中的来源与时间，不补猜缺失来源。</p>
             <div id="dreamFragments" class="fragment-cloud"></div>
           </article>
           <article class="wide">
-            <h2>日内状态变化</h2>
+            <h2>日程与细化记录</h2>
             <div id="dailyTimeline" class="timeline-list"></div>
           </article>
           <article class="wide skill-growth-shell">
@@ -742,37 +701,38 @@ QQ空间 = 公开札记
             <div id="slangCloud" class="word-cloud"></div>
           </article>
           <article class="wide memory-raw">
-            <h2>外部记忆插件协同</h2>
+            <h2>记忆连接状态</h2>
             <pre id="livingMemoryBox">加载中...</pre>
           </article>
         </div>
       </section>
 
       <section class="panel" id="panel-proactive">
-        <div class="section-head">
-          <h2>今日主动候选</h2>
-          <span class="muted">统一候选池、去重、配额与调度结果</span>
+        <div class="section-head"><h2>主动陪伴记录</h2><span class="muted">候选、计划与执行分别查看</span></div>
+        <p class="aw-proactive-note">本页显示陪伴模块返回的近期记录。计划不等于发送，发送记录不等于手机已接收或用户已读。</p>
+        <div id="proactiveSummary" class="proactive-summary" aria-label="未筛选的概览统计"></div>
+        <div class="aw-proactive-tabs" role="group" aria-label="主动记录分类">
+          <button type="button" data-proactive-view="tasks" aria-pressed="true">已登记任务 <span>0</span></button>
+          <button type="button" data-proactive-view="candidates" aria-pressed="false">候选记录 <span>0</span></button>
+          <button type="button" data-proactive-view="audit" aria-pressed="false">执行记录 <span>0</span></button>
         </div>
-        <div id="proactiveSummary" class="proactive-summary"></div>
-        <div class="proactive-layout">
-          <article>
-            <h2>来源分布</h2>
-            <div id="proactiveSourceChart" class="chart-box"></div>
-          </article>
-          <article>
-            <h2>状态分布</h2>
-            <div id="proactiveStatusChart" class="chart-box"></div>
-          </article>
-          <article class="wide">
-            <h2>主动任务记录</h2>
-            <div id="proactiveTaskList" class="proactive-tasks"></div>
-          </article>
-          <article class="wide proactive-records-card">
-            <h2>候选记录</h2>
-            <div id="proactiveCandidateFilters" class="proactive-filters"></div>
-            <div id="proactiveCandidateList" class="proactive-candidates"></div>
-          </article>
+        <div id="proactiveCandidateFilters" class="aw-proactive-filters">
+          <label class="aw-proactive-search">查找记录<input id="proactiveRecordQuery" type="search" placeholder="话题、用户、说明或 ID" /></label>
+          <label>用户<select id="proactiveRecordUser"><option value="all">全部用户</option></select></label>
+          <label>状态<select id="proactiveRecordStatus"><option value="all">全部状态</option></select></label>
+          <label>来源<select id="proactiveRecordSource"><option value="all">全部来源</option></select></label>
+          <button id="proactiveRecordReset" type="button">清除筛选</button>
         </div>
+        <p id="proactiveRecordCoverage" class="aw-proactive-note" role="status" aria-live="polite"></p>
+        <div id="proactiveTaskList" class="proactive-tasks aw-proactive-records"></div>
+        <div id="proactiveCandidateList" class="proactive-candidates aw-proactive-records" hidden></div>
+        <div id="proactiveAuditList" class="proactive-tasks aw-proactive-records" hidden></div>
+        <div class="aw-proactive-pagination"><button id="proactiveRecordPrevious" type="button">上一页</button><button id="proactiveRecordNext" type="button">下一页</button></div>
+        <details class="aw-proactive-diagnostics"><summary>运行与统计详情</summary>
+          <div id="proactiveRuntimeDetails"></div>
+          <div class="proactive-layout"><article><h3>候选来源分布</h3><div id="proactiveSourceChart" class="chart-box"></div></article>
+            <article><h3>候选状态分布</h3><div id="proactiveStatusChart" class="chart-box"></div></article></div>
+        </details>
       </section>
 
       <section class="panel" id="panel-bookshelf">
@@ -868,20 +828,18 @@ QQ空间 = 公开札记
 
       <section class="panel" id="panel-tokens">
         <div class="section-head">
-          <h2>Token 消耗监控</h2>
-          <div class="actions compact">
-            <button id="resetTokenStatsBtn" class="danger-outline" type="button">清空统计</button>
-          </div>
+          <h2>用量与统计</h2>
+
         </div>
         <div class="token-toolbar">
           <div class="token-source-switch" role="group" aria-label="Token 来源">
-            <button type="button" data-token-source="companion" class="is-active">陪伴插件</button>
-            <button type="button" data-token-source="memory">记忆插件</button>
+            <button type="button" data-token-source="companion" class="is-active">陪伴任务</button>
+            <button type="button" data-token-source="memory">记忆整理</button>
             <button type="button" data-token-source="main">LLM 主链</button>
           </div>
           <div class="token-view-switch" role="group" aria-label="Token 统计视图">
             <button type="button" data-token-view="today" class="is-active">今日</button>
-            <button type="button" data-token-view="total">总计</button>
+            <button type="button" data-token-view="total">留存累计</button>
             <button type="button" data-token-view="date">按日期</button>
           </div>
           <label class="token-date-filter">
@@ -889,12 +847,11 @@ QQ空间 = 公开札记
             <select id="tokenDateSelect"></select>
           </label>
         </div>
+        <p id="tokenCoverageNote" class="aw-token-help">三个来源分别统计，不相加为总账；保留原接口来源名称不代表旧插件仍在执行。日期最多返回30条、小时记录48条、最近调用80条，留存累计不等于全部历史或供应商账单。</p>
         <div class="token-summary" id="tokenSummary"></div>
-        <div class="dashboard-grid token-grid">
-          <article class="wide" id="tokenBalanceCard">
-            <h2>账户余额</h2>
-            <div id="tokenBalanceStatus" class="token-plugin-panel"></div>
-          </article>
+        <p class="aw-token-help">陪伴限额按今日计入限额的 Token 计算；免计限额值也是 Token 数，包含主动回复、语音等原豁免任务，不是消息条数。原限额为0时表示此处不设硬上限，与自动生活预算是不同设置。</p>
+        <details id="tokenTrends" class="aw-token-section"><summary>趋势与排行</summary><p class="aw-token-help">按当前来源和日期显示原图表；趋势展示当前返回的日期与小时记录。</p>
+          <div class="dashboard-grid token-grid">
           <article>
             <h2 id="tokenProviderChartTitle">Provider 消耗排行</h2>
             <div id="tokenProviderChart" class="chart-box"></div>
@@ -905,13 +862,17 @@ QQ空间 = 公开札记
             <div id="tokenTaskChart" class="chart-box"></div>
           </article>
           <article class="wide" id="tokenHourlyPanel">
-            <h2>近 48 小时趋势</h2>
+            <h2>最近 48 个小时记录</h2>
             <div id="tokenHourlyChart" class="token-bars"></div>
           </article>
           <article class="wide">
             <h2 id="tokenDailyChartTitle">每日统计</h2>
             <div id="tokenDailyChart" class="token-bars"></div>
           </article>
+          </div>
+        </details>
+        <details id="tokenDetails" class="aw-token-section"><summary>调用与明细</summary><p class="aw-token-help">每日、Provider、任务与最近调用均保留原返回字段；主链另有会话和发送者。</p>
+          <div class="dashboard-grid token-grid">
           <article class="wide">
             <h2 id="tokenDailyTableTitle">每日明细</h2>
             <div id="tokenDailyTable" class="table-wrap compact-table"></div>
@@ -951,7 +912,23 @@ QQ空间 = 公开札记
             <h2>记忆插件最近调用</h2>
             <div id="tokenMemoryPluginRecentTable" class="table-wrap compact-table"></div>
           </article>
-        </div>
+          </div>
+        </details>
+        <details id="tokenBalanceDetails" class="aw-token-section"><summary>余额记录</summary><p class="aw-token-help">这里展示服务保存的余额状态与检查时间，展开不会发起供应商查询。</p>
+          <div class="dashboard-grid token-grid">
+          <article class="wide" id="tokenBalanceCard">
+            <h2>已保存的余额状态</h2>
+            <div id="tokenBalanceStatus" class="token-plugin-panel"></div>
+          </article>
+          </div>
+        </details>
+        <details id="tokenMaintenance" class="aw-token-section aw-token-maintenance">
+          <summary>统计维护</summary>
+          <p class="aw-token-help">清空陪伴任务及其中保存的 LLM 主链统计，涉及全部留存日期，不受当前来源或日期筛选限制。记忆侧统计、余额记录及限额配置不清空；本操作会重置用于陪伴当日预算判断的用量，可能改变后续任务是否达到限额。不会取消正在进行的调用，也不会修改供应商账单。</p>
+          <button id="resetTokenStatsBtn" class="danger-outline" type="button">清空陪伴与主链统计</button>
+          <div id="tokenResetNotice" class="aw-token-notice" role="status" aria-live="polite" hidden></div>
+          <button id="tokenResetCheckBtn" type="button" hidden>仅核对当前统计</button>
+        </details>
       </section>
 
       <section class="panel troubleshooting-command-center" id="panel-troubleshooting">
@@ -963,10 +940,12 @@ QQ空间 = 公开札记
               <p>先选择遇到的问题，再按对应链路查看检查、证据与测试结果。</p>
             </div>
             <div class="diagnostic-masthead-actions">
-              <button id="refreshTroubleshootingBtn" type="button">执行检查</button>
-              <span class="diagnostic-live-dot"><i></i> 运行态快照</span>
+              <button id="refreshTroubleshootingBtn" type="button">更新诊断</button>
+              <span class="diagnostic-live-dot"><i></i> 最近诊断快照</span>
             </div>
           </header>
+
+          <p id="troubleshootingScopeNote" class="aw-diagnostic-scope">打开本页或更新诊断时，原逻辑会检查并恢复超时的临时主动计划，也会按现有角色校准设置调整或恢复参数。下方链路测试需单独运行，可能调用模型、生成文件或实际发送消息；每类只保留最近一次结果。屏蔽警告只改变提示，不修复问题。</p>
 
           <section class="diagnostic-problem-picker" aria-labelledby="troubleshootingProblemTitle">
             <div>
@@ -1005,7 +984,7 @@ QQ空间 = 公开札记
           <div class="diagnostic-main-grid">
             <section class="diagnostic-live-lane">
               <div class="diagnostic-zone-head compact">
-                <div><span>实时验证</span><h3 id="troubleshootingChainTitle">链路与运行状态</h3></div>
+                <div><span>结果与执行范围</span><h3 id="troubleshootingChainTitle">留存结果与运行入口</h3></div>
               </div>
               <div id="troubleshootingChainTests" class="troubleshooting-chain-tests"></div>
               <div id="troubleshootingRuntimeStack" class="diagnostic-runtime-stack">
@@ -1052,13 +1031,15 @@ QQ空间 = 公开札记
           <div class="section-head">
             <div>
               <h2>图片/表情包缓存</h2>
-              <span class="muted">编辑重复图片视觉摘要，删除后下次遇到同图会重新识别</span>
+              <span class="muted">维护已保存的视觉摘要；重新识别仍取决于当前视觉设置</span>
             </div>
             <div class="actions compact">
               <button type="button" data-jump-tab="config">返回配置页</button>
               <button id="refreshImageCacheBtn" type="button">刷新缓存</button>
             </div>
           </div>
+          <p class="muted">当前查询最多显示300条。这里只维护转述缓存和压缩预览，不是聊天原图备份；删除不会移除聊天原图。</p>
+          <p id="imageCacheActionResult" role="status" aria-live="polite"></p>
           <div id="imageCacheSummary" class="image-cache-summary"></div>
           <div class="image-cache-toolbar">
             <input id="imageCacheFilter" type="search" placeholder="筛选摘要 / hash / provider / 类型" />
@@ -1182,6 +1163,11 @@ QQ空间 = 公开札记
                   </div>
                 </summary>
                 <div class="migration-body">
+                  <div id="configMigrationScope" class="migration-scope">
+                    <p>导出按下方勾选范围生成下载文件。关系/群资料可能包含个人资料；敏感配置还包含登录凭据、接口密钥和私藏阅读记录，请妥善保管。这不是全部 TLS / MC 的备份，独立媒体文件和全部聊天库不在此范围。</p>
+                    <p>导入和恢复前，服务器都会自动备份当前全部可迁移部分，含模型和敏感配置，不受下方导出勾选限制。备份留在服务器，操作返回后显示实际位置；恢复也会先另存当前状态。</p>
+                    <p>先预览，再确认：覆盖仅替换文件所含的可识别资料段；合并按所选冲突规则处理。配置与资料分开保存，出现失败时可能已经完成部分修改，不会自动撤销。</p>
+                  </div>
                   <div class="migration-actions">
                     <button id="exportConfigBtn" type="button">导出配置备份</button>
                     <label class="file-pick">
@@ -1223,13 +1209,16 @@ QQ空间 = 公开札记
                   <div id="configMigrationPreview" class="migration-preview">
                     还没有选择备份或快照文件。
                   </div>
+                  <div id="configMigrationResult" class="migration-result" aria-live="polite" hidden></div>
                   <div class="migration-aftercare">
                     <div>
                       <h3>最近自动备份</h3>
+                      <p class="migration-note">服务器最多返回最近 8 份；这里只读文件信息，校验通过不等于适合覆盖当前配置。恢复会按备份内容写入，仍需确认。</p>
                       <div id="configBackupList" class="migration-backup-list">暂无自动备份。</div>
                     </div>
                     <div>
                       <h3>导入后检查</h3>
+                      <p class="migration-note">原轻量检查只核配置和资料形状，不会实际调用模型，也不代替功能验收。</p>
                       <div id="configImportChecks" class="migration-check-list">导入后会在这里显示轻量检查结果。</div>
                     </div>
                   </div>
@@ -1381,12 +1370,15 @@ QQ空间 = 公开札记
           <span class="muted">模型分流</span>
         </div>
         <div id="providerSummary" class="provider-summary"></div>
-        <div id="deepseekPeakCard"></div>
-        <div id="providerFlow" class="provider-flow"></div>
+        <p id="providerScopeNote" class="aw-provider-note">此页维护原陪伴任务的模型分配。最近服务端读取与本页草稿分别展示，都不是实际模型调用回执；执行时还可能使用默认、备用或时段替代。保存不受搜索筛选限制，会按原规则同步两套分流配置。快速模式会套用场景入口；精准模式沿原规则保留或补齐快速入口，以服务端返回为准。未保存内容仅留在本页，刷新或离页会丢失。</p>
+        <div class="aw-provider-source">最近服务端模式：<b id="providerSavedMode">尚未读取</b><button id="providerReadBtn" type="button">仅读取服务端配置</button></div>
+        <div id="providerSaveNotice" class="aw-provider-notice" role="status" hidden></div>
+        <details id="providerFlowDetails" class="aw-provider-section"><summary>草稿分流预览与用途统计</summary><p>按当前表单展示分配意图，不证明任务已按此运行。</p><div id="providerFlow" class="provider-flow"></div></details>
+        <details id="providerPeakDetails" class="aw-provider-section"><summary>可选时段替代规则</summary><div id="deepseekPeakCard"></div></details>
         <div class="provider-config-mode-card">
           <div>
             <b>模型配置模式</b>
-            <span id="providerConfigModeHint">快速配置和精准配置互斥，保存时只写入当前模式下可见的模型。</span>
+            <span id="providerConfigModeHint">选择本页编辑模式；保存沿原规则同步两套配置，不只保存当前筛选结果。</span>
           </div>
           <div class="provider-config-mode" aria-label="模型配置模式">
             <button type="button" data-provider-config-mode="quick" class="active">快速配置</button>
@@ -1404,10 +1396,10 @@ QQ空间 = 公开札记
             <button type="button" data-provider-mode="vision">视觉/外部</button>
           </div>
           <div class="provider-toolbar-actions">
-            <button id="testAllProvidersBtn" type="button">测试全部模型</button>
             <button id="saveProvidersBtn" type="button">保存并覆盖两套模型配置</button>
           </div>
         </div>
+        <details id="providerTestDetails" class="aw-provider-section"><summary>模型连接测试 · 会发起真实调用</summary><p>使用当前草稿发起真实调用，可能计入供应商用量。批量测试按当前模式的全部项目执行，不受搜索筛选限制；同一 Provider 可能被多项分别调用。单次正常不证明长期可用、实际最终模型或语音能力，执行时仍沿原回退与时段替代规则。</p><button id="testAllProvidersBtn" type="button">测试当前模式全部项目</button></details>
         <form id="providerForm" class="provider-groups"></form>
       </section>
 
@@ -1419,10 +1411,19 @@ QQ空间 = 公开札记
             <span class="muted">动态、互动与发布</span>
           </div>
           <div class="actions compact qzone-top-actions">
-            <button id="qzoneRefreshCookiesBtn" class="qzone-secondary-action" type="button">刷新 Cookies</button>
+
             <button id="qzoneRefreshBtn" class="qzone-primary-action" type="button">刷新动态</button>
           </div>
         </div>
+        <div id="qzoneSourceNote" class="qzone-workspace-note">这里连接 QQ 空间，由 TLS 原生陪伴沿原 QQ 接口处理，与 TLS 私人空间的本地物品和空间资料不同。动态只显示本次返回的近期窗口，不是全部历史。</div>
+        <details id="qzoneOperationScope" class="qzone-workspace-drawer">
+          <summary>接入来源、账号维护与操作范围</summary>
+          <p>进入页面、刷新动态会读取登录 Cookies，并访问 QQ；凭据可解析不代表动态可访问。手动刷新 Cookies 会重新取得凭据并清除原认证失败标记，不修改 Key 或切换账号。</p>
+          <p>发布发送到当前登录 QQ，原流程可能按配置调用配图生成；点赞和评论作用于所选说说，删除仅允许当前登录 QQ 自己的说说，仍须再次点击确认。可见范围由 QQ 空间原设置决定，这里不改变权限。</p>
+          <p>好友或指定空间沿原接口取近期约 10 条，正文展示最多 1200 字、单条评论最多 300 字；详情和反查仍有近期窗口限制，不保证完整正文、全部评论或供应商长期状态。</p>
+          <button id="qzoneRefreshCookiesBtn" class="qzone-secondary-action" type="button">刷新登录 Cookies</button>
+        </details>
+        <div id="qzoneActionResults" class="qzone-action-results" role="status" aria-live="polite" hidden></div>
         <div class="qzone-shell">
           <aside class="qzone-rail">
             <article class="qzone-card qzone-account-card">
@@ -1457,16 +1458,18 @@ QQ空间 = 公开札记
               </form>
             </article>
 
-            <article class="qzone-card qzone-compose-card">
+            <details id="qzonePublishDrawer" class="qzone-card qzone-compose-card">
+              <summary>发布到 QQ 空间</summary>
               <div class="qzone-card-head">
                 <h3>发布说说</h3>
-                <span class="qzone-public-badge">公开</span>
+                <span class="qzone-public-badge">当前登录 QQ</span>
               </div>
               <form id="qzonePublishForm" class="stack-form">
-                <textarea id="qzonePublishContent" rows="5" placeholder="写点公开发到 QQ 空间的话"></textarea>
-                <button type="submit">发布到空间</button>
+                <textarea id="qzonePublishContent" rows="5" placeholder="写到当前登录 QQ 的空间（最多 300 字）"></textarea>
+                <p class="muted">原服务会整理空白；可能按配置生成配图。未确认时请先到 QQ 空间核实，勿重复发送。收起保留本页输入，刷新或离页不保留。</p>
+                <button type="submit">发布到 QQ 空间</button>
               </form>
-            </article>
+            </details>
           </aside>
 
           <div class="qzone-main">
@@ -1489,7 +1492,7 @@ QQ空间 = 公开札记
             </div>
             <div id="qzoneDetailEmpty" class="qzone-empty detail-empty">
               <b>选择一条说说</b>
-              <span>这里会显示完整内容和评论。</span>
+              <span>这里显示当前接口返回的正文和评论。</span>
             </div>
             <div id="qzoneDetailContent" hidden></div>
           </aside>
@@ -1530,15 +1533,15 @@ QQ空间 = 公开札记
 
   <script src="./js/features/daily-outfit.js?v=20260711-qzone-preview-context"></script>
   <script src="./js/ui/appearance.js?v=20260713-font-options"></script>
-  <script src="./js/panels/provider-tree.js?v=20260711-provider-debug"></script>
-  <script src="./js/panels/qzone-panel.js?v=20260711-qzone-preview-context"></script>
+  <script src="./js/panels/provider-tree.js?v=asteria-provider-r148"></script>
+  <script src="./js/panels/qzone-panel.js?v=asteria-qzone-r152"></script>
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script src="./app.js?v=20260716-proactive-deep-bridge-v10"></script>
+  <script src="./app.js?v=asteria-r162"></script>
 <script id="asteria-leaf-script">
 (()=>{'use strict';const bar=document.getElementById('asteria-leaf-header'),jump=bar.querySelector('select'),back=bar.querySelector('button'),message=bar.querySelector('[role=status]');let headings=[];
 function fill(){headings=[...document.querySelectorAll('h2,h3')].filter(el=>!el.closest('dialog')&&el.getClientRects().length&&el.textContent.trim());jump.replaceChildren(new Option('定位本页分区',''));headings.forEach((el,i)=>jump.add(new Option(el.textContent.trim().slice(0,70),String(i))));}
 jump.addEventListener('focus',fill);jump.addEventListener('pointerdown',fill);jump.addEventListener('change',()=>{if(jump.value==='')return;const el=headings[Number(jump.value)];if(!el)return;el.scrollIntoView({block:'start'});if(!el.hasAttribute('tabindex'))el.tabIndex=-1;el.focus({preventScroll:true});});
-back.addEventListener('click',async()=>{back.disabled=true;message.textContent='';try{const bridge=window.AstrBotPluginPage;if(!bridge)throw Error('请从 AstrBot 后台重新打开此页面。');await bridge.ready();const theme=document.documentElement.dataset.theme||new URLSearchParams(location.search).get('theme')||'dark';let result=await bridge.apiGet('page/nav',{to:'console',theme,format:'json'});if(result?.data)result=result.data;const url=new URL(result.url,location.href);if(url.origin!==location.origin||url.pathname!=='/api/plugin/page/content/astrbot_plugin_virtual_body/console/'||!url.searchParams.get('asset_token'))throw Error('返回地址未确认，请从后台进入工作台。');url.hash=bar.dataset.area;location.assign(url.href);}catch(error){message.textContent=error.message||'工作台暂时无法打开。';}finally{back.disabled=false;}});fill();})();
+back.addEventListener('click',async()=>{back.disabled=true;message.textContent='';try{const bridge=window.AstrBotPluginPage;if(!bridge)throw Error('请从 AstrBot 后台重新打开此页面。');await bridge.ready();const theme=document.documentElement.dataset.theme||new URLSearchParams(location.search).get('theme')||'dark';let result=await bridge.apiGet('page/nav',{to:'console',theme,format:'json'});if(result?.data)result=result.data;const url=new URL(result.url,location.href);if(url.origin!==location.origin||url.pathname!=='/api/plugin/page/content/astrbot_plugin_asteria/console/'||!url.searchParams.get('asset_token'))throw Error('返回地址未确认，请从后台进入工作台。');url.hash=bar.dataset.area;location.assign(url.href);}catch(error){message.textContent=error.message||'工作台暂时无法打开。';}finally{back.disabled=false;}});fill();})();
 </script>
 </body>
 </html>

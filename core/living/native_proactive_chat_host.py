@@ -426,9 +426,12 @@ class NativeProactiveChatHost(SessionMixin, StorageMixin, ConfigMixin,
         try:
             handlers = self._decorator_records()
             rows = []
+            from ...main import AsteriaPlugin
             cls = type(self.plugin)
             native_module = cls.__module__
-            is_tls = cls.__name__ == 'VirtualBodyPlugin' and native_module.endswith('astrbot_plugin_virtual_body.main')
+            # The registered class, not a spelling or a lookalike subclass.
+            # Callback function, receiver and SDK module are still exact below.
+            is_tls = cls is AsteriaPlugin
             for handler in handlers:
                 callback = getattr(handler, 'handler', None)
                 name = getattr(handler, 'handler_name', '')
@@ -602,10 +605,14 @@ class NativeProactiveChatHost(SessionMixin, StorageMixin, ConfigMixin,
         return getattr(adapter, 'supports_audio', False) is True and isinstance(getattr(adapter, 'media_root', None), Path)
 
     async def prepare(self):
-        """Read the exact old files, without scheduling, sending or rewriting."""
+        """Open retained state, or an empty local service on first installation."""
         if self.active or self._running:
             return self.status()
-        raw = await asyncio.to_thread(self.session_data_file.read_bytes)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            raw = await asyncio.to_thread(self.session_data_file.read_bytes)
+        except FileNotFoundError:
+            raw = b'{}'
         if len(raw) > 8 * 1024 * 1024:
             raise ValueError('legacy proactive state exceeds supported read bound')
         loaded = json.loads(raw)

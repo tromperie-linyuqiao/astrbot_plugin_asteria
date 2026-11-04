@@ -30,6 +30,26 @@
   $('search').insertAdjacentHTML('afterend',`<section data-ps-picker class="ps-picker" hidden aria-label="选择已有资料收藏"><div class="panel-head"><div><h3>从已有资料中收藏</h3><p class="hint">先明确选择已授权的资料来源，再核对条目。收藏只保留引用，不代表听过、读过或发送过。</p></div><button type="button" data-ps-picker-close>收起</button></div><form data-ps-resource-search class="ps-resource-search"><label>资料类型<select data-ps-resource-type data-ps-resource-read><option value="music">音乐</option><option value="image">图片</option></select></label><label>资料来源<select data-ps-resource-source data-ps-resource-read><option value="">先读取资料来源</option></select></label><label>查找条目<input type="search" data-ps-resource-query data-ps-resource-read maxlength="200" placeholder="标题、作者或标签"></label><button type="submit" data-ps-resource-read>搜索资料</button></form><div class="ps-resource-columns"><div><div data-ps-resource-list></div><div class="actions ps-pager"><button type="button" data-ps-resource-prev data-ps-resource-read>上一页</button><span data-ps-resource-range></span><button type="button" data-ps-resource-next data-ps-resource-read>下一页</button></div></div><section data-ps-resource-preview class="ps-resource-preview" aria-label="收藏前预览"></section></div><form data-ps-collect-form hidden><div class="ps-edit-grid"><label>收藏名称（可选）<input data-ps-collect-name maxlength="120"></label><label>关联兴趣<select data-ps-collect-interest></select></label><label>收藏缘由（可选）<textarea data-ps-collect-description maxlength="1200"></textarea></label></div><div class="actions"><button type="submit" class="primary" data-ps-collect>收藏这项资料并回读</button></div></form></section>`);
   $('reference').insertAdjacentHTML('afterend',`<section data-ps-review class="ps-review" hidden aria-label="关联变化与人工复核"><div class="panel-head"><h3>关联来源发生了什么变化</h3><button type="button" data-ps-review-refresh data-ps-read>重新读取变化</button></div><p class="hint">对照记录当时使用的来源与当前来源。确认只表示你已人工核对，不表示模型已重写或证明内容属实。</p><div data-ps-review-changes></div><p data-ps-review-blocked class="ps-warning"></p><form data-ps-review-form><label class="ps-check"><input type="checkbox" data-ps-review-edit>同时保存下方编辑器中的修正（可选）</label><label class="ps-check"><input type="checkbox" data-ps-review-confirmed required>我已核对来源变化，并确认这条记录可继续使用</label><label>复核原因<input data-ps-review-reason maxlength="400" required></label><div class="actions"><button type="submit" class="primary" data-ps-review-submit>确认复核并回读</button></div></form></section>`);
   const message = (text, error = false) => {$('status').textContent = text; $('status').dataset.error = String(error);};
+  const availability = node('section', undefined, 'ps-availability');
+  availability.setAttribute('aria-label', '档案与自动生活状态');
+  const archiveState = node('p', '选择会话后读取私人档案。', 'hint');
+  const executionState = node('p', '自动推进状态尚未读取。', 'hint');
+  const lifeSettings = node('button', '查看生活推进设置');
+  lifeSettings.type = 'button'; lifeSettings.dataset.psRead = 'true';
+  lifeSettings.onclick = () => {if (typeof setView === 'function') setView('autonomous_life');};
+  availability.append(archiveState, executionState, lifeSettings); $('status').after(availability);
+  function showAvailability(runtime) {
+    archiveState.textContent = '私人档案已接通，可查看和维护现有资料。';
+    const reason = runtime?.reason, state = runtime?.state;
+    executionState.textContent = state === 'paused_budget' || reason === 'model_budget_zero'
+      ? '自动生活推进暂停：模型调用预算为 0。档案和收藏仍可使用，打开本页不会恢复预算。'
+      : runtime?.can_advance === true
+        ? '自动生活可按现有计划推进，仍受调用预算与分享频率限制。'
+        : reason === 'life_disabled'
+          ? '自动生活推进已关闭；私人档案的浏览与维护仍可使用。'
+          : runtime?.reason_label || '自动生活当前未运行或尚未提供运行状态，可在生活推进设置中查看。';
+    availability.dataset.execution = typeof state === 'string' ? state : 'unknown';
+  }
   const same = target => key(target) === key(scope) && key(target) === key(currentScope());
   const action = (parent, label, callback, className = '') => {const button = node('button', label, className); button.type = 'button'; button.addEventListener('click', callback); parent.append(button); return button;};
   function controls() {
@@ -60,6 +80,7 @@
       if (method === 'POST') error.outcomeUnknown = true;
       throw error;
     }
+    if (['personal/overview','personal/decision'].includes(path) && same(target)) showAvailability(result.runtime);
     return result.result;
   }
 
@@ -539,6 +560,8 @@
     refs = {space:[],interest:[],event:[],character:[]}; $('editor').hidden = true; $('reference').hidden = true;
     $('query').value = ''; $('archived').checked = false; $('invalid').checked = false;
     $('state').value='';$('category').value='';$('sort').value='updated';
+    archiveState.textContent = scope ? '正在等待当前会话的档案读取。' : '选择会话后读取私人档案。';
+    executionState.textContent = '自动推进状态尚未读取。'; availability.dataset.execution = 'unknown';
     summaryAt=0;drawCounts(); drawDecision(); drawVisual(); drawList(); drawDetail(); message(scope ? '范围已切换，刷新后读取当前角色的个人生活。' : '先在上方选择完整的用户、角色与会话。'); controls();
   }
   for (const tab of root.querySelectorAll('[data-ps-tab]')) {

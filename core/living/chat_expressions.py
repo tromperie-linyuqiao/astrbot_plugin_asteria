@@ -42,12 +42,29 @@ _LOCK = threading.RLock()
 _HEX = re.compile(r'[0-9a-f]{64}\Z')
 _CLIENT_ID = re.compile(r'[A-Za-z0-9_.:-]{8,128}\Z')
 DEFAULT_ACTIONS = (
-    {'id': 'headpat', 'label': '摸头', 'description': '轻轻摸摸角色的头', 'enabled': True, 'quick': True, 'order': 0},
-    {'id': 'poke', 'label': '轻戳', 'description': '轻轻戳一下角色，想引起她的注意', 'enabled': True, 'quick': True, 'order': 1},
-    {'id': 'hold_hands', 'label': '牵手', 'description': '伸手牵住角色的手，陪她待一会儿', 'enabled': True, 'quick': True, 'order': 2},
-    {'id': 'lean', 'label': '靠一会儿', 'description': '轻轻靠着角色休息一会儿', 'enabled': True, 'quick': True, 'order': 3},
+    {'id': 'end_contact', 'label': '结束接触', 'description': '我松开手，结束当前接触。', 'enabled': True, 'quick': True, 'order': 4},
+    {'id': 'headpat', 'label': '摸头', 'description': '轻轻摸摸德克萨斯的头', 'enabled': True, 'quick': True, 'order': 0},
+    {'id': 'poke', 'label': '轻戳', 'description': '轻轻戳一下德克萨斯，想引起她的注意', 'enabled': True, 'quick': True, 'order': 1},
+    {'id': 'hold_hands', 'label': '牵手', 'description': '伸手牵住德克萨斯的手，陪她待一会儿', 'enabled': True, 'quick': True, 'order': 2},
+    {'id': 'lean', 'label': '靠一会儿', 'description': '轻轻靠着德克萨斯休息一会儿', 'enabled': True, 'quick': True, 'order': 3},
 )
 SELF_ACTIONS = (
+    {'id': 'nod', 'label': '点头', 'description': '我点了点头。', 'targets': [{'id': 'self', 'label': '自己'}], 'category': '神态与手势'},
+    {'id': 'shake_head', 'label': '摇头', 'description': '我摇了摇头。', 'targets': [{'id': 'self', 'label': '自己'}], 'category': '神态与手势'},
+    {'id': 'wave', 'label': '挥手', 'description': '我抬起手挥了挥。', 'targets': [{'id': 'hand', 'label': '自己的手'}], 'category': '神态与手势'},
+    {'id': 'rest_chin', 'label': '托腮', 'description': '我用手托着下巴。', 'targets': [{'id': 'chin', 'label': '自己的下巴'}], 'category': '神态与手势'},
+    {'id': 'open_palms', 'label': '摊手', 'description': '我摊开双手。', 'targets': [{'id': 'hands', 'label': '自己的双手'}], 'category': '神态与手势'},
+    {'id': 'stand', 'label': '站起', 'description': '我站了起来。', 'targets': [{'id': 'floor', 'label': '地面'}], 'category': '姿态与位置'},
+    {'id': 'crouch', 'label': '蹲下', 'description': '我蹲了下来。', 'targets': [{'id': 'floor', 'label': '地面'}], 'category': '姿态与位置'},
+    {'id': 'turn_aside', 'label': '侧身', 'description': '我侧过身。', 'targets': [{'id': 'self', 'label': '自己'}], 'category': '姿态与位置'},
+    {'id': 'rest_on_desk', 'label': '趴在桌上', 'description': '我趴在桌上休息。', 'targets': [{'id': 'desk', 'label': '桌子'}], 'category': '姿态与位置'},
+    {'id': 'approach', 'label': '走近', 'description': '我走近了一些，等待对方回应。', 'targets': [{'id': 'character', 'label': '角色附近'}], 'category': '姿态与位置'},
+    {'id': 'step_back', 'label': '退开', 'description': '我向后退开，拉开一些距离。', 'targets': [{'id': 'away', 'label': '远一些的位置'}], 'category': '姿态与位置'},
+    {'id': 'sit_beside', 'label': '坐到旁边', 'description': '我在旁边坐下，等待对方回应。', 'targets': [{'id': 'beside_character', 'label': '角色旁边'}], 'category': '姿态与位置'},
+    {'id': 'pick_cup', 'label': '拿起杯子', 'description': '我拿起自己的杯子。', 'targets': [{'id': 'water_cup', 'label': '自己的杯子'}], 'category': '物品互动'},
+    {'id': 'put_book', 'label': '放下书', 'description': '我把书放下。', 'targets': [{'id': 'book', 'label': '自己的书'}], 'category': '物品互动'},
+    {'id': 'put_on_jacket', 'label': '披上外套', 'description': '我披上自己的外套。', 'targets': [{'id': 'jacket', 'label': '自己的外套'}], 'category': '物品互动'},
+    {'id': 'offer_item', 'label': '递出物品', 'description': '我把手里的物品递过去，等待对方决定是否接下。', 'targets': [{'id': 'held_item', 'label': '手里的物品'}], 'category': '物品互动'},
     {'id': 'rub_eyes', 'label': '揉眼睛', 'description': '我轻轻揉了揉自己的眼睛。', 'targets': [{'id': 'eyes', 'label': '自己的眼睛'}]},
     {'id': 'stretch', 'label': '伸懒腰', 'description': '我伸了个懒腰。', 'targets': [{'id': 'whole_body', 'label': '自己的身体'}]},
     {'id': 'sit', 'label': '坐下', 'description': '我坐下来，放松了一点。', 'targets': [{'id': 'chair', 'label': '椅子'}, {'id': 'bed_edge', 'label': '床沿'}]},
@@ -79,8 +96,8 @@ _EMOTIONS = {
     '得意': ('得意', '自豪', '果然', '那当然', '早就知道', 'proud'),
     '音乐': ('听歌', '听音乐', '配乐', '旋律', '背景音乐', 'bgm', 'music'),
 }
-_GENERIC_TAGS = {'角色', 'texas', '表情', '表情包', '图片', '日常', '聊天'}
-_GENERIC_TERMS = _terms('角色表情图片使用这个时候可以现在今天一下这里我们你们')
+_GENERIC_TAGS = {'德克萨斯', 'texas', '表情', '表情包', '图片', '日常', '聊天'}
+_GENERIC_TERMS = _terms('德克萨斯表情图片使用这个时候可以现在今天一下这里我们你们')
 
 
 class ChatExpressionError(ValueError):
@@ -496,7 +513,7 @@ class ChatExpressions:
             result['self_template'] = template['id']
         if value.get('native_touch') is not None:
             if target == 'self':
-                raise ChatExpressionError('描述自己的动作不能关联角色的身体触觉')
+                raise ChatExpressionError('描述自己的动作不能关联德克萨斯的身体触觉')
             if (existing is not None and existing.get('id') == identity
                     and existing.get('native_touch') == value['native_touch']):
                 # Maintaining an unchanged saved binding is not permission to
@@ -603,6 +620,7 @@ class ChatExpressions:
                     'character_id': scope['character_id'],
                     'target_part': action.get('target_part', action.get('native_touch', {}).get('part', '')),
                     'source': 'user_self_action' if target == 'self' else 'user_action', 'fragment_id': fragment,
+                    **({'self_template': action['self_template']} if target == 'self' and action.get('self_template') else {}),
                     **({'native_touch': self._action_record(action, 0)['native_touch']} if action.get('native_touch') else {})})
                 projection.append(('【用户自身动作描述（叙事输入，非现实感知）：' if target == 'self' else '【用户角色互动输入（非现实感知）：') + action['label'] + '】' + action['description'])
             elif kind == 'sticker':
@@ -693,6 +711,9 @@ class ChatExpressions:
         data = json.loads(path.read_text(encoding='utf-8'))
         if data.get('scope') != scope or data.get('record_id') != str(record_id) or data.get('role') != role:
             raise RuntimeError('聊天表达归属记录不一致')
+        if role == 'assistant':
+            from .structured_reply import visible_parts
+            return visible_parts(data['parts'])
         return data['parts']
 
     def save_parts(self, scope, role, record_id, parts):
@@ -774,6 +795,8 @@ class ChatExpressions:
             saved = self.saved_parts(message_scope, 'assistant', record_id)
             if saved is not None:
                 return saved
+            from .structured_reply import visible_content
+            content = visible_content(content)
             originals = content.get('message', []) if isinstance(content, dict) else []
             from .structured_reply import parse as parse_expression
             expanded=[]
@@ -795,7 +818,7 @@ class ChatExpressions:
                 if not isinstance(part, dict):
                     continue
                 if part.get('type')=='tls_narrative':
-                    result.append({'type':'action','label':'角色的动作','description':part['text'],
+                    result.append({'type':'action','label':'德克萨斯的动作','description':part['text'],
                         'actor':'character', 'target':'unspecified',
                         'source':'assistant_narrative'})
                     continue

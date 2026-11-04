@@ -232,7 +232,7 @@ window.ChatExperience = (() => {
     try{
       const result=await call('GET',route('search')+'&q='+encodeURIComponent(query));if(!panelCurrent(ticket))return;
       const list=$('experience-search-results');list.replaceChildren();
-      for(const hit of result.items||[]){const row=button((hit.role==='assistant'?'伙伴':'你')+' · '+hit.excerpt,async()=>{
+      for(const hit of result.items||[]){const row=button((hit.role==='assistant'?'角色':'你')+' · '+hit.excerpt,async()=>{
         if(!panelCurrent(ticket))return;const session=state.activeId;close();await loadHistory(session);
         if(!state.authenticated||owner!==key())return;
         const message=state.messages.find(value=>String(value.serverId)===String(hit.message_id));
@@ -243,7 +243,7 @@ window.ChatExperience = (() => {
     }catch(error){if(panelCurrent(ticket))status(errorText(error),true);}
   }
   async function regenerate(message) {
-    if(primaryConnectionId()&&state.activeId!==primaryConnectionId()){showNotice('以前的记录保持只读，请回到伙伴继续聊天。');return;}
+    if(primaryConnectionId()&&state.activeId!==primaryConnectionId()){showNotice('以前的记录保持只读，请回到角色继续聊天。');return;}
     if(state.sending||state.remoteRunning||state.attaching||!message.serverId)return;
     const owner=key(),id=state.activeId;state.sending=true;renderChrome();
     try{
@@ -265,10 +265,10 @@ window.ChatExperience = (() => {
       const list=$('experience-bookmark-list');list.replaceChildren();
       for(const saved of bookmarkRows){
         const row=document.createElement('div');row.className='bookmark-item';
-        const view=button((saved.role==='assistant'?'伙伴':'你')+' · '+(saved.excerpt||'图片、语音或附件'),async()=>{
+        const view=button((saved.role==='assistant'?'角色':'你')+' · '+(saved.excerpt||'图片、语音或附件'),async()=>{
           if(!panelCurrent(ticket))return;
           try{const detail=await call('GET',route('bookmarks')+'&message_id='+encodeURIComponent(saved.message_id));if(!panelCurrent(ticket))return;
-            $('bookmark-reading-title').textContent=(detail.role==='assistant'?'伙伴':'你')+'的消息';
+            $('bookmark-reading-title').textContent=(detail.role==='assistant'?'角色':'你')+'的消息';
             $('bookmark-reading-text').textContent=detail.text||'这条消息以附件为主。';
             $('bookmark-reading-note').textContent=detail.media_in_original_history?'图片、语音和文件保留在原消息中，收藏不复制附件。':'';
             $('bookmark-reading-dialog').showModal();
@@ -328,7 +328,7 @@ window.ChatExperience = (() => {
   }
   async function recordVoice() {
     if(!scopeReady()||state.sending||state.attaching||state.remoteRunning)return;
-    if(primaryConnectionId()&&state.activeId!==primaryConnectionId()){showNotice('请先回到伙伴再发送语音。');return;}
+    if(primaryConnectionId()&&state.activeId!==primaryConnectionId()){showNotice('请先回到角色再发送语音。');return;}
     if(attachmentQueue().length>=4){showNotice('每条最多 4 个附件。');return;}
     const owner=key(),sessionId=state.activeId;let item;
     state.attaching=true;renderChrome();
@@ -366,7 +366,7 @@ window.ChatExperience = (() => {
       const action=(label,fn)=>button(label,()=>{closeMessageTools();fn();});
       const historyOnly=primaryConnectionId()&&state.activeId!==primaryConnectionId();
       if(!historyOnly)actions.append(action('引用这条消息',()=>window.ChatComposer.addReference({message_id:message.serverId,text:message.text,role:message.role})));
-      if(!historyOnly&&message.role==='assistant')actions.append(action('让伙伴再答一次',()=>regenerate(message)));
+      if(!historyOnly&&message.role==='assistant')actions.append(action('让角色再答一次',()=>regenerate(message)));
       const saved=bookmarkScope===key()&&bookmarkRows.some(value=>String(value.message_id)===String(message.serverId));
       const star=action(saved?'★ 取消收藏':'☆ 收藏到重要消息',()=>toggleBookmark(message.serverId,!saved));star.setAttribute('aria-label',saved?'取消收藏这条消息':'收藏这条消息');actions.append(star);
       if(message.role==='assistant'&&window.ChatVoice)actions.append(action('朗读这条消息',()=>window.ChatVoice.speak(message)));
@@ -436,7 +436,16 @@ window.ChatExperience = (() => {
   // The native bridge calls this exported function rather than the old frozen
   // function reference. It keeps the original request and authentication logic.
   const originalRender=renderMessages;
-  renderMessages=function(options){const result=originalRender(options);decorateMessages(result?.rows);
+  renderMessages=function(options){
+    const container=$('messages'),oldScope=container?.dataset.renderScope,oldRows=[...(container?.querySelectorAll('.message-row')||[])],oldTail=oldRows.at(-1)?.dataset.messageKey;
+    const nearLatest=container&&container.scrollHeight-container.scrollTop-container.clientHeight<100;
+    const result=originalRender(options);decorateMessages(result?.rows);
+    // Only appended messages in the already visible conversation animate. A
+    // history load, search, account switch or in-place stream update does not.
+    if(oldTail&&oldScope===container?.dataset.renderScope&&!state.loading&&nearLatest&&!state.messageSearch?.query&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+      const rows=[...container.querySelectorAll('.message-row')],tailIndex=rows.findIndex(row=>row.dataset.messageKey===oldTail),previous=new Set(oldRows);
+      if(tailIndex>=0)for(const row of rows.slice(tailIndex+1))if(!previous.has(row)){row.classList.add('message-enter');row.addEventListener('animationend',()=>row.classList.remove('message-enter'),{once:true});}
+    }
     if(!result?.streamOnly){decorateUnread();queueRead();}return result;};
   const originalChrome=renderChrome;
   renderChrome=function(){
@@ -489,7 +498,7 @@ window.ChatExperience = (() => {
     const mode=control('experience-mode','select');selectOptions(mode,[['chat','日常聊天'],['roleplay','角色扮演'],['technical','讨论与解释']]);
     const scene=control('experience-scene','textarea');scene.rows=5;scene.maxLength=3000;scene.placeholder='这段对话的场景、剧情进度或讨论背景…';
     $('experience-context-fields').append(field('会话模式',mode),field('会话剧情 / 背景简介',scene));
-    const replyFormat=control('experience-reply-format','select');selectOptions(replyFormat,[['auto','自动：RP使用动作与话语，其余保持流式文字'],['structured','动作与话语：整轮解析后显示'],['text','普通流式文字']]);$('experience-context-fields').append(field('伙伴的表达方式',replyFormat));
+    const replyFormat=control('experience-reply-format','select');selectOptions(replyFormat,[['auto','自动：RP使用动作与话语，其余保持流式文字'],['structured','动作与话语：整轮解析后显示'],['text','普通流式文字']]);$('experience-context-fields').append(field('角色的表达方式',replyFormat));
     const fields=$('experience-expression-fields');
     const level=control('experience-setting-level','select');selectOptions(level,[['session','仅当前会话'],['role','此账户下该角色的默认设置']]);fields.append(field('修改范围',level));
     const frequency=control('experience-frequency','select');selectOptions(frequency,[['expressive','丰富 · 尽量一语义单元一表情'],['balanced','适中'],['low','少量'],['off','关闭自动配图']]);fields.append(field('表情使用频率',frequency));
@@ -510,7 +519,7 @@ window.ChatExperience = (() => {
     const reading=document.createElement('dialog');reading.id='bookmark-reading-dialog';reading.className='settings-dialog';reading.innerHTML='<div class="settings-form"><div class="dialog-heading"><h2 id="bookmark-reading-title">重要消息</h2><button id="bookmark-reading-close" type="button" class="icon-button">×</button></div><div id="bookmark-reading-text" class="bookmark-reading-text"></div><p id="bookmark-reading-note" class="experience-caption"></p></div>';document.body.append(reading);$('bookmark-reading-close').onclick=()=>reading.close();
     const continuation=button('',continueReading,'continue-reading');continuation.id='continue-reading';continuation.hidden=true;document.querySelector('.chat-header').after(continuation);
     const historyHint=document.createElement('div');historyHint.id='history-reading-hint';historyHint.className='history-reading-hint';historyHint.hidden=true;
-    historyHint.append(text('span','这里保留着以前的聊天。'),button('回到伙伴继续聊 →',returnToBot,'history-return'));
+    historyHint.append(text('span','这里保留着以前的聊天。'),button('回到角色继续聊 →',returnToBot,'history-return'));
     document.querySelector('.composer-area').prepend(historyHint);
     const voice=button('录一段语音',recordVoice,'attachment-picker voice-picker');document.querySelector('[data-compose-pane="attachments"]').append(voice,text('p','调用手机现有录音应用，录完作为语音加入待发送；不在后台录音。','compose-status'));
     $('messages').addEventListener('scroll',queueRead,{passive:true});document.addEventListener('visibilitychange',()=>{if(!document.hidden)queueRead();});

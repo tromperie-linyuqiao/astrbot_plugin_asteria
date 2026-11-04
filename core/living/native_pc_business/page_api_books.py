@@ -814,6 +814,47 @@ class PrivateCompanionPageApiBooksMixin:
                 if not isinstance(profiles, dict):
                     profiles = {}
                     self.plugin.data["worldbook_member_profiles"] = profiles
+                observation_keys = {"accept_pending_observation_id", "reject_pending_observation_id"} & payload.keys()
+                if observation_keys:
+                    # Review is an exact existing observation operation, never a node upsert.
+                    if len(observation_keys) != 1 or payload.keys() - ({"user_id"} | observation_keys):
+                        return self._error("请单独确认或忽略一条观察，不与节点编辑合并提交")
+                    action_key = next(iter(observation_keys))
+                    target_id = self._single_line(payload.get(action_key), 40)
+                    if not target_id:
+                        return self._error("缺少观察标识")
+                    profile = profiles.get(user_id)
+                    pending = profile.get("pending_observations") if isinstance(profile, dict) else None
+                    pending = pending if isinstance(pending, list) else []
+                    matches = [item for item in pending if isinstance(item, dict)
+                               and self._single_line(item.get("id"), 40) == target_id]
+                    if not matches:
+                        return self._ok({"message": "该观察已不在待确认列表；本次未修改资料",
+                            "observation_result": {"status": "missing", "id": target_id, "user_id": user_id},
+                            "worldbook": self._worldbook_summary(deepcopy(self.plugin.data))})
+                    if len(matches) != 1:
+                        return self._error("观察标识重复，原记录已保留，请先核对来源")
+                    accepted = matches[0]
+                    accepting = action_key == "accept_pending_observation_id"
+                    if accepting:
+                        memories = self._normalize_important_memories(profile.get("important_memories"))
+                        if len(memories) >= 8:
+                            return self._error("本节点的重要记忆已达 8 条，请先维护现有记忆；待确认观察已保留")
+                        candidate = {"title": self._single_line(accepted.get("title"), 60) or "确认的观察",
+                            "content": str(accepted.get("content") or accepted.get("evidence") or "").strip()[:500],
+                            "weight": self._clamp_int(accepted.get("weight"), 35, 0, 100),
+                            "privacy": "internal", "enabled": True, "updated_at": time.time(),
+                            **self._worldbook_observation_provenance(accepted)}
+                        if not candidate["content"]:
+                            return self._error("观察没有可确认正文，原记录已保留")
+                        profile["important_memories"] = self._normalize_important_memories([candidate, *memories])
+                    # Acknowledging one observation must not trim unrelated imported/live records.
+                    profile["pending_observations"] = [item for item in pending if item is not accepted]
+                    profile["manual_edit_ts"] = time.time()
+                    self.plugin._save_data_sync()
+                    return self._ok({"message": "已确认到本关系节点的重要记忆" if accepting else "已忽略此观察；未删除来源聊天",
+                        "observation_result": {"status": "accepted" if accepting else "rejected", "id": target_id, "user_id": user_id},
+                        "worldbook": self._worldbook_summary(deepcopy(self.plugin.data))})
                 if payload.get("delete"):
                     deleted = self.plugin.data.setdefault("worldbook_deleted_member_ids", [])
                     if not isinstance(deleted, list):
@@ -873,37 +914,6 @@ class PrivateCompanionPageApiBooksMixin:
                     profile["boundary_note"] = str(payload.get("boundary_note") or "").strip()[:1200]
                 if "important_memories" in payload:
                     profile["important_memories"] = self._normalize_important_memories(payload.get("important_memories"))
-                if "accept_pending_observation_id" in payload or "reject_pending_observation_id" in payload:
-                    pending = profile.get("pending_observations") if isinstance(profile.get("pending_observations"), list) else []
-                    target_id = self._single_line(
-                        payload.get("accept_pending_observation_id") or payload.get("reject_pending_observation_id"),
-                        40,
-                    )
-                    kept = []
-                    accepted = None
-                    for item in pending:
-                        if not isinstance(item, dict):
-                            continue
-                        if self._single_line(item.get("id"), 40) == target_id:
-                            accepted = item
-                            continue
-                        kept.append(item)
-                    profile["pending_observations"] = kept[:24]
-                    if accepted and payload.get("accept_pending_observation_id"):
-                        memories = self._normalize_important_memories(profile.get("important_memories"))
-                        memories.insert(
-                            0,
-                            {
-                                "title": self._single_line(accepted.get("title"), 60) or "群聊观察",
-                                "content": str(accepted.get("content") or accepted.get("evidence") or "").strip()[:500],
-                                "weight": self._clamp_int(accepted.get("weight"), 35, 0, 100),
-                                "privacy": "internal",
-                                "source": self._single_line(accepted.get("source"), 40) or "group_observation",
-                                "enabled": True,
-                                "updated_at": time.time(),
-                            },
-                        )
-                        profile["important_memories"] = self._normalize_important_memories(memories)
                 if "priority" in payload:
                     profile["priority"] = self._clamp_int(payload.get("priority"), 120, -1000, 10000)
                 profile["manual_edit_ts"] = time.time()

@@ -62,8 +62,9 @@ def _unpack(value):
 class NativeServerIntegrations:
     def __init__(self, plugin):
         from astrbot.api.star import StarTools
+        from ...identity import data_directory
         self.plugin, self.context = plugin, plugin.context
-        self.data_dir = Path(StarTools.get_data_dir('astrbot_plugin_virtual_body'))
+        self.data_dir = Path(data_directory(StarTools))
         self.phone_data_dir = self.data_dir.parent/'astrbot_plugin_phone_perception'
         self.flow_store_path = self.data_dir.parent/'astrbot_plugin_dialogue_flow'/'preferences.db'
         self._config_lock = threading.RLock()
@@ -110,6 +111,12 @@ class NativeServerIntegrations:
         if len(matches) != 1: return None
         row = matches[0]
         return getattr(row, 'star_cls', None) if getattr(row, 'activated', False) is True else None
+
+    def _control_current(self):
+        # Recheck after acquiring the existing lock. Construction may precede
+        # publication, but a published successor must not inherit old actions.
+        return (not self._closed and not getattr(self.plugin, '_stopping', False)
+                and getattr(self.plugin, '_native_server_integrations', self) is self)
 
     def _save_flag(self, key, value):
         previous = self.plugin.config.get(key, None)
@@ -305,13 +312,10 @@ class NativeServerIntegrations:
         if (type(host) is LivingHost and type(memory) is NativeMemoryAdapter
                 and getattr(host.runtime,'unified',None) is not None
                 and getattr(host,'selected_persona',None) is not None):
-            from .native_mc_takeover_runtime import NativeMCTakeoverRuntime
             if self.plugin._cfg_bool('living_mc_full_native_enabled',False):
                 await self._full_mc_owner().start_if_configured()
                 if self.mc_full is not None and self.mc_full.active:self._register_tools('mc')
-            else:
-                self.mc = NativeMCTakeoverRuntime(self.plugin, host)
-                await self.mc.start()
+            # A disabled memory service never falls back to another plugin's writer.
         self.plugin._native_mc_takeover = self.mc
         from .native_pc_full_owner import NativePCFullOwner
         self.pc_full = NativePCFullOwner(self)
@@ -356,7 +360,7 @@ class NativeServerIntegrations:
         return self.status()
 
     async def activate_mc_full(self):
-        await self._full_mc_owner().activate()
+        await self._full_mc_owner().activate(reconcile_previous=True)
         self.plugin._native_mc_takeover = self.mc
         self._register_tools('mc')
         self._toggle_full_commands('mc',True)
@@ -468,9 +472,10 @@ class NativeServerIntegrations:
         from .native_proactive_chat_host import NativeProactiveChatHost
         host=self._host()
         values=self.plugin.config.get('living_proactive_chat')
-        if not isinstance(values,dict) or not values:
-            path=Path(inspect.getfile(type(self.plugin))).resolve().parent.parent.parent/'config/astrbot_plugin_proactive_chat_config.json'
-            values=json.loads(path.read_bytes()) if path.is_file() else {}
+        if values is None:
+            values={}
+        if not isinstance(values,dict):
+            raise ValueError('TLS proactive configuration must be an object')
         self.proactive_chat=NativeProactiveChatHost(self.plugin,host,values,
             self.data_dir.parent/'astrbot_plugin_proactive_chat',
             legacy_closed=self._proactive_chat_legacy_closed,
@@ -479,11 +484,7 @@ class NativeServerIntegrations:
         return self.proactive_chat
 
     def _proactive_chat_legacy_closed(self):
-        rows=[row for row in self.context.get_all_stars() if getattr(row,'root_dir_name',None)=='astrbot_plugin_proactive_chat']
-        if len(rows)!=1 or getattr(rows[0],'activated',None) is not False:return False
-        record=getattr(self.context,'_tls_native_proactive_chat_retired',None)
-        old=getattr(rows[0],'star_cls',None)
-        return old is None or (isinstance(record,dict) and record.get('owner') is old and record.get('drained') is True)
+        return self._full_proactive_owner().legacy_closed()
 
     def register_routes(self):
         from ...insight_web_api import NativeInsightWebApi
@@ -505,7 +506,7 @@ class NativeServerIntegrations:
 
     async def activate_insight(self):
         async with self._lock:
-            if self._closed: raise RuntimeError('integrations stopped')
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             if self.legacy('astrbot_plugin_insight_center') is not None:
                 raise RuntimeError('retire the original Insight hooks before activation')
             service = self.insight or self._make_insight()
@@ -562,7 +563,7 @@ class NativeServerIntegrations:
         This operation itself does not stop the original Phone or start ours.
         """
         async with self._lock:
-            if self._closed: raise RuntimeError('integrations stopped')
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             old = self.legacy('astrbot_plugin_phone_perception')
             if old is None: raise RuntimeError('original Phone instance required')
             if self.phone is not None and self.phone._active: raise RuntimeError('native Phone already active')
@@ -629,12 +630,14 @@ class NativeServerIntegrations:
         try:
             return await self._prepare_phone()
         except BaseException:
-            if host is not None: host.phone_transfer_pending = prior_pending
+            if host is not None and self._control_current():
+                host.phone_transfer_pending = prior_pending
             raise
 
     async def activate_phone(self):
         async with self._lock:
-            if self._closed or self.phone is None: raise RuntimeError('Phone preparation required')
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
+            if self.phone is None: raise RuntimeError('Phone preparation required')
             if self.legacy('astrbot_plugin_phone_perception') is not None:
                 raise RuntimeError('original Phone hooks and tasks still active')
             if self.legacy('astrbot_plugin_dialogue_flow') is not None:
@@ -665,6 +668,7 @@ class NativeServerIntegrations:
 
     async def stop_phone(self):
         async with self._lock:
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             await self._pause_phone_companion()
             if self.phone is not None:
                 try:
@@ -681,6 +685,7 @@ class NativeServerIntegrations:
 
     async def stop_insight(self):
         async with self._lock:
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             if self.insight is not None: await self.insight.close()
             self._remove_tools('insight')
             self._save_flag('living_insight_native_enabled', False)
@@ -737,24 +742,28 @@ class NativeServerIntegrations:
 
     async def activate_pc(self):
         async with self._lock:
-            if self._closed or self.pc is None: raise RuntimeError('native reminder services unavailable')
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
+            if self.pc is None: raise RuntimeError('native reminder services unavailable')
             self._save_flag('living_pc_integration_enabled', True)
             return self.status()
 
     async def stop_pc(self):
         async with self._lock:
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             self._save_flag('living_pc_integration_enabled', False)
             return self.status()
 
     async def activate_mc(self):
         async with self._lock:
-            if self._closed or self.mc is None: raise RuntimeError('native memory context unavailable')
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
+            if self.mc is None: raise RuntimeError('native memory context unavailable')
             await self.mc.activate()
             self._save_flag('living_mc_context_native_enabled', True)
             return self.status()
 
     async def stop_mc(self):
         async with self._lock:
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             if self.mc is not None:
                 summary=self.mc.status().get('summary',{})
                 if summary.get('algorithm_active') or summary.get('recovery_required') or summary.get('controller_retained'):
@@ -771,7 +780,8 @@ class NativeServerIntegrations:
 
     async def activate_mc_summary(self):
         async with self._lock:
-            if self._closed or self.mc is None:raise RuntimeError('native MC source unavailable')
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
+            if self.mc is None:raise RuntimeError('native MC source unavailable')
             await self.mc.activate_summary()
             try:self._save_flag('living_mc_summary_native_enabled',True)
             except BaseException:
@@ -783,6 +793,7 @@ class NativeServerIntegrations:
 
     async def restore_mc_summary(self):
         async with self._lock:
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             if self.mc is None:raise RuntimeError('native MC source unavailable')
             await self.mc.restore_summary()
             self._save_flag('living_mc_summary_native_enabled',False)
@@ -790,7 +801,8 @@ class NativeServerIntegrations:
 
     async def activate_mc_explicit(self):
         async with self._lock:
-            if self._closed or self.mc is None:raise RuntimeError('native MC source unavailable')
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
+            if self.mc is None:raise RuntimeError('native MC source unavailable')
             current=self.mc.status().get('explicit',{})
             if current.get('active') is True:return self.status()
             await self.mc.prepare_explicit()
@@ -804,12 +816,14 @@ class NativeServerIntegrations:
 
     async def stop_mc_explicit(self):
         async with self._lock:
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             if self.mc is not None:self.mc.stop_explicit()
             self._save_flag('living_mc_explicit_native_enabled',False)
             return self.status()
 
     async def restore_mc_explicit(self):
         async with self._lock:
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             if self.mc is None:raise RuntimeError('native MC source unavailable')
             if self.mc.relationship_requested() or self.mc.profile_requested():raise RuntimeError('stop_other_claim_branches_before_shared_restore')
             self.mc.stop_explicit()
@@ -819,7 +833,8 @@ class NativeServerIntegrations:
 
     async def activate_mc_relationship(self):
         async with self._lock:
-            if self._closed or self.mc is None:raise RuntimeError('native MC source unavailable')
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
+            if self.mc is None:raise RuntimeError('native MC source unavailable')
             if self.mc.status().get('relationship',{}).get('active') is True:return self.status()
             await self.mc.prepare_explicit(relationship=True)
             try:
@@ -832,12 +847,14 @@ class NativeServerIntegrations:
 
     async def stop_mc_relationship(self):
         async with self._lock:
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             if self.mc is not None:self.mc.stop_relationship()
             self._save_flag('living_mc_relationship_native_enabled',False)
             return self.status()
 
     async def restore_mc_relationship(self):
         async with self._lock:
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             if self.mc is None:raise RuntimeError('native MC source unavailable')
             if self.mc.explicit_requested() or self.mc.profile_requested():raise RuntimeError('stop_other_claim_branches_before_shared_restore')
             self.mc.stop_relationship()
@@ -847,7 +864,8 @@ class NativeServerIntegrations:
 
     async def activate_mc_profile(self):
         async with self._lock:
-            if self._closed or self.mc is None:raise RuntimeError('native MC source unavailable')
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
+            if self.mc is None:raise RuntimeError('native MC source unavailable')
             if self.mc.status().get('profile',{}).get('active') is True:return self.status()
             await self.mc.prepare_explicit(profile=True)
             try:
@@ -860,12 +878,14 @@ class NativeServerIntegrations:
 
     async def stop_mc_profile(self):
         async with self._lock:
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             if self.mc is not None:self.mc.stop_profile()
             self._save_flag('living_mc_profile_native_enabled',False)
             return self.status()
 
     async def restore_mc_profile(self):
         async with self._lock:
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             if self.mc is None:raise RuntimeError('native MC source unavailable')
             if self.mc.explicit_requested() or self.mc.relationship_requested():
                 raise RuntimeError('stop_other_claim_branches_before_shared_restore')
@@ -876,6 +896,7 @@ class NativeServerIntegrations:
 
     async def restore_mc(self):
         async with self._lock:
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             if self.mc is None: raise RuntimeError('memory context owner unavailable')
             await self.mc.restore_legacy()
             self._save_flag('living_mc_context_native_enabled', False)
@@ -883,6 +904,7 @@ class NativeServerIntegrations:
 
     async def restore_phone_helpers(self):
         async with self._lock:
+            if not self._control_current(): raise RuntimeError('integrations no longer current')
             if self.phone is not None and self.phone._active:
                 raise RuntimeError('native Phone still active')
             if self._flow_forwarders is not None:

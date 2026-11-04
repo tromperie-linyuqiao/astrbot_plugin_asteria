@@ -199,15 +199,20 @@ class NativePCNonRandom:
         return dict(result,source=source,source_event_id=work['key'])
 
     def owns_task(self, scope, task):
+        return self.owns_persisted_task(self.journal, scope, task)
+
+    @staticmethod
+    def owns_persisted_task(journal, scope, task):
+        """Read existing provenance even when optional PC services are absent."""
         try:
-            scope=private_scope(scope); pointer=self.journal.fetch(STATE,'active_reason',scope)
-            row=self.journal.fetch(NAMESPACE,pointer['data']['key'],scope) if pointer else None
+            scope=private_scope(scope); pointer=journal.fetch(STATE,'active_reason',scope)
+            row=journal.fetch(NAMESPACE,pointer['data']['key'],scope) if pointer else None
             if not row or task.get('scope')!=scope: return False
             if row['data']['task_id']==task.get('id'): return True
             # A clock bucket can turn between this orchestrator and the shared
             # lane's first await. Keep that matching topic routed to this gate
             # (which denies the mismatched ID), never bypass source validation.
-            actual=self.journal.fetch(PROACTIVE_NAMESPACE,'pending',scope)
+            actual=journal.fetch(PROACTIVE_NAMESPACE,'pending',scope)
             return bool(actual and actual['data']['task_id']==task.get('id')
                 and actual['data']['signature']==digest([scope,actual['data']['event_id'],row['data']['topic']]))
         except Exception: return False
@@ -219,7 +224,12 @@ class NativePCNonRandom:
             if not pointer: return False
             row=self.journal.fetch(NAMESPACE,pointer['data']['key'],scope)
             if not row or row['data']['task_id']!=task.get('id') or row['data']['phase'] not in _ACTIVE|{'attempting'}: return False
-            return await self._current_reason(scope,row['data'])
+            if not await self._current_reason(scope,row['data']): return False
+            # Source reads can yield. A stop/config change or superseding
+            # checkpoint during that read must still close the final gate.
+            return (self._allowed(scope,row['data']['source'])
+                and self.journal.fetch(STATE,'active_reason',scope)==pointer
+                and self.journal.fetch(NAMESPACE,pointer['data']['key'],scope)==row)
         except Exception: return False
 
     def stop(self): self.active=False

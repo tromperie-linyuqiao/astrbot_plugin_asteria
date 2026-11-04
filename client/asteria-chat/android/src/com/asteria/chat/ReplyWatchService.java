@@ -49,18 +49,19 @@ import org.json.JSONObject;
 public final class ReplyWatchService extends Service {
     private static final String START = "com.asteria.chat.REPLY_WATCH_START";
     private static final String STOP = "com.asteria.chat.REPLY_WATCH_STOP";
-    private static final String WATCH_CHANNEL = "asteria-chat-reply-watch";
-    private static final String REPLY_CHANNEL = "asteria-chat-replies";
+    private static final String WATCH_CHANNEL = "texas-chat-reply-watch";
+    private static final String REPLY_CHANNEL = "texas-chat-replies";
     private static final int WATCH_NOTIFICATION = 4300;
     private static final int MAX_NOTICE_MESSAGES = 8;
-    private static final String SHORTCUT_PREFIX = "asteria-chat.reply.";
-    private static final String NOTICE_PREFIX = "asteria-chat.message.";
+    private static final String SHORTCUT_PREFIX = "texas-chat.reply.";
+    private static final String NOTICE_PREFIX = "texas-chat.message.";
     private static final long POLL_MS = 30000;
     private static final Object ADMISSION = new Object();
     private static long admissionEpoch;
     private static boolean startPending;
     private static final int MAX_WATCHES = 6;
     private static volatile String visibleAccount = "";
+    private static volatile String visibleSession = "";
     private static volatile ReplyWatchService current;
     private static volatile boolean appForeground;
     private static final String EMPTY_STATUS = "{\"state\":\"stopped\",\"running\":false,\"active\":false,\"accounts\":[],\"verified_session\":false,\"server_push\":false,\"transport\":\"foreground_service_polling\"}";
@@ -71,7 +72,7 @@ public final class ReplyWatchService extends Service {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ScheduledExecutorService executor = Executors.newScheduledThreadPool(2, runnable -> {
-        Thread thread = new Thread(runnable, "asteria-chat-reply-watch");
+        Thread thread = new Thread(runnable, "texas-chat-reply-watch");
         thread.setDaemon(true);
         return thread;
     });
@@ -87,7 +88,7 @@ public final class ReplyWatchService extends Service {
         volatile ScheduledFuture<?> pending;
         volatile long lastNetworkStarted = -POLL_MS, nextPollAt;
         volatile String state = "starting", reason = "";
-        volatile boolean initialized, verified, receiptsSupported, syncSupported, syncBlocked;
+        volatile boolean initialized, verified, receiptsSupported, partialReceipts, syncSupported, syncBlocked;
         volatile String receiptState = "not_reported";
         volatile String cursor = "";
         volatile String syncCursor = "", syncState = "not_checked";
@@ -97,7 +98,7 @@ public final class ReplyWatchService extends Service {
         int failures;
         Watch(String server, String token, String session, String title, String baseline) {
             this.server = server; this.token = token; this.session = session;
-            this.title = text(title, BuildConfig.APP_NAME, 40); this.baseline = baseline == null ? "" : baseline;
+            this.title = text(title, "Asteria Chat", 40); this.baseline = baseline == null ? "" : baseline;
             scope = scope(server, token, session);
         }
         Watch(ReplyWatchAccounts.Record record) {
@@ -143,7 +144,11 @@ public final class ReplyWatchService extends Service {
                     .put("state", active ? live.state : "stopped")
                     .put("reason", active ? live.reason : saved.getString("stop_reason_" + record.id, "service_not_running"))
                     .put("foreground_visible", active && isVisible(live))
+                    .put("last_message_id", saved.getString("preview_id_" + record.id, ""))
+                    .put("last_message_preview", saved.getString("preview_text_" + record.id, ""))
+                    .put("last_message_observed_at", saved.getLong("preview_at_" + record.id, 0))
                     .put("receipt_sync", active ? live.receiptState : "not_reported")
+                    .put("receipt_unavailable_count", receiptUnavailableCount(saved.getString("receipt_done_" + scope(record.server, record.token, record.session), "{}")))
                     .put("message_sync", active ? live.syncState : "not_checked")
                     .put("last_sync_at", active && live.lastSyncAt > 0 ? live.lastSyncAt : JSONObject.NULL)
                     .put("next_poll_seconds", active ? Math.max(0, live.nextPollAt - SystemClock.elapsedRealtime()) / 1000 : 0)
@@ -187,10 +192,23 @@ public final class ReplyWatchService extends Service {
                     .put("app_notifications_enabled", enabled)
                     .put("reply_channel", channelStatus(REPLY_CHANNEL, replies))
                     .put("watch_channel", channelStatus(WATCH_CHANNEL, watchChannel))
+                    .put("proactive_channel", channelStatus(NotificationChannels.PROACTIVE, manager.getNotificationChannel(NotificationChannels.PROACTIVE)))
+                    .put("reminder_channel", channelStatus(NotificationChannels.REMINDER, manager.getNotificationChannel(NotificationChannels.REMINDER)))
+                    .put("device_manufacturer", Build.MANUFACTURER).put("device_model", Build.MODEL)
+                    .put("android_release", Build.VERSION.RELEASE)
                     .put("interruption_filter", manager.getCurrentInterruptionFilter())
                     .put("heads_up_possible", permission && enabled && replies != null
                             && replies.getImportance() >= NotificationManager.IMPORTANCE_HIGH)
                     .put("heads_up_guaranteed", false).put("server_push", false);
+            android.os.PowerManager power = context.getSystemService(android.os.PowerManager.class);
+            android.app.ActivityManager activity = context.getSystemService(android.app.ActivityManager.class);
+            android.net.ConnectivityManager network = context.getSystemService(android.net.ConnectivityManager.class);
+            record.put("battery_optimization_ignored", power == null ? JSONObject.NULL : power.isIgnoringBatteryOptimizations(context.getPackageName()))
+                    .put("battery_saver", power == null ? JSONObject.NULL : power.isPowerSaveMode())
+                    .put("background_restricted", Build.VERSION.SDK_INT < 28 || activity == null ? JSONObject.NULL : activity.isBackgroundRestricted());
+            try { record.put("background_data_restricted", network == null ? JSONObject.NULL
+                    : network.getRestrictBackgroundStatus() == android.net.ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED); }
+            catch (RuntimeException unavailable) { record.put("background_data_restricted", JSONObject.NULL); }
             Intent settings = notificationSettingsIntent(context, replies != null);
             boolean channelSettings = replies != null;
             if (settings.resolveActivity(context.getPackageManager()) == null) {
@@ -217,7 +235,8 @@ public final class ReplyWatchService extends Service {
                 : importance == NotificationManager.IMPORTANCE_DEFAULT ? "default"
                 : importance >= NotificationManager.IMPORTANCE_HIGH ? "high" : "unspecified";
         return result.put("importance", importance).put("importance_name", name)
-                .put("blocked", importance == NotificationManager.IMPORTANCE_NONE);
+                .put("blocked", importance == NotificationManager.IMPORTANCE_NONE)
+                .put("sound", channel.getSound() != null).put("vibration", channel.shouldVibrate());
     }
 
     static Intent notificationSettingsIntent(Context context, boolean channel) {
@@ -229,17 +248,27 @@ public final class ReplyWatchService extends Service {
     static void clearObserver(Observer value) { if (observer == value) observer = null; }
     static void setAppForeground(boolean value) { synchronized (ADMISSION) { appForeground = value; } }
     static void setVisibleAccount(String server, String token) {
+        setVisibleAccount(server, token, "");
+    }
+    static void setVisibleAccount(String server, String token, String session) {
         synchronized (ADMISSION) {
-            try { visibleAccount = ApiPolicy.jwt(token) ? accountKey(ApiPolicy.server(server), token) : ""; }
-            catch (RuntimeException invalid) { visibleAccount = ""; }
+            try {
+                visibleAccount = ApiPolicy.jwt(token) ? accountKey(ApiPolicy.server(server), token) : "";
+                visibleSession = visibleAccount.isEmpty() || session == null || session.isEmpty()
+                        ? "" : AttachmentPolicy.session(session);
+            }
+            catch (RuntimeException invalid) { visibleAccount = ""; visibleSession = ""; }
         }
     }
     private static String accountKey(String server, String token) {
         return AttachmentCache.key(server, token, "reply-watch-account");
     }
     private static boolean isVisible(Watch selected) {
-        return appForeground && selected != null && !visibleAccount.isEmpty()
-                && visibleAccount.equals(accountKey(selected.server, selected.token));
+        synchronized (ADMISSION) {
+            return appForeground && selected != null && !visibleAccount.isEmpty()
+                    && visibleAccount.equals(accountKey(selected.server, selected.token))
+                    && !visibleSession.isEmpty() && visibleSession.equals(selected.session);
+        }
     }
 
     static void preferencesChanged(Context context, NotificationPreferences preferences) {
@@ -266,7 +295,7 @@ public final class ReplyWatchService extends Service {
             // history page is not proof that every message in it was opened.
             for (StatusBarNotification note : manager.getActiveNotifications())
                 if (tag.equals(note.getTag()) && note.getId() == 4400
-                        && REPLY_CHANNEL.equals(note.getNotification().getChannelId())) { manager.cancel(tag, 4400); cancelled++; }
+                        && NotificationChannels.isMessageChannel(note.getNotification().getChannelId())) { manager.cancel(tag, 4400); cancelled++; }
             ReplyWatchService active = current;
             Watch selected = active == null ? null : active.watches.get(selectedScope);
             if (selected != null && selected.scope.equals(selectedScope) && selected.token.equals(token))
@@ -339,6 +368,32 @@ public final class ReplyWatchService extends Service {
         }
     }
 
+    static void rememberAccount(Context context, String server, String token, String session, String title, String baseline, String excerpt) {
+        synchronized (ADMISSION) {
+            title = text(title, "Asteria Chat", 40);
+            String id = scope(server, token, session);
+            ReplyWatchAccounts.Record previous = ReplyWatchAccounts.find(context, id);
+            SharedPreferences saved = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
+            if (previous == null && !saved.edit().putBoolean("paused_" + id, true)
+                    .putString("stop_reason_" + id, "notifications_not_enabled").commit())
+                throw new IllegalStateException("saved_account_state_unavailable");
+            if (previous == null || !previous.token.equals(token) || !previous.title.equals(title))
+                ReplyWatchAccounts.save(context, server, token, session, title, previous == null ? baseline : previous.baseline);
+            if (positiveId(baseline)) rememberPreview(context, id, baseline, excerpt);
+        }
+    }
+
+    private static void rememberPreview(Context context, String scope, String id, String excerpt) {
+        if (!positiveId(id)) return;
+        SharedPreferences saved = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
+        String oldId = saved.getString("preview_id_" + scope, "");
+        if (!id.equals(latestCursor(oldId, id))) return;
+        String safe = text(excerpt, "[附件或表情消息]", 360);
+        if (id.equals(oldId) && safe.equals(saved.getString("preview_text_" + scope, ""))) return;
+        saved.edit().putString("preview_id_" + scope, id).putString("preview_text_" + scope, safe)
+                .putLong("preview_at_" + scope, System.currentTimeMillis()).apply();
+    }
+
     static String start(Context context, String server, String token, String session, String title, String baseline) {
         if (!NotificationPreferences.load(context).enabled) throw new IllegalStateException("notifications_disabled");
         String normalized = ApiPolicy.server(server);
@@ -404,6 +459,7 @@ public final class ReplyWatchService extends Service {
                         .putBoolean("paused_" + record.id, true).putString("stop_reason_" + record.id, reason).commit();
                 Watch selected = active == null ? null : active.watches.get(record.id);
                 if (selected != null) active.removeWatch(selected, reason);
+                savedPreviewForget(context, record.id);
                 rememberStoppedAccount(context, record, reason);
                 clearScopeNotices(context, record.id, authScope(record.server, record.token, record.session), true);
             }
@@ -412,6 +468,11 @@ public final class ReplyWatchService extends Service {
             latest = snapshot(context);
             if (!removed) throw new IllegalStateException("watch_registration_not_removed");
         }
+    }
+
+    private static void savedPreviewForget(Context context, String id) {
+        context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE).edit()
+                .remove("preview_id_" + id).remove("preview_text_" + id).remove("preview_at_" + id).apply();
     }
 
     static void stopTarget(Context context, String id, String reason) {
@@ -496,7 +557,7 @@ public final class ReplyWatchService extends Service {
 
     private static Intent openIntent(Context context, Watch selected, String messageId, String clickTarget) {
         return new Intent(context, MainActivity.class)
-                .setData(Uri.parse("asteria-chat://reply/" + selected.scope + "/" + AttachmentCache.digest(messageId)))
+                .setData(Uri.parse("texas-chat://reply/" + selected.scope + "/" + AttachmentCache.digest(messageId)))
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 .putExtra("session_id", selected.session).putExtra("reply_watch_scope", selected.scope)
                 .putExtra("reply_watch_server", selected.server)
@@ -528,8 +589,7 @@ public final class ReplyWatchService extends Service {
             NotificationChannel ongoing = new NotificationChannel(WATCH_CHANNEL, "后台回复监控", NotificationManager.IMPORTANCE_LOW);
             ongoing.setDescription("用户开启后，定期读取当前会话；可随时停止，不是服务器推送。");
             manager.createNotificationChannel(ongoing);
-            if (manager.getNotificationChannel(REPLY_CHANNEL) == null)
-                manager.createNotificationChannel(new NotificationChannel(REPLY_CHANNEL, "聊天回复", NotificationManager.IMPORTANCE_HIGH));
+            NotificationChannels.ensure(manager);
         }
     }
 
@@ -574,7 +634,7 @@ public final class ReplyWatchService extends Service {
                 if (server.equals(vault.server()) && ApiPolicy.jwt(token)
                         && authScope(server, token, session).equals(metadata.getString("registered_auth_scope", "")))
                     ReplyWatchAccounts.save(this, server, token, session,
-                            metadata.getString("registered_title", BuildConfig.APP_NAME), metadata.getString("registered_baseline", ""));
+                            metadata.getString("registered_title", "Asteria Chat"), metadata.getString("registered_baseline", ""));
             } catch (RuntimeException invalid) { /* Missing legacy credentials do not stop another account. */ }
         }
         if (!metadata.edit().putBoolean("accounts_migrated", true).commit())
@@ -758,6 +818,7 @@ public final class ReplyWatchService extends Service {
             selected.verified = true;
             JSONObject receipts = data.optJSONObject("receipt_transport");
             selected.receiptsSupported = receipts != null && receipts.optInt("schema") == 1 && receipts.optBoolean("supported");
+            selected.partialReceipts = selected.receiptsSupported && receipts.optBoolean("partial_reports");
             JSONObject sync = receipts == null ? null : receipts.optJSONObject("message_sync");
             if (sync == null) sync = data.optJSONObject("message_sync");
             selected.syncSupported = sync != null && sync.optInt("schema") == 1 && sync.optBoolean("supported")
@@ -794,6 +855,12 @@ public final class ReplyWatchService extends Service {
                     if (positiveId(latestId) && !rememberBackgroundSync(selected, latestId, requestAfter)) return;
                 }
                 selected.syncState = selected.syncSupported ? "baseline_saved" : "legacy_history_window";
+            }
+            if (!assistants.isEmpty()) {
+                JSONObject recent = assistants.get(assistants.size() - 1);
+                synchronized (ADMISSION) {
+                    if (current(selected)) rememberPreview(this, selected.scope, String.valueOf(recent.opt("id")), preview(recent));
+                }
             }
             selected.lastSyncAt = System.currentTimeMillis();
             if (!current(selected)) return;
@@ -857,7 +924,7 @@ public final class ReplyWatchService extends Service {
             if (!current(selected) || isVisible(selected)) return false;
             List<NoticeMessage> allowed = new ArrayList<>();
             for (NoticeMessage value : incoming)
-                if (preferences.allows(value.kind, java.util.Calendar.getInstance())) allowed.add(value);
+                if (preferences.allows(value.kind, java.util.Calendar.getInstance()) && NotificationChannels.allowed(manager, value.kind)) allowed.add(value);
             List<NoticeMessage> previous = new ArrayList<>(selected.notices);
             mergeNoticeMessages(selected.notices, allowed);
             for (NoticeMessage old : previous) if (!selected.notices.contains(old)) manager.cancel(messageTag(selected.scope, old.id), 4400);
@@ -884,7 +951,7 @@ public final class ReplyWatchService extends Service {
                         || !noticeKind(row).equals(old.kind)) && hasNotice(manager, messageTag(selected.scope, old.id))) {
                     NoticeMessage revised = new NoticeMessage(old.id, changed, old.timestamp);
                     revised.kind = noticeKind(row); revised.imageFilename = imageFilename(row);
-                    if (preferences.allows(revised.kind, java.util.Calendar.getInstance())) {
+                    if (preferences.allows(revised.kind, java.util.Calendar.getInstance()) && NotificationChannels.allowed(manager, revised.kind)) {
                         int index = selected.notices.indexOf(old);
                         if (index >= 0) selected.notices.set(index, revised);
                         postNotice(selected, revised, preferences, manager);
@@ -954,6 +1021,36 @@ public final class ReplyWatchService extends Service {
         return new JSONObject(metadata.getString(name + selected.scope, "{}"));
     }
 
+    private static int receiptUnavailableCount(String saved) {
+        try {
+            JSONObject done = new JSONObject(saved); int count = 0;
+            for (java.util.Iterator<String> keys = done.keys(); keys.hasNext();) {
+                JSONObject row = done.optJSONObject(keys.next());
+                if (row != null && row.optBoolean("unavailable")) count++;
+            }
+            return count;
+        } catch (JSONException unreadable) { return -1; }
+    }
+
+    private static java.util.Set<String> unavailableReceiptIds(JSONObject data, JSONArray requested, String phase) throws JSONException {
+        JSONObject result = data.optJSONObject("receipt_result");
+        if (result == null || !phase.equals(result.optString("phase"))) throw new JSONException("receipt_result_missing");
+        java.util.Set<String> remaining = new java.util.HashSet<>(), unavailable = new java.util.HashSet<>();
+        for (int index = 0; index < requested.length(); index++) remaining.add(requested.getString(index));
+        for (String field : new String[] { "accepted", "unavailable" }) {
+            Object raw = result.opt(field);
+            if (!(raw instanceof JSONArray)) throw new JSONException("receipt_result_incomplete");
+            JSONArray ids = (JSONArray) raw;
+            for (int index = 0; index < ids.length(); index++) {
+                Object rawId = ids.opt(index);
+                if (!(rawId instanceof String) || !remaining.remove((String) rawId)) throw new JSONException("receipt_result_mismatch");
+                if (field.equals("unavailable")) unavailable.add((String) rawId);
+            }
+        }
+        if (!remaining.isEmpty()) throw new JSONException("receipt_result_incomplete");
+        return unavailable;
+    }
+
     private void queueReceipts(Watch selected, List<String> ids, String phase) {
         if (ids.isEmpty() || !current(selected)) return;
         try {
@@ -961,13 +1058,15 @@ public final class ReplyWatchService extends Service {
             for (String id : ids) {
                 if (id.isEmpty() || id.length() > 160) continue;
                 JSONObject confirmed = done.optJSONObject(id);
+                if (confirmed != null) confirmed.remove("unavailable");
                 if (confirmed != null && confirmed.optBoolean(phase)) continue;
                 JSONObject item = pending.optJSONObject(id);
                 if (item == null) { item = new JSONObject(); pending.put(id, item); }
                 item.put(phase, true);
             }
             while (pending.length() > 64) pending.remove(pending.keys().next());
-            if (!metadata.edit().putString("receipt_pending_" + selected.scope, pending.toString()).commit())
+            if (!metadata.edit().putString("receipt_pending_" + selected.scope, pending.toString())
+                    .putString("receipt_done_" + selected.scope, done.toString()).commit())
                 throw new IllegalStateException("receipt_pending_not_saved");
             if (pending.length() > 0) selected.receiptState = "pending";
         } catch (RuntimeException | JSONException unavailable) {
@@ -993,6 +1092,8 @@ public final class ReplyWatchService extends Service {
                 }
                 if (ids.length() == 0) continue;
                 JSONObject body = new JSONObject().put("session_id", selected.session).put("phase", phase).put("message_ids", ids);
+                boolean partial = selected.partialReceipts;
+                if (partial) body.put("allow_partial", true);
                 HttpsURLConnection report = null;
                 try {
                     report = (HttpsURLConnection) new URL(selected.server + ApiPolicy.requestPath("/chat/receipts")).openConnection();
@@ -1016,18 +1117,23 @@ public final class ReplyWatchService extends Service {
                     if (!"ok".equals(answer.optString("status")) || answer.optJSONObject("data") == null)
                         throw new java.io.IOException("receipt_not_confirmed");
                     if (!current(selected)) return;
+                    java.util.Set<String> unavailable = partial ? unavailableReceiptIds(answer.optJSONObject("data"), ids, phase) : java.util.Collections.emptySet();
                     for (int index = 0; index < ids.length(); index++) {
                         String id = ids.getString(index);
                         JSONObject value = pending.optJSONObject(id), confirmed = done.optJSONObject(id);
                         if (confirmed == null) { confirmed = new JSONObject(); done.put(id, confirmed); }
-                        confirmed.put(phase, true);
+                        if (unavailable.contains(id)) {
+                            confirmed.put("unavailable", true); pending.remove(id); continue;
+                        }
+                        confirmed.remove("unavailable"); confirmed.put(phase, true);
                         if (value != null) { value.remove(phase); if (value.length() == 0) pending.remove(id); }
                     }
                     while (done.length() > 64) done.remove(done.keys().next());
                     if (!metadata.edit().putString("receipt_pending_" + selected.scope, pending.toString())
                             .putString("receipt_done_" + selected.scope, done.toString()).commit())
                         throw new IllegalStateException("receipt_result_not_saved");
-                    selected.receiptState = pending.length() == 0 ? "synced" : "pending";
+                    selected.receiptState = pending.length() > 0 ? "pending"
+                            : receiptUnavailableCount(done.toString()) > 0 ? "synced_with_unavailable" : "synced";
                 } finally {
                     if (report != null) report.disconnect();
                     if (selected.connection == report) selected.connection = null;
@@ -1078,7 +1184,7 @@ public final class ReplyWatchService extends Service {
         if (Build.VERSION.SDK_INT >= 28) {
             Person self = new Person.Builder().setName("我").build();
             Person.Builder author = new Person.Builder().setName(identity.name).setKey(selected.scope)
-                    .setUri("asteria-chat://person/" + selected.scope).setBot(true);
+                    .setUri("texas-chat://person/" + selected.scope).setBot(true);
             if (portrait != null) author.setIcon(Icon.createWithBitmap(portrait));
             style = new Notification.MessagingStyle(self).setGroupConversation(false);
             Notification.MessagingStyle.Message line = new Notification.MessagingStyle.Message(visibleText, message.timestamp, author.build());
@@ -1093,14 +1199,15 @@ public final class ReplyWatchService extends Service {
         style.setConversationTitle(identity.name);
         PendingIntent open = PendingIntent.getActivity(this, replyId(selected),
                 openIntent(this, selected, message.id, preferences.clickTarget), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification publicVersion = new Notification.Builder(this, REPLY_CHANNEL).setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(BuildConfig.APP_NAME).setContentText("收到新消息").build();
-        Notification.Builder note = new Notification.Builder(this, REPLY_CHANNEL)
+        String channelId = NotificationChannels.id(message.kind);
+        Notification publicVersion = new Notification.Builder(this, channelId).setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("Asteria Chat").setContentText("收到新消息").build();
+        Notification.Builder note = new Notification.Builder(this, channelId)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(noticeTitle(message.kind, identity.name)).setContentText(visibleText)
                 .setCategory("reminder".equals(message.kind) ? Notification.CATEGORY_REMINDER : Notification.CATEGORY_MESSAGE)
                 .setStyle(style).setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(publicVersion)
-                .setGroup("asteria-chat.conversation." + selected.scope).setOnlyAlertOnce(true)
+                .setGroup("texas-chat.conversation." + selected.scope).setOnlyAlertOnce(true)
                 .setAutoCancel(true).setContentIntent(open);
         if (portrait != null) note.setLargeIcon(portrait);
         if (publishConversationShortcut(selected, identity, portrait)) note.setShortcutId(SHORTCUT_PREFIX + selected.scope);
@@ -1238,9 +1345,8 @@ public final class ReplyWatchService extends Service {
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager == null || !manager.areNotificationsEnabled()) return false;
         NotificationChannel watched = manager.getNotificationChannel(WATCH_CHANNEL);
-        NotificationChannel replies = manager.getNotificationChannel(REPLY_CHANNEL);
         return (watched == null || watched.getImportance() != NotificationManager.IMPORTANCE_NONE)
-                && (replies == null || replies.getImportance() != NotificationManager.IMPORTANCE_NONE);
+                && NotificationChannels.anyEnabled(manager);
     }
 
     static String noticeKind(JSONObject row) {
@@ -1268,7 +1374,7 @@ public final class ReplyWatchService extends Service {
         PendingIntent stopAction = PendingIntent.getService(this, WATCH_NOTIFICATION, stop,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder note = new Notification.Builder(this, WATCH_CHANNEL)
-                .setSmallIcon(R.drawable.ic_notification).setContentTitle(BuildConfig.APP_NAME + " 回复监控")
+                .setSmallIcon(R.drawable.ic_notification).setContentTitle("Asteria Chat 回复监控")
                 .setContentText(watches.isEmpty() ? "正在连接已启用的聊天…" : "正在留意 " + watches.size() + " 个聊天，各自每30秒读取一次")
                 .setOngoing(true).setOnlyAlertOnce(true).setCategory(Notification.CATEGORY_SERVICE)
                 .addAction(new Notification.Action.Builder(android.R.drawable.ic_media_pause, "停止监控", stopAction).build());

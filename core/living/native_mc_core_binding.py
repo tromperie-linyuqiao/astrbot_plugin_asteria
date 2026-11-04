@@ -14,6 +14,7 @@ import sys
 
 from .models import canonical
 from . import native_core_handoff as previous
+from ...identity import PLUGIN_NAME, LEGACY_PLUGIN_NAME
 
 _SEAL = object()
 
@@ -83,12 +84,13 @@ class NativeMCCoreBinding:
 def capture_owned_core(context):
     try:
         rows = [row for row in context.get_all_stars()
-            if getattr(row,'root_dir_name',None)=='astrbot_plugin_virtual_body'
-            and getattr(row,'activated',False) is True]
-        if len(rows) != 1:
+            if getattr(row,'root_dir_name',None) in (PLUGIN_NAME, LEGACY_PLUGIN_NAME)]
+        if len(rows) != 1 or getattr(rows[0], 'activated', None) is not True:
             return None
         plugin = rows[0].star_cls
         rt = getattr(plugin,'_native_mc_takeover',None)
+        if getattr(plugin, 'context', None) is not context or getattr(rt, 'plugin', None) is not plugin:
+            return None
         gate = NativeMCCoreBinding(rt,_seal=_SEAL)
         return gate if gate.current() else None
     except Exception:

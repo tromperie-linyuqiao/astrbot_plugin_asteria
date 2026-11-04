@@ -29,7 +29,7 @@ from .core.inject import expression_params
 from .core.render import _props_hint, distance_band, eta_band, parse_iso_local, room_label
 from .core.store import load_manor, load_objects, save_objects
 
-PLUGIN_NAME = "astrbot_plugin_virtual_body"
+from .identity import PLUGIN_NAME
 PAGE_API_PREFIX = f"/{PLUGIN_NAME}/page"
 
 
@@ -84,10 +84,9 @@ class VirtualBodyWebApi:
     _jwt_secret_cache: tuple[int, str | None] = (0, None)
 
     def _dashboard_jwt_secret(self) -> str | None:
-        """Use the current AstrBot config; never guess a container data directory."""
         cfg = self.plugin.context.get_config()
-        dashboard = cfg.get("dashboard", {}) if hasattr(cfg, "get") else {}
-        value = dashboard.get("jwt_secret") if isinstance(dashboard, dict) else None
+        dashboard = cfg.get('dashboard', {}) if hasattr(cfg, 'get') else {}
+        value = dashboard.get('jwt_secret') if isinstance(dashboard, dict) else None
         return value if isinstance(value, str) and value.strip() else None
 
     async def nav_redirect(self):

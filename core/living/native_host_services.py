@@ -320,12 +320,21 @@ class NativeHostServices:
         independent=getattr(integrations,'proactive_chat',None)
         if independent is not None and await independent.owns_task(scope,task):
             return await independent.delivery_allowed(scope,task) is True
+        from .native_pc_integration.nonrandom import NativePCNonRandom
+        sourced=NativePCNonRandom.owns_persisted_task(self.runtime.journal,scope,task)
         pc=self.pc_integration
-        if pc is not None and pc.nonrandom is not None and pc.nonrandom.owns_task(scope,task):
-            if await pc.nonrandom.delivery_allowed(scope,task) is not True:return False
+        source_gate=pc.nonrandom if pc is not None else None
+        if sourced and source_gate is None:return False
         if self.proactive is not None and await self.proactive.owns_task(scope,task):
             allowed=await self.proactive.delivery_allowed(scope,task)
-            return allowed is True and self._proactive_allowed(scope) and self._legacy_quiescent(scope)
+            if allowed is not True:return False
+            # Generic candidate freshness awaits storage/context. Validate the
+            # originating calendar/weather definition afterwards, not before.
+            if sourced:
+                pc=self.pc_integration
+                if pc is None or pc.nonrandom is not source_gate:return False
+                if await source_gate.delivery_allowed(scope,task) is not True:return False
+            return self._proactive_allowed(scope) and self._legacy_quiescent(scope)
         if self.phone is not None and await self.phone.owns_task(scope,task):
             return await self.phone.delivery_allowed(scope,task) is True and self._delivery_allowed(scope)
         return False

@@ -39,7 +39,7 @@ class ChatReceipts:
     @staticmethod
     def capability():
         from .chat_sync import capability as sync_capability
-        return dict(schema=1, supported=True, report_limit=MAX_REPORT,
+        return dict(schema=1, supported=True, partial_reports=True, report_limit=MAX_REPORT,
             retained_messages=MAX_RECORDS, reporting='authenticated_client_claim',
             server_push=False, user_read_proven=False, message_sync=sync_capability())
 
@@ -56,7 +56,9 @@ class ChatReceipts:
         return dict(self.capability(), messages=items,
             history_window_only=True, last_report_at=record['updated_at'] if record else None)
 
-    def report(self, username, session_id, snapshot, phase, message_ids):
+    def report(self, username, session_id, snapshot, phase, message_ids, *, allow_partial=False):
+        if type(allow_partial) is not bool:
+            raise ValueError('收件确认模式无效')
         if phase not in PHASES:
             raise ValueError('收件状态无效')
         if (not isinstance(message_ids, list) or not 1 <= len(message_ids) <= MAX_REPORT
@@ -65,8 +67,10 @@ class ChatReceipts:
             raise ValueError('收件消息编号无效')
         ids = list(dict.fromkeys(message_ids))
         known = assistant_messages(snapshot)
-        if any(identity not in known for identity in ids):
+        unavailable = [identity for identity in ids if identity not in known]
+        if unavailable and not allow_partial:
             raise ValueError('仅能确认当前已保存的本会话助手消息')
+        accepted = [identity for identity in ids if identity in known]
         scope = ChatExpressions.message_scope(username, session_id)
         with self.journal._transaction():
             if not self.current():
@@ -75,7 +79,7 @@ class ChatReceipts:
             data = dict(prior['data']) if prior else dict(messages={})
             messages = {k: dict(v) for k, v in data['messages'].items()}
             now, changed = self.journal.clock(), False
-            for identity in ids:
+            for identity in accepted:
                 row = messages.setdefault(identity, {})
                 # A notification was built from an actually received save row.
                 for selected in dict.fromkeys(('client_received', phase)):
@@ -99,4 +103,9 @@ class ChatReceipts:
                     (NAMESPACE, 'session', scope_key(scope), (prior['revision'] if prior else 0) + 1, now, canonical(data)))
             if not self.current():
                 raise PermissionError('收件服务已变化')
-        return self.view(username, session_id, snapshot)
+        result = self.view(username, session_id, snapshot)
+        if allow_partial:
+            # Unavailable includes absent, user and out-of-scope rows. It is
+            # not a receipt and reveals no source existence or other owner.
+            result['receipt_result'] = dict(phase=phase, accepted=accepted, unavailable=unavailable)
+        return result

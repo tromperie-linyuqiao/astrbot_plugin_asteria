@@ -224,6 +224,10 @@ def normalize(state: dict[str, Any] | None, profile: dict[str, Any]) -> dict[str
         entry.update(contact_semantics(v))
         clean_ac[pid] = entry
     merged["active_contact"] = clean_ac
+    from .interaction import normalize as normalize_interaction
+    interaction = normalize_interaction(state.get("interaction"))
+    if interaction is not None:
+        merged["interaction"] = interaction
     merged["arousal"] = _safe_float(merged["arousal"], 0.0, 0.0, 1.0)
     merged["tolerance"] = _safe_float(merged["tolerance"], 0.0, 0.0, CONFIG.TOLERANCE_MAX)
     return merged
