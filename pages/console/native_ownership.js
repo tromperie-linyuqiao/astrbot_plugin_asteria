@@ -44,7 +44,7 @@
     try{
       const result=await call('GET','page/nav',{to:page,theme:typeof resolvedTheme==='function'?resolvedTheme():'dark',format:'json'});
       const url=new URL(result.url,location.href);
-      if(url.origin!==location.origin||url.pathname!=='/api/plugin/page/content/astrbot_plugin_asteria/'+page+'/'||!url.searchParams.get('asset_token'))throw Error('管理页入口校验未通过。');
+      if(url.origin!==location.origin||!['astrbot_plugin_asteria','astrbot_plugin_virtual_body'].some(name=>url.pathname==='/api/plugin/page/content/'+name+'/'+page+'/')||url.username||url.password||!url.searchParams.get('asset_token'))throw Error('管理页入口校验未通过。');
       location.href=url.href;
     }catch(error){setNotice(error.message,true);}
   }
@@ -99,8 +99,9 @@
     target.append(node('p',value.real_scope_bound===true?'当前角色已取得真实私聊与人格来源登记。':'等待正常私聊建立当前来源；后台选择范围不会制造会话授权。','hint'));
     const stats=node('div',undefined,'native-owner-stats');
     meta(stats,'生命周期',service.initialized===true?'已初始化':'未观察');
-    meta(stats,'额外调度器',service.independent_scheduler===false?'未启动':'待核对');
+    meta(stats,'日常执行方式',service.independent_scheduler===false?'沿陪伴服务处理':service.independent_scheduler===true?'独立调度器':'待核对');
     meta(stats,'当前在途',typeof service.tasks==='number'?String(service.tasks):'未知');target.append(stats);
+    if(service.independent_scheduler===false)target.append(node('p','日常沿现有陪伴服务处理，不另建额外调度器。是否正在运行以上方服务状态为准；生活推进预算单独控制。','hint'));
     target.append(node('p','新明确归属计划供原生日记、穿搭和角色状态读取。原全局计划保持独立历史，不按用户名或角色名补归属；旧候选、UNKNOWN与冷却均保留，不会自动领取旧池。','hint'));
   }
   function renderProactive(){

@@ -8,13 +8,14 @@
     {id:'memory',name:'记忆中心',home:'area-memory',summary:'先找到资料类型，再检索、核对来源或修正记录；候选审核与已生效记忆分别管理。',icon:'M5 3h12l3 3v15H5z M9 8h7 M9 12h7 M9 16h4',groups:[group('检索与维护',['memory','personal','timeline','memory-classic']),group('候选与画像',['profile_candidates','memory-native']),group('摘要与历史',['memory_strategy','mc_summary','history'])]},
     {id:'perception',name:'感知中心',home:'area-perception',summary:'查看设备上报、连接时间与已授权来源。进入数据源后维护连接、规则或查询记录。',icon:'M12 10a2 2 0 1 0 0 4 2 2 0 1 0 0-4 M7 7a7 7 0 0 0 0 10 M17 7a7 7 0 0 1 0 10 M3 3a13 13 0 0 0 0 18 M21 3a13 13 0 0 1 0 18',groups:[group('来源与上报',['phone_service','weather']),group('规则与观察',['phone','insight'])]},
     {id:'companion',name:'陪伴与消息',home:'area-companion',summary:'先管理主动交流和表达规则，再查看实际投递结果；启用规则与成功送达是不同状态。',icon:'M3 4h18v13H8l-5 4z M7 8h10 M7 12h7',groups:[group('决策与节奏',['proactive_native','phone_flow']),group('表达与反馈',['expression','rules','policy']),group('实际执行',['tasks'])]},
-    {id:'resources',name:'资料中心',home:'area-resources',summary:'图片、音乐、文案与场景使用各自适合的编辑器，共享已有资料与来源记录。',icon:'M3 6h7l2 2h9v12H3z M3 6V3h6l2 3',groups:[group('素材库',['assets','music_library','materials']),group('文字与场景',['data','phone','narrative']),group('维护与整理',['maintenance'])]},
+    {id:'resources',name:'资料中心',home:'area-resources',summary:'图片、音乐、文案与场景使用各自适合的编辑器，共享已有资料与来源记录。',icon:'M3 6h7l2 2h9v12H3z M3 6V3h6l2 3',groups:[group('素材库',['assets','music_library','materials']),group('文字与场景',['chat_corpus','data','phone','narrative']),group('维护与整理',['maintenance'])]},
     {id:'automation',name:'任务与自动化',home:'area-automation',summary:'日程、便签、目标与活动分开维护，通过执行记录核对真实结果。',icon:'M5 4h14v18H5z M9 2v4 M15 2v4 M8 10h8 M8 14h8 M8 18h5',groups:[group('时间与提醒',['agenda','dates','special_occasions','memo_notes']),group('目标与活动',['personal_goals','scoped_daily_plan']),group('执行与历史',['tasks','pc_daily_native'])]},
     {id:'models',name:'模型与路由',home:'area-models',summary:'为现有任务选择已配置的模型，查看实际调用与回退信息。凭据继续由 AstrBot 统一管理。',icon:'M12 3v5 M4 16v5 M20 16v5 M4 16V8h16v8 M8 12h8 M12 8v8',groups:[group('选择与调用',['model_routes']),group('预算与查询',['insight','memory_strategy'])]},
     {id:'integrations',name:'系统服务',home:'area-integrations',summary:'查看 Asteria 自身服务的运行状态、外部连接与管理入口。',icon:'M8 3v5 M16 3v5 M5 8h14v4a7 7 0 0 1-14 0z M12 19v3',groups:[group('服务与状态',['native_ownership','modules']),group('连接管理',['phone_service']),group('资料维护',['memory-native','pc-native'])]},
     {id:'settings',name:'系统设置',home:'area-settings',summary:'管理全局记录、上下文展示和工作台外观，业务资料仍在各自中心维护。',icon:'M4 6h16 M4 12h16 M4 18h16 M8 3v6 M16 9v6 M10 15v6',groups:[group('系统与权限',['config','context_display']),group('外观与维护',['workspace_appearance','maintenance'])]}
   ];
   const descriptions = {
+    chat_corpus:['语料与聊天偏好','按当前登录账号和聊天角色管理参考文本、长期与临时偏好'],
     overview:['运行总览','真实运行状态、关注事项与固定快捷入口'],
     brief:['今日简报','集中查看今天的安排、提醒和待处理事项'],
     body:['虚拟身体','查看身体指标、部位与当前互动状态'],
@@ -64,7 +65,7 @@
     maintenance:['资料维护','来源核对、批量维护与资料体检']
   };
   const aliases = {'domain-interaction':'area-companion','domain-memory':'area-memory','domain-perception':'area-perception','domain-role':'area-role','domain-actions':'area-automation','domain-system':'area-integrations'};
-  const owners = {personal_space:'role',overview:'workbench',brief:'workbench',autonomous_life:'role',pc_daily_native:'role',narrative:'role',preferences:'role',memory:'memory',personal:'memory',timeline:'memory',profile_candidates:'memory',mc_summary:'memory',memory_strategy:'memory',history:'memory',phone_service:'perception',phone:'perception',insight:'perception',phone_flow:'companion',proactive_native:'companion',expression:'companion',rules:'companion',policy:'companion',data:'resources',assets:'resources',music_library:'resources',maintenance:'resources',agenda:'automation',dates:'automation',special_occasions:'automation',memo_notes:'automation',personal_goals:'automation',scoped_daily_plan:'automation',tasks:'automation',model_routes:'models',native_ownership:'integrations',modules:'integrations',config:'settings',context_display:'settings',workspace_appearance:'settings'};
+  const owners = {chat_corpus:'resources',personal_space:'role',overview:'workbench',brief:'workbench',autonomous_life:'role',pc_daily_native:'role',narrative:'role',preferences:'role',memory:'memory',personal:'memory',timeline:'memory',profile_candidates:'memory',mc_summary:'memory',memory_strategy:'memory',history:'memory',phone_service:'perception',phone:'perception',insight:'perception',phone_flow:'companion',proactive_native:'companion',expression:'companion',rules:'companion',policy:'companion',data:'resources',assets:'resources',music_library:'resources',maintenance:'resources',agenda:'automation',dates:'automation',special_occasions:'automation',memo_notes:'automation',personal_goals:'automation',scoped_daily_plan:'automation',tasks:'automation',model_routes:'models',native_ownership:'integrations',modules:'integrations',config:'settings',context_display:'settings',workspace_appearance:'settings'};
   const info = id => descriptions[id] || ENTRY_INFO[id] || [TITLES[id] || id,''];
   const svg = path => {const s=document.createElementNS('http://www.w3.org/2000/svg','svg');s.setAttribute('viewBox','0 0 24 24');s.setAttribute('class','nav-icon');s.setAttribute('aria-hidden','true');const p=document.createElementNS(s.namespaceURI,'path');p.setAttribute('d',path);s.append(p);return s;};
   const button = (label, callback, className='') => {const b=node('button',label,className);b.type='button';b.addEventListener('click',callback);return b;};
@@ -160,7 +161,7 @@
       if(view!==area.home)crumb.append(node('span','/','aw-crumb-separator'),node('span',info(view)[0],'aw-crumb-current'));
       $('page-title').textContent=view===area.home?area.name:info(view)[0];
       document.querySelectorAll('.aw-domain-scope').forEach(n=>n.textContent=state.scope?'资料操作将使用上方选定的用户、角色和会话。':'可浏览功能入口；管理会话资料前，请在上方选择会话。');
-      $('current-scope-bar').hidden=['history','model_routes','config','memory_strategy','workspace_appearance','area-models','area-integrations','area-settings','native_ownership','modules'].includes(view);
+      $('current-scope-bar').hidden=['chat_corpus','history','model_routes','config','memory_strategy','workspace_appearance','area-models','area-integrations','area-settings','native_ownership','modules'].includes(view);
       document.body.dataset.awArea=area.id;document.body.dataset.awView=view;paintRelations(view);
     }
     // Material ownership remains the stored five-field scope. The administrator

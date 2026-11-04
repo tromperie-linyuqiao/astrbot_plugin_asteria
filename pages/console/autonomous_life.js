@@ -15,7 +15,7 @@ const errorLabels={provider_restricted:'模型服务限制了这次请求',provi
 const stamp=value=>typeof value==='number'&&Number.isFinite(value)?new Date(value*1000).toLocaleString():'尚无记录';
 let queuedOpen=null;
 let scope=null,section='event',selected=null,records=[],total=0,offset=0,serial=0,busy=false;
-let settings=null,overview=null,people=[],events=[],draftKind=null,draftRecord=null;
+let settings=null,overview=null,people=[],events=[],draftKind=null,draftRecord=null,listState='unread';
 const pending=new Map();
 root.innerHTML=`<section class="panel autonomous-life"><div class="panel-head"><div><h2>生活档案</h2><p class="hint">角色在虚构世界中的经历、熟人与未完事项。它们与真实聊天、手机感知分别保存。</p></div><button type="button" data-life-refresh>刷新与核对</button></div><p data-life-status role="status" aria-live="polite"></p><div data-life-runtime class="life-runtime"></div><div class="life-tabs" role="tablist"><button data-life-tab="event" role="tab">近期经历</button><button data-life-tab="character" role="tab">人物</button><button data-life-tab="thread" role="tab">开放事项</button><button data-life-tab="shares" role="tab">分享记录</button><button data-life-tab="settings" role="tab">推进设置</button></div><div data-life-records><form data-life-search class="life-toolbar"><label>查找<input data-life-query maxlength="200" placeholder="标题、人物或经历关键词"></label><button type="submit">搜索</button><label class="life-check"><input data-life-archived type="checkbox">含归档</label><label class="life-check"><input data-life-invalid type="checkbox">含待复核</label><button type="button" data-life-new>新增</button></form><div class="life-columns"><div><div data-life-list></div><div class="actions"><button data-life-prev type="button">上一页</button><span data-life-range></span><button data-life-next type="button">下一页</button></div></div><section data-life-detail><p class="empty">选择一项查看关联与修正历史。</p></section></div></div><section data-life-settings hidden><form data-life-policy><div data-life-policy-fields class="life-policy-grid"></div><div class="actions"><button type="submit" class="primary">保存推进设置</button><button data-life-models type="button">设置后台模型</button><button data-life-advance type="button">现在评估一次生活推进</button></div><p class="hint">后台推进独立于即时聊天；预算与静默日判断由服务器执行。分享只是候选，发送仍遵守原有主动陪伴权限、频率与可打扰时段。</p><p class="hint">“现在评估”可能使用已经配置的后台模型，且需要真实会话授权；不会重放停机期间的日记。</p></form></section><div class="actions"><button data-life-release type="button" hidden>已核对，结束本次等待</button></div></section><section class="panel autonomous-life" data-life-editor hidden><div class="panel-head"><h2 data-life-editor-title></h2><button data-life-cancel type="button">取消编辑</button></div><form data-life-form><div data-life-fields class="life-edit-grid"></div><label>维护原因<input data-life-reason maxlength="400" required></label><div class="actions"><button class="primary" type="submit">保存并回读</button></div></form><p class="hint">修正会保留原版本。依赖旧版本的记录需要复核后才能重新进入普通检索，不会改写真实聊天。</p></section>`;
 const $=name=>root.querySelector('[data-life-'+name+']');
@@ -83,6 +83,7 @@ function drawRuntime(){
 function title(record){return record.fields?.title||record.fields?.name||record.id;}
 function drawList(){
  const target=$('list');target.replaceChildren();
+ if(listState==='error')target.append(node('p',records.length?'本次未能读取，以下是上次已读取的记录；当前状态尚未确认。':'未能读取当前资料，不能据此判断没有记录。请查看上方错误并手动刷新。','life-warning'));
  for(const record of records){const b=node('button',undefined,'life-card');b.type='button';b.dataset.lifeRead='true';b.dataset.selected=String(selected?.id===record.id);
   if(section==='shares'){
    b.append(node('strong','经历 '+record.event_id),node('small','投递状态：'+({candidate:'候选，尚未发送',queued:'已入队',sent:'发送器已执行',confirmed:'已有投递确认',failed:'发送失败',unknown:'结果待核对'}[record.state]||record.state)+' · '+stamp(record.at)));
@@ -92,8 +93,8 @@ function drawList(){
    b.addEventListener('click',()=>detail(section,record.id));
   }target.append(b);
  }
- if(!records.length)target.append(node('p',scope?'当前筛选下还没有记录。平静的一天也可以不产生新事件。':'先选择完整会话。','empty'));
- $('range').textContent=total?(section==='shares'?`最近 ${records.length} 项 / 共 ${total} 项`:`${offset+1}–${offset+records.length} / ${total}`):'0 项';controls();
+ if(!records.length&&listState!=='error')target.append(node('p',!scope?'先选择完整会话。':listState==='ready'?'当前筛选下还没有记录。私人空间、兴趣与聊天记忆分别保存，不会自动补成生活经历。':listState==='loading'?'正在读取当前资料…':'尚未读取当前资料，请选择分类或刷新。','empty'));
+ $('range').textContent=listState!=='ready'?(listState==='error'?'本次未确认':'等待读取'):total?(section==='shares'?`最近 ${records.length} 项 / 共 ${total} 项`:`${offset+1}–${offset+records.length} / ${total}`):'0 项';controls();
 }
 function references(parent,label,ids,kind){if(!ids?.length)return;const box=node('div',undefined,'life-references');box.append(node('strong',label));for(const id of ids){const row=(kind==='event'?events:people).find(item=>item.id===id);button(row?title(row):id,()=>{switchTab(kind,false);detail(kind,id);},box).dataset.lifeRead='true';}parent.append(box);}
 function drawDetail(history){
@@ -122,7 +123,7 @@ const policyFields=[['enabled','开启后台生活推进','check'],['share_enabl
 function drawPolicy(){const target=$('policy-fields');target.replaceChildren();for(const [name,label,type]of policyFields){const wrap=node('label',label,type==='check'?'life-check':''),input=node('input');input.dataset.policy=name;input.type=type==='check'?'checkbox':type;if(type==='check')input.checked=settings?.settings?.[name]===true;else{input.min=name.includes('interval')?'60':'0';input.max=name.includes('interval')?'10080':name==='max_shares_per_day'?'8':'24';input.step='1';input.value=settings?.settings?.[name]??'';input.required=true;}wrap.append(input);target.append(wrap);}const topics=node('label','不主动分享的话题（每行一项，最多 16 项，每项 60 字）'),text=node('textarea');text.dataset.policy='muted_topics';text.value=(settings?.settings?.muted_topics||[]).join('\n');text.maxLength=975;topics.append(text);target.append(topics);controls();}
 async function load(){
  if(busy)return;scope=getScope();if(!scope){records=[];total=0;drawList();message('先在上方选择完整会话。');return;}
- const target={...scope},token=++serial;busy=true;controls();
+ const target={...scope},token=++serial;busy=true;listState='loading';drawList();controls();message('正在读取当前生活档案…');
  try{
   const query={...target,query:$('query').value.trim(),include_archived:$('archived').checked,include_invalid:$('invalid').checked,offset,limit:30};
   const path=section==='settings'?'settings':section==='shares'?'shares':plurals[section];
@@ -134,13 +135,13 @@ async function load(){
    call('GET','characters',{...target,limit:100},target),call('GET','events',{...target,limit:100},target),
    selectedId&&labels[section]?call('GET',section,{...target,id:selectedId},target):null]);
   if(token!==serial||!same(target))return;
-  overview=summary;settings=policy.result;people=refsP.result.records||[];events=refsE.result.records||[];
+  listState='ready';overview=summary;settings=policy.result;people=refsP.result.records||[];events=refsE.result.records||[];
   if(section!=='settings'){records=current.result.records||[];total=current.result.total??records.length;}
   if(detailRead){selected=detailRead.result;drawDetail(selected.history);}
   if(pending.has(key(target)))pending.get(key(target)).checked=true;
   drawRuntime();drawPolicy();drawList();
   message(pending.has(key(target))?'已读取服务器当前记录，请核对原操作是否生效；不会自动重发。':'已读取当前有效资料；读取没有调用模型。');
- }catch(error){if(token===serial&&same(target))message(error.publicMessage||error.message,true);}finally{if(token===serial&&same(target)){busy=false;controls();if(queuedOpen){const request=queuedOpen;queuedOpen=null;if(request.scope===key(getScope()))openLinkedRecord(request.kind,request.id);}}}
+ }catch(error){if(token===serial&&same(target)){listState='error';drawList();message(error.publicMessage||error.message,true);}}finally{if(token===serial&&same(target)){busy=false;controls();if(queuedOpen){const request=queuedOpen;queuedOpen=null;if(request.scope===key(getScope()))openLinkedRecord(request.kind,request.id);}}}
 }
 function input(name,label,type,value,options){
  const wrap=node('label',label),element=node(type==='textarea'?'textarea':type==='select'||type==='multiple'?'select':'input');element.dataset.field=name;
@@ -186,7 +187,7 @@ async function mutate(path,body){
  finally{if(token===serial&&same(target)){busy=false;controls();await load();if(failure)message(failure+(pending.has(key(target))?' 请刷新核对原操作，不会自动重发。':''),true);else if(outcome)message(outcome);}}
 }
 function switchTab(value,fetch=true){
- if(busy)return;section=value;offset=0;selected=null;draftRecord=null;records=[];total=0;$('editor').hidden=true;
+ if(busy)return;section=value;offset=0;selected=null;draftRecord=null;records=[];total=0;listState='unread';$('editor').hidden=true;
  $('records').hidden=value==='settings';$('settings').hidden=value!=='settings';$('search').hidden=value==='shares';
  for(const tab of root.querySelectorAll('[data-life-tab]'))tab.setAttribute('aria-selected',String(tab.dataset.lifeTab===value));
  drawList();drawDetail();if(fetch)load();
@@ -206,7 +207,7 @@ $('form').addEventListener('submit',event=>{event.preventDefault();try{
  else mutate(draftKind+'/create',{request_id:uuid(),fields});
  }catch(error){message(error.message,true);}});
 $('policy').addEventListener('submit',event=>{event.preventDefault();if(!settings)return;const changes={};for(const element of root.querySelectorAll('[data-policy]'))changes[element.dataset.policy]=element.dataset.policy==='muted_topics'?element.value.split('\n').map(v=>v.trim()).filter(Boolean):element.type==='checkbox'?element.checked:Number(element.value);if(changes.muted_topics.length>16||changes.muted_topics.some(v=>v.length>60)){message('不主动分享的话题最多 16 项，每项最多 60 字。',true);return;}mutate('settings/save',{expected_revision:settings.revision,changes});});
-function scopeChanged(){queuedOpen=null;scope=getScope();serial++;busy=false;selected=null;draftRecord=null;records=[];total=0;offset=0;settings=null;overview=null;people=[];events=[];$('editor').hidden=true;drawRuntime();drawPolicy();drawList();drawDetail();message(scope?'请选择分类或刷新读取当前生活档案。':'先选择完整会话。');}
+function scopeChanged(){listState='unread';queuedOpen=null;scope=getScope();serial++;busy=false;selected=null;draftRecord=null;records=[];total=0;offset=0;settings=null;overview=null;people=[];events=[];$('editor').hidden=true;drawRuntime();drawPolicy();drawList();drawDetail();message(scope?'请选择分类或刷新读取当前生活档案。':'先选择完整会话。');}
 function openLinkedRecord(kind,id){
  if(!labels[kind]||typeof id!=='string'||!getScope())return;
  if(busy){queuedOpen={kind,id,scope:key(getScope())};return;}

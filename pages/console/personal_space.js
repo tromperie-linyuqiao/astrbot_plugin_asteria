@@ -19,6 +19,7 @@
   const title = record => record?.fields?.name || record?.fields?.title || record?.id || '未命名记录';
   const pending = new Map();
   let scope = null, kind = 'space', selected = null, records = [], total = 0, offset = 0, serial = 0, busy = false;
+  let listState = 'unread';
   let overview = null, draft = null, lifeReference = null, refs = {space:[], interest:[], event:[], character:[]};
   let review = null, reviewTotal = null, picker = {type:'music',sources:[],source:null,records:[],total:0,offset:0,selected:null};
   root.innerHTML = `<section class="panel personal-space"><div class="panel-head"><div><p class="ps-eyebrow">角色的生活一隅</p><h2>个人空间与兴趣</h2><p class="hint">整理她居住的地方、留下的物件，以及愿意继续了解的事。</p></div><button type="button" data-ps-refresh>刷新与核对</button></div><p class="ps-boundary">这里保存角色的虚构生活。泰拉正典、现实公开资料、原创虚构与模型推测分别标明来源；收藏不会证明真实听过、读过或到访。</p><p data-ps-status class="ps-status" role="status" aria-live="polite"></p><div data-ps-counts class="ps-counts"></div><section data-ps-decision class="ps-decision" aria-label="生活选择预览"></section><div class="ps-tabs" role="tablist" aria-label="个人生活资料">${Object.entries(labels).map(([id,label]) => `<button type="button" role="tab" id="ps-tab-${id}" aria-controls="ps-records" data-ps-tab="${id}" aria-selected="false">${label}</button>`).join('')}</div><section id="ps-records" role="tabpanel"><form data-ps-search class="ps-toolbar"><label>查找<input data-ps-query type="search" maxlength="200" placeholder="名称、说明或兴趣关键词"></label><button type="submit">搜索</button><button type="button" data-ps-new class="primary">新增私人空间</button><div class="ps-filters"><label><input type="checkbox" data-ps-archived>含归档与已删除</label><label><input type="checkbox" data-ps-invalid>含待复核</label></div></form><div class="ps-columns"><section class="ps-catalog" aria-label="资料列表"><div data-ps-list></div><div class="actions ps-pager"><button type="button" data-ps-prev>上一页</button><span data-ps-range></span><button type="button" data-ps-next>下一页</button></div></section><aside class="ps-side"><section data-ps-detail class="ps-detail" aria-label="资料详情"></section><section data-ps-reference class="ps-reference" hidden aria-label="关联生活资料"></section><section data-ps-editor class="ps-editor" hidden aria-label="独立资料编辑器"><div class="panel-head"><h3 data-ps-editor-title></h3><button data-ps-cancel type="button">取消编辑</button></div><p data-ps-editor-identity class="hint"></p><form data-ps-form><div data-ps-fields class="ps-edit-grid"></div><label data-ps-reason-wrap>维护原因<input data-ps-reason maxlength="400"></label><div class="actions"><button class="primary" type="submit">保存并回读</button></div></form><p class="hint ps-edit-note">保存会保留历史版本与来源。切换右侧详情不会改变当前编辑对象。</p></section></aside></div></section><div class="actions"><button data-ps-release type="button" hidden>已核对，结束本次等待</button></div></section>`;
@@ -39,7 +40,7 @@
   lifeSettings.onclick = () => {if (typeof setView === 'function') setView('autonomous_life');};
   availability.append(archiveState, executionState, lifeSettings); $('status').after(availability);
   function showAvailability(runtime) {
-    archiveState.textContent = '私人档案已接通，可查看和维护现有资料。';
+    if(listState==='ready')archiveState.textContent = '私人档案已接通，可查看和维护现有资料。';
     const reason = runtime?.reason, state = runtime?.state;
     executionState.textContent = state === 'paused_budget' || reason === 'model_budget_zero'
       ? '自动生活推进暂停：模型调用预算为 0。档案和收藏仍可使用，打开本页不会恢复预算。'
@@ -103,6 +104,7 @@
   }
   function drawVisual() {
     const parent=$('visual');parent.replaceChildren();const data=overview?.visual;
+    if(listState==='error')parent.append(node('p',data?'本次未能读取，以下画卷来自上次读取；当前资料尚未确认。':'未能读取当前私人档案，不能据此判断没有资料。','ps-warning'));
     if(!data){parent.append(node('p',scope?'读取资料后，空间、收藏与兴趣会在这里连起来。':'请先选择上方的角色与会话。','empty'));return;}
     const head=node('div',undefined,'ps-visual-heading');head.append(node('div','私人数字档案','ps-eyebrow'),node('h3','把生活中留下的东西，放在一起'));
     head.append(node('p',data.last_updated_at?'最近资料更新 · '+stamp(data.last_updated_at):'尚未建立私人资料，可以从一个空间或一项明确的收藏开始。','hint'));parent.append(head);
@@ -182,6 +184,7 @@
   }
   function drawList() {
     const parent = $('list'); parent.replaceChildren();
+    if(listState==='error')parent.append(node('p',records.length?'本次未能读取，以下是上次已读取的记录；当前资料尚未确认。':'未能读取当前资料，不能据此判断没有记录。请查看上方错误并手动刷新。','ps-warning'));
     for (const record of records) {
       const f = record.fields || {}, card = action(parent, '', () => kind === 'review' ? openReview(record.kind,record.id) : openRecord(kind, record.id), 'ps-card'); card.dataset.psRead = 'true';
       card.dataset.selected = String(selected?.id === record.id && selected?.kind === (kind==='review'?record.kind:kind));
@@ -190,8 +193,8 @@
       if (f.description || f.goal || f.findings) card.append(node('p', String(f.description || f.goal || f.findings).slice(0, 120), 'ps-card-copy'));
       card.append(node('small', kind === 'collection' ? (categoryLabels[f.category] || '收藏') + ' · ' + stamp(record.updated_at) : '更新于 ' + stamp(record.updated_at)));
     }
-    if (!records.length) parent.append(node('p', scope ? kind === 'review' ? '当前筛选下没有待复核的关联。' : '还没有符合筛选条件的' + labels[kind] + '。可以从一条有来源的记录开始。' : '先在上方选择完整会话。', 'empty'));
-    $('range').textContent = total ? `${offset + 1}–${offset + records.length} / ${total}` : '0 项'; controls();
+    if (!records.length&&listState!=='error') parent.append(node('p', !scope?'先在上方选择完整会话。':listState!=='ready'?(listState==='loading'?'正在读取当前资料…':'尚未读取当前资料，请刷新。'):kind === 'review' ? '当前筛选下没有待复核的关联。' : '还没有符合筛选条件的' + labels[kind] + '。可以从一条有来源的记录开始。', 'empty'));
+    $('range').textContent = listState!=='ready'?(listState==='error'?'本次未确认':'等待读取'):total ? `${offset + 1}–${offset + records.length} / ${total}` : '0 项'; controls();
   }
   function fact(parent, label, value) {
     if (value === undefined || value === null || value === '' || Array.isArray(value) && !value.length) return;
@@ -295,13 +298,14 @@
     }catch(error){if(token===serial&&same(target)){review=null;drawReview();message(error.publicMessage||error.message,true);}}
     finally{if(token===serial&&same(target)){busy=false;controls();}}
   }
+  function readFailed(error){listState='error';archiveState.textContent='本次档案读取未完成，不能按空资料处理；请手动刷新。';drawList();drawVisual();message(error.publicMessage||error.message,true);}
   async function loadReviews() {
     if(busy||!scope)return;
-    const target={...scope},token=++serial;busy=true;controls();
+    const target={...scope},token=++serial;busy=true;listState='loading';drawList();controls();
     try{const result=await call('GET','personal/review-list',{...target,query:$('query').value.trim(),limit:24,offset},target);if(token!==serial||!same(target))return;
-      records=result.records||[];total=result.total??records.length;reviewTotal=total;if(overview)overview.review_count=total;if(pending.has(key(target)))pending.get(key(target)).checked=true;
+      listState='ready';records=result.records||[];total=result.total??records.length;reviewTotal=total;if(overview)overview.review_count=total;if(pending.has(key(target)))pending.get(key(target)).checked=true;
       selected=null;review=null;drawCounts();drawList();drawDetail();drawReview();message(pending.has(key(target))?'已回读待复核资料，请先核对原操作是否生效。':'已读取需要人工核对的来源关联；没有自动确认或重写。');
-    }catch(error){if(token===serial&&same(target))message(error.publicMessage||error.message,true);}
+    }catch(error){if(token===serial&&same(target))readFailed(error);}
     finally{if(token===serial&&same(target)){busy=false;controls();}}
   }
   function sourceDetails(parent, record) {
@@ -406,7 +410,7 @@
     if (!scope) {controls(); return;}
     if(kind==='review'){await loadReviews();return;}
     const target = {...scope}, token = ++serial, selectedId = selected?.id;
-    const fetchSummary=refreshSummary===true||!overview||Date.now()-summaryAt>60000; busy = true; controls();
+    const fetchSummary=refreshSummary===true||!overview||Date.now()-summaryAt>60000; busy = true;listState='loading';drawList(); controls();message('正在读取当前会话的个人生活资料…');
     try {
       const [list, summary, spaces, interests, events, people, selectedRead, history] = await Promise.all([
         call('GET','personal/records',listQuery(target),target), fetchSummary?call('GET','personal/overview',target,target):overview,
@@ -417,13 +421,13 @@
         selectedId ? call('GET','personal/history',{...target,kind,id:selectedId,limit:20},target) : null
       ]);
       if (token !== serial || !same(target)) return;
-      records = list.records || []; total = list.total ?? records.length; overview = summary;if(fetchSummary)summaryAt=Date.now();
+      listState='ready';archiveState.textContent='私人档案已接通，可查看和维护现有资料。';records = list.records || []; total = list.total ?? records.length; overview = summary;if(fetchSummary)summaryAt=Date.now();
       refs = {space:spaces.records || [], interest:interests.records || [], event:events.records || [], character:people.records || []};
       if (selectedRead) selected = {...selectedRead, kind};
       if (pending.has(key(target))) pending.get(key(target)).checked = true;
       drawCounts(); drawDecision(); drawVisual(); drawList(); drawDetail(history || []);
       message(pending.has(key(target)) ? '已回读服务器资料。请核对原操作是否生效；不会自动重发。' : '已读取当前会话的个人生活资料。读取没有调用模型。');
-    } catch (error) {if (token === serial && same(target)) message(error.publicMessage || error.message, true);}
+    } catch (error) {if (token === serial && same(target)) readFailed(error);}
     finally {if (token === serial && same(target)) {busy = false; controls();}}
   }
   async function preview() {
@@ -549,13 +553,13 @@
   function switchKind(value) {
     if (busy || !labels[value]&&value!=='review') return;
     showMode('catalog');
-    kind = value; selected = null; records = []; total = 0; offset = 0; lifeReference = null; $('reference').hidden = true;
+    kind = value;listState='unread'; selected = null; records = []; total = 0; offset = 0; lifeReference = null; $('reference').hidden = true;
     review=null;$('review').hidden=true;$('picker').hidden=true;
     if(draft?.reviewToken){draft.reviewToken=null;$('form').querySelector('[type=submit]').hidden=false;$('reason-wrap').hidden=false;}
     paintTabs(); drawList(); drawDetail(); load();
   }
   function scopeChanged() {
-    serial++; busy = false; scope = currentScope(); selected = null; records = []; total = 0; offset = 0; overview = null; draft = null; lifeReference = null;review=null;reviewTotal=null;
+    listState='unread';serial++; busy = false; scope = currentScope(); selected = null; records = []; total = 0; offset = 0; overview = null; draft = null; lifeReference = null;review=null;reviewTotal=null;
     picker={type:'music',sources:[],source:null,records:[],total:0,offset:0,selected:null};$('picker').hidden=true;$('review').hidden=true;$('review-confirmed').checked=false;$('review-edit').checked=false;
     refs = {space:[],interest:[],event:[],character:[]}; $('editor').hidden = true; $('reference').hidden = true;
     $('query').value = ''; $('archived').checked = false; $('invalid').checked = false;

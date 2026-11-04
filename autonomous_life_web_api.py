@@ -33,6 +33,9 @@ class NativeAutonomousLifeWebApi:
         for route in READS + WRITES:
             async def handle(route=route):
                 return await self._respond(route)
+            # Keep the factory closure tied to this API instance so canonical
+            # and compatibility routes reuse the same authenticated handler.
+            handle.__asteria_owner__ = self
             self.plugin.context.register_web_api(PREFIX + '/' + route, handle,
                 ['GET' if route in READS else 'POST'], 'TLS authenticated fictional life ' + route)
 

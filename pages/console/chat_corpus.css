@@ -1,0 +1,9 @@
+#chat-corpus-mount .corpus-columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;align-items:start}
+#chat-corpus-mount label{margin:14px 0}#chat-corpus-mount .notice{margin:14px 0 0;display:block}#chat-corpus-mount .notice:empty{display:none}
+#chat-corpus-mount #console-corpus-scope{margin-top:12px;overflow-wrap:anywhere}#chat-corpus-mount .panel-head select{width:auto;max-width:100%}
+#chat-corpus-mount .corpus-preview{white-space:pre-wrap;overflow-wrap:anywhere;margin:12px 0;max-height:180px;overflow:auto}
+#chat-corpus-mount .corpus-item details{margin-top:12px;overflow-wrap:anywhere}#chat-corpus-mount .corpus-item details p{white-space:pre-wrap;max-height:140px;overflow:auto}
+#chat-corpus-mount details summary{cursor:pointer;padding:12px 0}#chat-corpus-mount #console-corpus-body{min-height:180px}#chat-corpus-mount .switch-label{flex-direction:row}
+#chat-corpus-mount button{background:var(--surface);color:var(--text);border-color:var(--line)}#chat-corpus-mount button.primary{background:var(--blue);color:var(--bg)}
+#chat-corpus-mount button:disabled{background:var(--surface);color:var(--muted);opacity:.65;cursor:default}
+@media(max-width:850px){#chat-corpus-mount .corpus-columns{grid-template-columns:1fr}}
