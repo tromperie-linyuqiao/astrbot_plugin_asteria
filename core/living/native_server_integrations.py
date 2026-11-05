@@ -476,6 +476,11 @@ class NativeServerIntegrations:
             values={}
         if not isinstance(values,dict):
             raise ValueError('TLS proactive configuration must be an object')
+        # Fresh installations leave LivingHost disabled. Keep the optional
+        # adapter absent; an explicitly enabled owner still rejects a missing
+        # host in NativeProactiveChatFullOwner._prepare_native.
+        if host is None:
+            return None
         self.proactive_chat=NativeProactiveChatHost(self.plugin,host,values,
             self.data_dir.parent/'astrbot_plugin_proactive_chat',
             legacy_closed=self._proactive_chat_legacy_closed,

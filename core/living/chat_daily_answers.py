@@ -16,6 +16,14 @@ _SUMMARY = re.compile(r'(?:你|角色).{0,12}(?:今天|今日).{0,10}(?:做过�
 _STATUS = re.compile(r'(?:完成|做完|弄完|弄好|做了|做过|进展|状态|结束).{0,10}(?:吗|了没|没有|没有呀|没|如何|怎样|怎么样|[？?])')
 _READING = re.compile(r'(?:聊聊|说说|谈谈|讲讲|介绍|内容|写了什么).{0,30}(?:文章|那篇|原文)|(?:文章|那篇|原文).{0,25}(?:聊聊|说说|谈谈|讲讲|内容|写了什么)')
 _READ_TITLE = re.compile(r'读|阅读|文章|书籍|资料|文档')
+_CURRENT = re.compile(r'^(?:你|角色)(?:(?:现在|此刻|这会儿|目前)(?:正)?在?|正在|在)(?:干嘛|干什么|做什么|忙什么)(?:呢|呀|啊)?[?？。!！]*$')
+_PERIODS = (('上午', re.compile(r'上午|早上|今早')), ('下午', re.compile(r'下午')), ('晚上', re.compile(r'晚上|今晚')))
+_GENERAL_STATUS = re.compile(
+    r'^(?:(?:你|角色|今天|今日|上午|早上|今早|下午|晚上|今晚)(?:的)?'
+    r'|(?:那|这)(?:一)?(?:项|件)(?:的)?|(?:安排|计划|日程|活动|事情|任务)(?:的)?'
+    r'|都|全部|已经|现在|目前)*'
+    r'(?:完成|做完|弄完|弄好|做了|做过|进展|状态|结束)'
+    r'(?:了吗|了没|没有呀|没有|没|如何|怎样|怎么样|吗|了|呢|呀|啊)*[?？。!！]*$')
 
 
 def question_kind(query):
@@ -27,11 +35,13 @@ def question_kind(query):
     # Do not answer the user's own activity from the role's schedule.
     if re.match(r'^\s*我', query) and '你' not in query and '角色' not in query:
         return None
+    if _CURRENT.fullmatch(query):
+        return 'current'
     if _READING.search(query) and re.search(r'你.{0,16}(?:读|看|阅)|角色|那篇|这篇|原文', query):
         return 'reading'
     if _SUMMARY.search(query):
         return 'summary'
-    if _STATUS.search(query) and re.search(r'你|角色|那项|那件|安排|计划|上午|下午|今天|日程', query):
+    if _STATUS.search(query) and re.search(r'你|角色|那项|那件|安排|计划|上午|早上|今早|下午|晚上|今晚|今天|日程', query):
         return 'status'
     return None
 
@@ -76,11 +86,17 @@ def answer(facts, query):
         return None
     if not isinstance(facts, dict):
         return '这段日常目前没有读到可靠记录，还无法确认完成情况。'
+    # Use the same quote/code normalization for selection as for recognition.
+    query = _trigger_text(query).strip()
     schedule = facts.get('schedule', {})
     rows = [item for item in schedule.get('items', [])[:8] if isinstance(item, dict) and _title(item)]
     current = facts.get('daily_brief', {}).get('current')
     if isinstance(current, dict) and _title(current) and not any(_title(row) == _title(current) for row in rows):
         rows.insert(0, current)
+    if kind == 'current':
+        if isinstance(current, dict) and _title(current) and current.get('status') == 'ongoing':
+            return _state(current)
+        return '当前记录里没有已确认正在进行的活动，不能仅凭计划推断此刻在做什么。'
     if kind == 'reading':
         reading = [row for row in rows if _READ_TITLE.search(_title(row))]
         exact = [row for row in reading if _matches(query, row)]
@@ -98,17 +114,31 @@ def answer(facts, query):
         pieces += [_state(row) for row in pending[:2]]
     else:
         chosen = [row for row in rows if _matches(query, row)]
-        if not chosen and re.search(r'上午|下午|晚上', query):
+        general = _GENERAL_STATUS.fullmatch(re.sub(r'\s+', '', query)) is not None
+        if not chosen and not general:
+            return '当前可见日常里没有找到你问的这项活动，无法确认它是否完成。可以告诉我记录中的活动名称。'
+        selected = chosen if chosen else rows
+        periods = [name for name, pattern in _PERIODS if pattern.search(query)]
+        if periods:
             zone = date_zone(schedule.get('timezone', 'UTC+08:00'))
-            for row in rows:
+            chosen = []
+            for row in selected:
                 stamp = row.get('start_at')
-                if not isinstance(stamp, (int, float)):
+                if type(stamp) not in (int, float) or not math.isfinite(stamp):
                     continue
-                hour = datetime.fromtimestamp(stamp, zone).hour
-                if ('上午' in query and hour < 12 or '下午' in query and 12 <= hour < 18
-                        or '晚上' in query and hour >= 18):
+                try:
+                    hour = datetime.fromtimestamp(stamp, zone).hour
+                except (ValueError, OverflowError, OSError):
+                    continue
+                if ('上午' in periods and hour < 12 or '下午' in periods and 12 <= hour < 18
+                        or '晚上' in periods and hour >= 18):
                     chosen.append(row)
-        chosen = chosen or rows
+            if not chosen:
+                return '当前可见日常里没有找到这个时段的对应活动，无法确认完成情况。'
+        else:
+            chosen = selected
+        if not any(_matches(query, row) for row in chosen) and re.search(r'(?:那|这)(?:一)?(?:项|件)', query) and len(chosen) > 1:
+            return '当前记录里有不止一项活动，还不能确定你指的是哪一项。可以告诉我活动名称。'
         pieces = [_state(row) for row in chosen[:3]]
         if not pieces:
             pieces = ['这份日常记录里没有能确认这项活动完成情况的内容。']
