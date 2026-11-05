@@ -21,6 +21,10 @@
   --wallpaper-scrim: transparent;
   --chat-width: 780px;
   --composer-height: 140px;
+  --motion-fast: 140ms;
+  --motion-enter: 220ms;
+  --motion-exit: 160ms;
+  --motion-ease: cubic-bezier(.2,.75,.25,1);
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -234,14 +238,14 @@ svg { display: block; }
 .sticker-item:hover:enabled { background: var(--surface-sunken); }
 .sticker-item img { display: block; width: 64px; height: 64px; max-width: 100%; object-fit: contain; }
 dialog.settings-dialog { color: var(--text); width: min(480px,calc(100vw - 32px)); max-height: min(820px,calc(var(--app-height,100dvh) - 40px)); margin: auto; padding: 0; border: 1px solid var(--line); border-radius: 24px; background: var(--surface-raised); box-shadow: 0 30px 100px #13221929; overflow-y: auto; overscroll-behavior: contain; }
-dialog::backdrop { background: #0e1b1742; backdrop-filter: blur(3px); }
+dialog::backdrop { background: #101c1838; backdrop-filter: blur(2px); }
 .settings-form { display: flex; flex-direction: column; padding: 28px; }
 .dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .dialog-heading .eyebrow { font-size: 9px; letter-spacing: 1.7px; margin-bottom: 7px; }
 .dialog-heading h2 { margin: 0; font-size: 22px; line-height: 1.4; font-weight: 550; letter-spacing: -.4px; color: var(--text-strong); }
-.dialog-heading .icon-button { margin: -5px -8px 0 0; }
+.dialog-heading .icon-button { width: 44px; height: 44px; flex: none; border-radius: 14px; margin: -5px -8px 0 0; }
 .settings-intro { color: var(--text-soft); font-size: 12px; line-height: 1.8; margin: 0 0 20px; }
-.settings-form label { display: block; color: var(--text-soft); font-size: 11px; margin: 15px 0 7px; }
+.settings-form label { display: block; color: var(--text-soft); font-size: 12px; line-height: 1.6; margin: 16px 0 8px; }
 .settings-form input:not([type="checkbox"]), .settings-form select, .settings-form textarea { width: 100%; color: var(--text-strong); padding: 12px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-panel); font-size: 13px; line-height: 1.5; }
 .settings-form textarea { min-height: 90px; resize: vertical; }
 .settings-form input:focus, .settings-form select:focus, .settings-form textarea:focus { border-color: var(--accent); background: var(--surface-raised); box-shadow: 0 0 0 2px #64876e0a; }
@@ -300,7 +304,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
   .app { display: flex; }
   .chat-main { width: 100%; height: 100%; }
   .mobile-only { display: grid; }
-  .sidebar { position: fixed; inset: 0 auto 0 0; width: min(310px,86vw); transform: translateX(-105%); transition: transform .22s ease; box-shadow: var(--shadow); padding-top: max(26px,env(safe-area-inset-top)); }
+  .sidebar { position: fixed; inset: 0 auto 0 0; width: min(310px,86vw); transform: translateX(-105%); transition: transform var(--motion-enter) var(--motion-ease); box-shadow: var(--shadow); padding-top: max(26px,env(safe-area-inset-top)); }
   .sidebar.open { transform: translateX(0); }
   .sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 29; background: #13231c55; }
   .brand .mobile-only { margin-right: -10px; }
@@ -438,14 +442,36 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .action-editor-target label{display:grid;gap:7px;font-size:12px;color:var(--text-soft)}
 .action-editor-target input,.action-editor-target select{max-width:100%;min-width:0}
 
-/* Short, transform-only feedback; no timeline/layout or media recreation. */
-@keyframes asteria-enter{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
+/* One short motion rhythm. Native dialog close/scope cleanup stays immediate;
+   supporting WebViews retain only the visual exit, never an interactive copy. */
+@keyframes asteria-enter{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes asteria-backdrop{from{opacity:0}to{opacity:1}}
 @media(prefers-reduced-motion:no-preference){
-dialog[open].settings-dialog{animation:asteria-enter .18s ease-out}
-.compose-panel:not([hidden]),[data-compose-pane]:not([hidden]){animation:asteria-enter .16s ease-out}
-.message-enter,.composition-enter{animation:asteria-enter .18s ease-out}
-.touch-choice,.chat-main-navigation button,.composition-control,.contact-card,.primary-button,.secondary-button{transition:transform .12s ease,background-color .12s ease}
-.touch-choice:active,.chat-main-navigation button:active,.composition-control:active,.contact-card:active,.primary-button:active,.secondary-button:active{transform:scale(.98)}
+dialog[open].settings-dialog{animation:asteria-enter var(--motion-enter) var(--motion-ease)}
+dialog[open].settings-dialog::backdrop{animation:asteria-backdrop var(--motion-enter) ease-out}
+.composer-drawer:not([hidden]),[data-compose-pane]:not([hidden]),.more-menu:not([hidden]),.hub-section-detail:not([hidden]){animation:asteria-enter var(--motion-enter) var(--motion-ease)}
+.message-enter,.composition-enter{animation:asteria-enter 180ms var(--motion-ease)}
+.touch-choice,.chat-main-navigation button,.composition-control,.contact-card,.primary-button,.secondary-button,.icon-button,.composer-button,.hub-section-card,.menu-item{
+ transition:transform var(--motion-fast) var(--motion-ease),background-color var(--motion-fast) ease-out,border-color var(--motion-fast) ease-out,color var(--motion-fast) ease-out;
+}
+.composer{transition:border-color var(--motion-fast) ease-out,box-shadow var(--motion-fast) ease-out}
+.touch-choice:active:enabled,.chat-main-navigation button:active:enabled,.composition-control:active:enabled,.contact-card:active:enabled,.primary-button:active:enabled,.secondary-button:active:enabled,.icon-button:active:enabled,.composer-button:active:enabled{transform:scale(.97)}
+@supports (transition-behavior:allow-discrete){
+ dialog.settings-dialog{
+  opacity:0;transform:translateY(8px);pointer-events:none;
+  transition:opacity var(--motion-exit) ease-out,transform var(--motion-exit) var(--motion-ease),display var(--motion-exit) allow-discrete,overlay var(--motion-exit) allow-discrete;
+ }
+ dialog.settings-dialog[open]{opacity:1;transform:none;pointer-events:auto;animation:none;transition-duration:var(--motion-enter)}
+ dialog.settings-dialog::backdrop{
+  opacity:0;pointer-events:none;animation:none;
+  transition:opacity var(--motion-exit) ease-out,display var(--motion-exit) allow-discrete,overlay var(--motion-exit) allow-discrete;
+ }
+ dialog.settings-dialog[open]::backdrop{opacity:1;pointer-events:auto;animation:none;transition-duration:var(--motion-enter)}
+ @starting-style{
+  dialog.settings-dialog[open]{opacity:0;transform:translateY(8px)}
+  dialog.settings-dialog[open]::backdrop{opacity:0}
+ }
+}
 }
 
 #body-state-interaction .secondary-button{background:var(--surface-sunken);color:var(--text-strong);border:1px solid var(--line)}#body-state-interaction .appearance-help{color:var(--text-soft)}
