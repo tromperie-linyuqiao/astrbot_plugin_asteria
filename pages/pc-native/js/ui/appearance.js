@@ -1,4 +1,5 @@
-window.PrivateCompanionAppearance = (() => {
+/** Credited view panel, maintained as an Asteria ES module; see frontend provenance. */
+const panel = (() => {
   const FONT_FAMILIES = new Set([
     "original", "yahei", "dengxian", "source_han", "simsun", "kaiti", "fangsong", "cheng",
   ]);
@@ -23,3 +24,5 @@ window.PrivateCompanionAppearance = (() => {
     applyFontFamily,
   };
 })();
+
+export default panel;

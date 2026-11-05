@@ -1,4 +1,5 @@
-window.PrivateCompanionDailyOutfit = (() => {
+/** Credited view panel, maintained as an Asteria ES module; see frontend provenance. */
+const panel = (() => {
   const PREVIEW_OPEN_CLASS = "daily-outfit-preview-open";
   const MIN_SCALE = 1;
   const MAX_SCALE = 3;
@@ -203,3 +204,5 @@ window.PrivateCompanionDailyOutfit = (() => {
     closeDailyOutfitPreview: closePreview,
   };
 })();
+
+export default panel;

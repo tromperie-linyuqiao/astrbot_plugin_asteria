@@ -11,4 +11,6 @@
 
 aiohttp、Pillow、LunarCalendar、ephem 与 pytz 通过依赖安装，各自许可证独立适用，未将它们的库源码打包进本插件。
 
+历史导入来源：部分记忆服务和管理视图源于 Memory Companion；部分陪伴业务和管理视图源于 Private Companion。这些代码与视图经过 Asteria 接线和模块重构，继承代码不声称全原创，原有来源索引和声明保留；正常运行无需旧插件安装。详见 docs/system/FRONTEND_PROVENANCE.md。
+
 原始代码中的版权和来源声明继续保留。用户自行添加的图片、角色、音乐及其他资料，不自动适用本项目代码许可证，使用者需确认相应权利。

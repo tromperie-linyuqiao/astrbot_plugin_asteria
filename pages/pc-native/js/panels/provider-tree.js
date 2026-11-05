@@ -1,4 +1,5 @@
-window.PrivateCompanionProviderTree = (() => {
+/** Credited view panel, maintained as an Asteria ES module; see frontend provenance. */
+const panel = (() => {
   function providerValuesForRender(context) {
     const { state } = context;
     return {
@@ -644,3 +645,5 @@ window.PrivateCompanionProviderTree = (() => {
     testProvider: (context, key) => testProvider(context, key),
   };
 })();
+
+export default panel;

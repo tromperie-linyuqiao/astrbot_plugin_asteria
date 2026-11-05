@@ -1,4 +1,6 @@
-window.PrivateCompanionQzonePanel = (() => {
+/** Credited view panel, maintained as an Asteria ES module; see frontend provenance. */
+import asteriaOutfit from '../features/daily-outfit.js';
+const panel = (() => {
   const state = {
     initialized: false,
     status: null,
@@ -205,7 +207,7 @@ window.PrivateCompanionQzonePanel = (() => {
 
   function openImagePreview(image) {
     if (!image || !state.context) return false;
-    const preview = window.PrivateCompanionDailyOutfit?.openImagePreview;
+    const preview = asteriaOutfit?.openImagePreview;
     const source = image.dataset.qzonePreviewSrc || image.currentSrc || image.src || image.getAttribute("src") || "";
     const fallbackSrc = image.dataset.qzonePreviewFallbackSrc || image.currentSrc || image.src || image.getAttribute("src") || "";
     if (!preview || !source) return false;
@@ -674,3 +676,5 @@ window.PrivateCompanionQzonePanel = (() => {
 
   return { render };
 })();
+
+export default panel;

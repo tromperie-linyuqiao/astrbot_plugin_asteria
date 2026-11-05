@@ -1991,6 +1991,17 @@ class AsteriaPlugin(Star):
         service = self._integrated_phone()
         if service is not None: await service.flow_wait_for_message(event)
 
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=10001)
+    async def prepare_asteria_daily_source_output(self, event: AstrMessageEvent):
+        from .core.living.chat_daily_context import prepare_daily_source_stream
+        if not self._stopping:
+            prepare_daily_source_stream(event)
+
+    @filter.on_llm_response(priority=10000)
+    async def finalize_asteria_daily_source_output(self, event: AstrMessageEvent, response):
+        from .core.living.chat_daily_context import finish_daily_source_answer
+        await finish_daily_source_answer(self, event, response, retain_for_final=True)
+
     @filter.on_llm_request(priority=7)
     async def inject_texas_chat_session_context(self, event: AstrMessageEvent, req: ProviderRequest):
         from .core.living.chat_sessions import inject_chat_session_context
@@ -2020,6 +2031,9 @@ class AsteriaPlugin(Star):
 
     @filter.on_agent_done()
     async def record_texas_chat_model_response(self, event, run_context, response):
+        from .core.living.chat_daily_context import finish_daily_source_answer, synchronize_daily_source_history
+        await finish_daily_source_answer(self, event, response)
+        synchronize_daily_source_history(event, run_context, response)
         api = getattr(self, '_native_chat_web_api', None)
         if api is not None:
             try:

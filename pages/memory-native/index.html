@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>TLS 原生记忆中心</title>
+  <title>记忆与资料 · 星栖 Asteria</title>
 <script>
     (() => {
       const value = new URLSearchParams(location.search).get('theme');
@@ -13,25 +13,16 @@
   </script>
   <script>document.documentElement.dataset.overviewLayout="standard";</script>
   <link rel="stylesheet" href="./app.css?v=asteria-r163" />
-<style id="asteria-leaf-style">
-body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.6}
-.aw-leaf-header{max-width:1560px;margin:0 auto 22px;padding:16px 18px;border:1px solid var(--line,var(--edge,#475569));border-radius:12px;background:var(--panel,#161b22);color:var(--text,var(--ink,#e6edf3));display:flex;align-items:center;gap:18px;flex-wrap:wrap}
-.aw-leaf-brand{font-weight:650;letter-spacing:.04em;font-size:16px;white-space:nowrap}.aw-leaf-path{flex:1;min-width:180px;font-size:13px;color:var(--muted,#94a3b8)}
-.aw-leaf-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.aw-leaf-tools button,.aw-leaf-tools select{font:inherit;font-size:13px;min-height:38px;border-radius:8px;padding:8px 12px;max-width:260px;width:auto;background:var(--panel,#161b22);color:inherit;border:1px solid var(--line,var(--edge,#475569))}
-.aw-leaf-tools label{display:flex;align-items:center;gap:8px}.aw-leaf-message{flex-basis:100%;margin:0;font-size:13px;color:var(--red,#c65364)}
-body h1{font-size:clamp(21px,2vw,28px);line-height:1.35}body h2{line-height:1.45}body .panel,body .card{border-radius:12px}body input,body textarea,body select{scroll-margin-top:24px}body button:focus-visible,body a:focus-visible{outline:2px solid var(--blue,var(--accent,#7385c9));outline-offset:3px}
-body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto}body pre{overflow-wrap:anywhere;white-space:pre-wrap}body .table-wrap,body .twrap{max-width:100%;overflow:auto}
-@media(max-width:640px){.aw-leaf-header{padding:14px;margin:8px 0 18px;gap:10px}.aw-leaf-path{font-size:12px}.aw-leaf-tools{width:100%}.aw-leaf-tools label{flex:1;min-width:0}.aw-leaf-tools select{min-width:0;width:100%;max-width:100%}.aw-leaf-tools button{flex-shrink:0}body h1{font-size:22px}}
-</style>
+<link rel="stylesheet" href="./workspace/workspace.css?v=asteria-workspace-0757" />
 </head>
 <body>
-<header id="asteria-leaf-header" class="aw-leaf-header" data-area="area-memory"><span class="aw-leaf-brand">✧ 星栖 Asteria</span><span class="aw-leaf-path">记忆中心 / 档案与维护</span><div class="aw-leaf-tools"><label>本页<select aria-label="定位本页分区"><option>定位本页分区</option></select></label><button type="button">返回记忆中心</button></div><p class="aw-leaf-message" role="status"></p></header>
+<header id="asteriaWorkspaceHeader"></header>
 <div class="aw-native-shell"><details id="nativeMemoryNavigation" class="aw-native-navigation" open>
       <summary id="nativeMemoryNavigationTitle">记忆中心</summary>
       <label class="aw-nav-search">查找功能<input id="nativeMemorySearch" type="search" placeholder="例如：检索、群聊、维护" autocomplete="off" /></label>
       <nav aria-label="记忆中心功能"><section class="aw-nav-group"><h2>日常查看</h2><button class="aw-nav-item" data-native-view="overview" type="button"><span>记忆概览</span></button><button class="aw-nav-item" data-native-view="relations" type="button"><span>用户档案与记忆</span></button><button class="aw-nav-item" data-native-view="film" type="button"><span>群聊记忆</span></button><button class="aw-nav-item" data-native-view="review" type="button"><span>角色的个人记忆</span></button></section><section class="aw-nav-group"><h2>检索与关联</h2><button class="aw-nav-item" data-native-view="microscope" type="button"><span>检索与召回</span></button><button class="aw-nav-item" data-native-view="objects" type="button"><span>知识图谱</span></button></section><section class="aw-nav-group"><h2>管理</h2><button class="aw-nav-item" data-native-view="archive" type="button"><span>维护与配置</span></button></section></nav>
       <p class="aw-nav-empty" hidden>没有匹配的功能，请换个关键词。</p>
-      <details class="aw-native-note"><summary>关于这份档案</summary><p>当前页面管理 TLS 原生记忆数据。管理能力沿用已迁入的 Memory Companion，来源声明和迁移兼容保留；收藏、生活资料与长期记忆各有用途。</p></details>
+      <details class="aw-native-note"><summary>关于这份档案</summary><p>当前页面由 Asteria 记忆服务管理。部分记忆功能与视图源于 Memory Companion，来源声明和数据兼容保留；收藏、生活资料与长期记忆各有用途。</p></details>
     </details>
   <main id="app" class="film-app">
     <nav hidden id="overviewLayoutSwitch" class="overview-layout-switch" role="radiogroup" aria-label="界面模式">
@@ -540,12 +531,6 @@ Bot: 12-14 15:10:30
   </main>
   </div>
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script src="./app.js?v=asteria-r155"></script>
-<script id="asteria-leaf-script">
-(()=>{'use strict';const bar=document.getElementById('asteria-leaf-header'),jump=bar.querySelector('select'),back=bar.querySelector('button'),message=bar.querySelector('[role=status]');let headings=[];
-function fill(){headings=[...document.querySelectorAll('h2,h3')].filter(el=>!el.closest('dialog')&&el.getClientRects().length&&el.textContent.trim());jump.replaceChildren(new Option('定位本页分区',''));headings.forEach((el,i)=>jump.add(new Option(el.textContent.trim().slice(0,70),String(i))));}
-jump.addEventListener('focus',fill);jump.addEventListener('pointerdown',fill);jump.addEventListener('change',()=>{if(jump.value==='')return;const el=headings[Number(jump.value)];if(!el)return;el.scrollIntoView({block:'start'});if(!el.hasAttribute('tabindex'))el.tabIndex=-1;el.focus({preventScroll:true});});
-back.addEventListener('click',async()=>{back.disabled=true;message.textContent='';try{const bridge=window.AstrBotPluginPage;if(!bridge)throw Error('请从 AstrBot 后台重新打开此页面。');await bridge.ready();const theme=document.documentElement.dataset.theme||new URLSearchParams(location.search).get('theme')||'dark';let result=await bridge.apiGet('page/nav',{to:'console',theme,format:'json'});if(result?.data)result=result.data;const url=new URL(result.url,location.href);if(url.origin!==location.origin||url.pathname!=='/api/plugin/page/content/astrbot_plugin_asteria/console/'||!url.searchParams.get('asset_token'))throw Error('返回地址未确认，请从后台进入工作台。');url.hash=bar.dataset.area;location.assign(url.href);}catch(error){message.textContent=error.message||'工作台暂时无法打开。';}finally{back.disabled=false;}});fill();})();
-</script>
+  <script type="module" src="./app.js?v=asteria-workspace-0758"></script>
 </body>
 </html>
