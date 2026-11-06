@@ -34,6 +34,18 @@ def content_fingerprint(text):
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
+def replace_request_parts(req, slot, *parts):
+    """Refresh one contributor's parts by object identity on this request."""
+    previous = getattr(req, slot, ())
+    if not previous and not parts:
+        return
+    target = req.extra_user_content_parts
+    if previous:
+        target[:] = [part for part in target if not any(part is old for old in previous)]
+    target.extend(parts)
+    setattr(req, slot, parts)
+
+
 @dataclass(frozen=True)
 class ContextFragment:
     fragment_id: str

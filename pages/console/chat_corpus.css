@@ -17,4 +17,11 @@
 #chat-corpus-mount #console-corpus-list{max-height:960px;overflow:auto;padding-right:4px}
 #chat-corpus-mount #console-corpus-library-form .notice,#chat-corpus-mount #console-corpus-form .notice{overflow-wrap:anywhere}
 #chat-corpus-mount .notice:empty{display:none}#chat-corpus-mount button[hidden]{display:none}
+#chat-corpus-mount .corpus-selection{min-width:0}
+#chat-corpus-mount .corpus-selection textarea{width:100%}
+#chat-corpus-mount .corpus-selection-row{margin:10px 0;min-width:0}
+#chat-corpus-mount .corpus-selection ul{overflow-wrap:anywhere;padding-inline-start:1.35rem}
+#chat-corpus-mount .corpus-selection li{margin:6px 0}
+#chat-corpus-mount .corpus-split{border-top:1px solid var(--line);margin:12px 0;padding-bottom:10px}
+#chat-corpus-mount .corpus-split[hidden],#chat-corpus-mount .corpus-split .corpus-preview:empty{display:none}
 @media(max-width:850px){#chat-corpus-mount .corpus-columns,#chat-corpus-mount .corpus-library-layout{grid-template-columns:1fr}#chat-corpus-mount .corpus-library-list{max-height:300px}#chat-corpus-mount #console-corpus-list{max-height:560px}}

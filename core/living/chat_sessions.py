@@ -13,6 +13,7 @@ import time
 from astrbot.core.agent.message import TextPart
 
 from .chat_expressions import ChatExpressions, ChatExpressionError
+from .context_engine import replace_request_parts
 from .journal import JournalConflict
 
 NAMESPACE = 'tls.chat.session.state'
@@ -24,6 +25,7 @@ MODEL_ROUTE_DEFAULTS = {'model_provider_id': '', 'model_fallback_provider_id': '
 DEFAULTS = {'archived': False, 'mode': 'chat', 'scene': '', 'reply_format': 'auto', **PREFERENCE_DEFAULTS,
             **MODEL_ROUTE_DEFAULTS}
 MODES = {'chat', 'roleplay', 'technical'}
+_REQUEST_PARTS = '_asteria_chat_session_parts'
 
 
 def session_preference_context(state):
@@ -285,6 +287,7 @@ class ChatSessionState:
 
 async def inject_chat_session_context(plugin, event, req):
     """Use only an actual SDK WebChat envelope; never synthesize an event."""
+    replace_request_parts(req, _REQUEST_PARTS)
     if getattr(plugin, '_stopping', False) or event.get_platform_name() != 'webchat':
         return
     raw = getattr(getattr(event, 'message_obj', None), 'raw_message', None)
@@ -308,8 +311,9 @@ async def inject_chat_session_context(plugin, event, req):
         return
     def current():
         return (not getattr(plugin, '_stopping', False) and not getattr(host, '_closed', True)
+                and getattr(getattr(plugin, '_presence', None), 'living_host', None) is host
                 and getattr(host, 'runtime', None) is runtime and getattr(runtime, 'expression_assets', None) is assets
-                and assets.active and not journal._closed)
+                and assets.active and assets.journal is journal and not journal._closed)
     state = await asyncio.to_thread(ChatSessionState(journal, current=current).get, username, session_id)
     if not current() or state['archived']:
         return
@@ -351,7 +355,8 @@ async def inject_chat_session_context(plugin, event, req):
         block += '\n[Texas Chat表达协议，仅规定回复格式，不改变人格与权限]\n' + PROTOCOL
     # Preserve the Persona's system instructions. This is user-maintained
     # conversational context, carried by the SDK's existing typed user parts.
-    req.extra_user_content_parts.append(TextPart(text=block).mark_as_temp())
+    settings_part = TextPart(text=block).mark_as_temp()
+    replace_request_parts(req, _REQUEST_PARTS, settings_part)
     body_context = chat_touch_context(plugin, username, session_id)
     if body_context:
-        req.extra_user_content_parts.append(TextPart(text=body_context).mark_as_temp())
+        replace_request_parts(req, _REQUEST_PARTS, settings_part, TextPart(text=body_context).mark_as_temp())

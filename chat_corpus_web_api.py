@@ -17,7 +17,10 @@ from astrbot.dashboard.services.chat_service import ChatServiceError, build_webc
 from .core.living.chat_corpus import ChatCorpusLibrary
 from .core.living.chat_expressions import ChatExpressions
 from .core.living.chat_sessions import ChatSessionState
+from .core.living.context_engine import replace_request_parts
 from .core.living.journal import JournalConflict
+
+_REQUEST_PARTS = '_asteria_chat_corpus_parts'
 
 
 class NativeChatCorpusWebApi:
@@ -29,9 +32,13 @@ class NativeChatCorpusWebApi:
         from .chat_web_api import PAGE_API_PREFIX
         self.chat.plugin.context.register_web_api(PAGE_API_PREFIX + '/corpus', self.get, ['GET'], 'Asteria owned corpus and explicit preferences')
         self.chat.plugin.context.register_web_api(PAGE_API_PREFIX + '/corpus', self.save, ['POST'], 'Asteria explicit versioned corpus maintenance')
+        self.chat.plugin.context.register_web_api(PAGE_API_PREFIX + '/corpus/preview', self.preview, ['POST'],
+            'Asteria read-only corpus selection for an owned chat')
 
-    async def _respond(self, write):
+    async def _respond(self, operation):
         from .chat_web_api import _RequestError, _session_id
+        write = operation == 'save'
+        preview = operation == 'preview'
         write_completed = False
         def uncertain():
             return error_response('保存已提交，但当前身份或角色已变化，结果需要核对；请保留输入，不要重复保存', status_code=503)
@@ -43,6 +50,12 @@ class NativeChatCorpusWebApi:
                 data = await self.chat._body()
                 if set(data) != {'session_id', 'op', 'id', 'expected_revision', 'request_id', 'record'} or data['op'] not in ('save', 'save_library'):
                     raise _RequestError('请提供完整的语料保存操作')
+            elif preview:
+                if request.query:
+                    raise _RequestError('选材预览只接受请求正文')
+                data = await self.chat._body()
+                if set(data) != {'session_id', 'query'}:
+                    raise _RequestError('请提供当前会话和测试消息')
             else:
                 data = dict(request.query or {})
                 if set(data) != {'session_id'}:
@@ -59,12 +72,22 @@ class NativeChatCorpusWebApi:
                 result = await asyncio.to_thread(writer, scope, sid, identity=data['id'],
                     expected_revision=data['expected_revision'], request_id=data['request_id'], record=data['record'])
                 write_completed = True
+            elif preview:
+                state_store = ChatSessionState(expressions.journal, current=expressions.current)
+                state = await asyncio.to_thread(state_store.get, username, sid)
+                if state['archived']:
+                    raise _RequestError('此会话已归档', 409)
+                result = await asyncio.to_thread(library.preview, scope, sid, data['query'],
+                    scene=state['scene'][:1000])
+                if await asyncio.to_thread(state_store.get, username, sid) != state:
+                    raise _RequestError('会话设置已更新，请重新预览', 409)
+                result.update(account=username, read_only=True)
             else:
                 result = await asyncio.to_thread(library.list, scope, sid)
             await self.chat._recheck_owned_session(username, service, sid)
             latest = await self.chat._configured_persona(service, username, sid)
             if latest != persona:
-                raise _RequestError('角色已变化，请重新读取；已提交的结果需要核对', 409)
+                raise _RequestError('角色已变化，请重新读取当前范围', 409)
             expressions._check()
             response = self.chat._ok(dict(result, session_id=sid, persona_id=scope['character_id'],
                 factual_memory_writes=0, sends=0, provider_calls=0))
@@ -85,13 +108,30 @@ class NativeChatCorpusWebApi:
             if write_completed: return uncertain()
             return error_response(str(exc), status_code=400)
         except (RuntimeError, OSError, sqlite3.Error):
+            if preview:
+                return error_response('暂时无法读取选材结果，请稍后重试', status_code=503)
             return error_response('语料服务暂不可用；请保留输入，写入结果未知时不要重复保存', status_code=503)
 
     async def get(self):
-        return await self._respond(False)
+        return await self._respond('read')
 
     async def save(self):
-        return await self._respond(True)
+        return await self._respond('save')
+
+    async def preview(self):
+        return await self._respond('preview')
+
+
+def _current_utterance(payload, req):
+    # SDK WebChat's original message parts do not include expanded reply text
+    # or background that other request hooks can add to req.prompt.
+    if 'message' not in payload:
+        return getattr(req, 'prompt', '')
+    parts = payload['message']
+    if not isinstance(parts, list):
+        return ''
+    return ''.join(part['text'] if isinstance(part, dict) and part.get('type') == 'plain'
+                   and isinstance(part.get('text'), str) else '\n' for part in parts)
 
 
 async def inject_chat_corpus_context(plugin, event, req):
@@ -100,6 +140,7 @@ async def inject_chat_corpus_context(plugin, event, req):
 The caller handles optional failure without suppressing the ordinary reply.
 This read does not create a Presence lease or write an application/usage receipt.
 """
+    replace_request_parts(req, _REQUEST_PARTS)
     if getattr(plugin, '_stopping', False) or event.get_platform_name() != 'webchat':
         return False
     raw = getattr(getattr(event, 'message_obj', None), 'raw_message', None)
@@ -151,20 +192,23 @@ This read does not create a Presence lease or write an application/usage receipt
     persona_id = await identity()
     if persona_id is None:
         return False
-    state = await asyncio.to_thread(ChatSessionState(journal, current=current).get, username, sid)
+    state_store = ChatSessionState(journal, current=current)
+    state = await asyncio.to_thread(state_store.get, username, sid)
     if state['archived'] or not current():
         return False
     scope = ChatExpressions.preference_scope(username, persona_id)
-    query = getattr(req, 'prompt', '')
+    query = _current_utterance(payload, req)
     if type(query) is not str:
         return False
     packet = await asyncio.to_thread(ChatCorpusLibrary(journal, current=current).context,
         scope, sid, query, scene=state.get('scene', '')[:1000])
-    if not packet['text'] or not current() or await identity() != persona_id:
+    if (not packet['text'] or not current()
+            or await asyncio.to_thread(state_store.get, username, sid) != state
+            or await identity() != persona_id or not current()):
         return False
     # This identifies candidate material supplied, not proven model use or a fact.
     event.set_extra('asteria_corpus_candidates', dict(persona_id=persona_id, session_id=sid,
         items=[dict(id=row['id'], revision=row['revision'], kind=row['kind']) for row in packet['items']],
         actual_use='not_observed'))
-    req.extra_user_content_parts.append(TextPart(text=packet['text']).mark_as_temp())
+    replace_request_parts(req, _REQUEST_PARTS, TextPart(text=packet['text']).mark_as_temp())
     return True
