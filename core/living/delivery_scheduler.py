@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
-import logging
+from astrbot.api import logger
 import time
 
 from . import native_frequency
@@ -18,7 +18,6 @@ from .models import canonical, private_scope
 from .delivery_store import DeliveryConflict
 from .delivery_types import number
 
-_LOGGER = logging.getLogger(__name__)
 
 
 class NativeScheduler:
@@ -208,7 +207,7 @@ class NativeScheduler:
             self.metrics['errors']+=1
             errors=self.metrics['errors']
             if errors & (errors-1)==0:
-                _LOGGER.warning('TLS delivery step failed: failures=%d',errors)
+                logger.warning('TLS delivery step failed: failures=%d',errors)
             # Claim/counters/begin/finish failures all propagate once. Never
             # retry here: durable recovery must resolve uncertain dispatch.
             raise

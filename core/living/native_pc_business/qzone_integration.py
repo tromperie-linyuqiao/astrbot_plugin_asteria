@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from astrbot.api import logger
+from astrbot.core.utils.astrbot_path import get_astrbot_plugin_path
 from astrbot.api.event import AstrMessageEvent
 
 from .helpers import _now_ts, _safe_float, _safe_int, _single_line
@@ -68,7 +69,7 @@ class QzoneMixin(QzoneMediaMixin):
     def _qzone_plugin_dir(self) -> Path:
         candidates = [
             Path(__file__).resolve().parent.parent / "astrbot_plugin_qzone",
-            Path(self.data_dir).parent.parent / "plugins" / "astrbot_plugin_qzone",
+            Path(get_astrbot_plugin_path()) / "astrbot_plugin_qzone",
         ]
         for path in candidates:
             if (path / "main.py").exists():
@@ -2402,7 +2403,7 @@ class QzoneMixin(QzoneMediaMixin):
 
 {relationship_authority_guard}
 
-{self._format_worldview_adaptation_prompt()}
+{await self._format_worldview_with_knowledge()}
 """.strip()
         try:
             draft = await self._llm_call(
@@ -2529,7 +2530,7 @@ class QzoneMixin(QzoneMediaMixin):
 
 {relationship_authority_guard}
 
-{self._format_worldview_adaptation_prompt()}
+{await self._format_worldview_with_knowledge()}
 """.strip()
         try:
             draft = await self._llm_call(
@@ -2859,7 +2860,7 @@ class QzoneMixin(QzoneMediaMixin):
 【近日日记余味】
 {_single_line(diary_context, 500) or "暂无"}
 
-{self._format_worldview_adaptation_prompt()}
+{await self._format_worldview_with_knowledge()}
 
 {relationship_authority_guard}
 
@@ -3153,7 +3154,7 @@ class QzoneMixin(QzoneMediaMixin):
 
 {relationship_authority_guard}
 
-{self._format_worldview_adaptation_prompt()}
+{await self._format_worldview_with_knowledge()}
 """.strip()
             text = await self._llm_call(
                 prompt,
@@ -3315,7 +3316,7 @@ class QzoneMixin(QzoneMediaMixin):
 
 {relationship_authority_guard}
 
-{self._format_worldview_adaptation_prompt()}
+{await self._format_worldview_with_knowledge()}
 """.strip()
         try:
             if reusable_text:

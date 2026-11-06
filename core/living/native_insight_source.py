@@ -1,101 +1,191 @@
-"""Bounded read-only AstrBot statistics source, owned by TLS.
-No fallback database, old plugin calls, plaintext cache or connection survives a query.
-"""
+"""Read-only projections of AstrBot's conversation and dashboard interfaces."""
 from __future__ import annotations
-from pathlib import Path
-import sqlite3
+
+import asyncio
+from collections import Counter
+from datetime import datetime, timezone, timedelta
 import json
-import time
+import math
 
 
 class InsightSourceUnavailable(RuntimeError):
     pass
 
 
-class NativeInsightReadStore:
-    def __init__(self, path, *, clock=time.time):
-        self.path, self.clock = Path(path), clock
+_ITEM_BYTES = 256 * 1024
+_SAMPLE_BYTES = 2 * 1024 * 1024
 
-    def _read(self, operation):
-        if not self.path.is_file():
-            raise InsightSourceUnavailable('database_missing')
-        connection = None
+
+def _stamp(value):
+    try:
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if isinstance(value, datetime):
+            return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).timestamp()
+        if type(value) in (int, float) and math.isfinite(value):
+            return float(value)
+    except (ValueError, OverflowError, OSError):
+        pass
+    return None
+
+
+def _history(row):
+    raw = getattr(row, 'history', None)
+    if not isinstance(raw, str):
+        raise InsightSourceUnavailable('conversation_shape_unavailable')
+    if len(raw) > _ITEM_BYTES:
+        raise InsightSourceUnavailable('conversation_sample_budget_exceeded')
+    return raw
+
+
+def _decode(raw):
+    try:
+        rows = json.loads(raw)
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise InsightSourceUnavailable('conversation_json_unavailable') from exc
+    if not isinstance(rows, list):
+        raise InsightSourceUnavailable('conversation_shape_unavailable')
+    return rows
+
+
+class AstrBotConversationReader:
+    """Use exact UMO APIs. Never open the database or ask AstrBot to create history."""
+
+    def __init__(self, context):
+        self.manager = getattr(context, 'conversation_manager', None)
+
+    async def _call(self, name, *args, **kwargs):
+        method = getattr(self.manager, name, None)
+        if not callable(method):
+            raise InsightSourceUnavailable('conversation_api_unavailable')
         try:
-            connection = sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro', uri=True, timeout=1)
-            connection.row_factory = sqlite3.Row
-            connection.execute('PRAGMA query_only=ON')
-            deadline = time.monotonic() + 3
-            connection.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)
-            return operation(connection)
-        except sqlite3.Error as exc:
-            raise InsightSourceUnavailable('database_schema_or_read_unavailable') from exc
-        finally:
-            if connection is not None:
-                connection.close()
+            return await method(*args, **kwargs)
+        except InsightSourceUnavailable:
+            raise
+        except Exception as exc:
+            raise InsightSourceUnavailable('conversation_api_read_failed') from exc
 
     @staticmethod
-    def _columns(db, table):
-        if table not in {'provider_stats', 'conversations'}:
-            raise ValueError('fixed insight table required')
-        return {row['name'] for row in db.execute('PRAGMA table_info(' + table + ')')}
+    def _session(value):
+        if (not isinstance(value, str) or not 0 < len(value) <= 1024
+                or len(value.split(':', 2)) != 3 or any(ord(ch) < 32 for ch in value)):
+            raise ValueError('exact conversation identity required')
+        return value
 
-    def usage(self, days, *, session_id=None):
-        def read(db):
-            columns = self._columns(db, 'provider_stats')
-            if not {'created_at', 'provider_id'} <= columns:
-                raise InsightSourceUnavailable('provider_stats_schema_unavailable')
-            if session_id is not None and 'umo' not in columns:
-                raise InsightSourceUnavailable('scoped_usage_not_supported')
-            model = "COALESCE(NULLIF(provider_model,''),provider_id)" if 'provider_model' in columns else 'provider_id'
-            tokens = '+'.join('COALESCE(' + name + ',0)' for name in
-                             ('token_input_other', 'token_input_cached', 'token_output') if name in columns)
-            if not tokens:
-                raise InsightSourceUnavailable('token_statistics_unavailable')
-            since = self.clock() - days * 86400
-            where, args = "julianday(created_at)>=julianday(?,'unixepoch')", [since]
-            if session_id is not None:
-                where += ' AND umo=?'; args.append(session_id)
-            ttft = 'AVG(time_to_first_token)' if 'time_to_first_token' in columns else 'NULL'
-            rows = [dict(row) for row in db.execute('SELECT substr(' + model + ',1,120) model,COUNT(*) calls,'
-                'SUM(' + tokens + ') tokens,' + ttft + ' avg_ttft FROM provider_stats WHERE ' + where +
-                ' GROUP BY ' + model + ' ORDER BY calls DESC LIMIT 31', args)]
-            daily = [dict(row) for row in db.execute("SELECT date(created_at,'+8 hours') day,COUNT(*) calls,SUM(" +
-                tokens + ') tokens FROM provider_stats WHERE ' + where + ' GROUP BY day ORDER BY day LIMIT 91', args)]
-            hourly = [dict(row) for row in db.execute("SELECT CAST(strftime('%H',created_at,'+8 hours') AS INT) hour,"
-                'COUNT(*) calls FROM provider_stats WHERE ' + where + ' GROUP BY hour ORDER BY calls DESC LIMIT 5', args)]
-            totals = dict(db.execute('SELECT COUNT(*) calls,COALESCE(SUM(' + tokens + '),0) tokens FROM provider_stats WHERE ' + where, args).fetchone())
-            return dict(state='available' if totals['calls'] else 'empty', by_model=rows[:30], daily=daily,
-                hourly=hourly, totals=totals, models_truncated=len(rows)>30, days=days,
-                coverage='current_private_session' if session_id is not None else 'administrator_server_aggregate',
-                monetary_cost='not_available_without_pricing', time_zone='UTC+08:00', atomic_across_queries=False)
-        return self._read(read)
+    async def _get(self, session_id, cid):
+        if not isinstance(cid, str) or not cid:
+            return None
+        row = await self._call('get_conversation', session_id, cid, create_if_not_exists=False)
+        # Some AstrBot versions look up the CID before checking the UMO.
+        if row is not None and (getattr(row, 'user_id', None) != session_id or getattr(row, 'cid', None) != cid):
+            raise InsightSourceUnavailable('conversation_identity_mismatch')
+        return row
 
-    def conversations(self, *, since, session_id=None, limit=60):
-        if type(limit) is not int or not 1 <= limit <= 60:
+    async def current_history(self, session_id):
+        session_id = self._session(session_id)
+        row = await self._get(session_id, await self._call('get_curr_conversation_id', session_id))
+        if row is None:
+            return []
+        return await asyncio.to_thread(self._bounded_decode, _history(row))
+
+    @staticmethod
+    def _bounded_decode(raw):
+        if len(raw.encode('utf-8')) > _ITEM_BYTES:
+            raise InsightSourceUnavailable('conversation_sample_budget_exceeded')
+        return _decode(raw)
+
+    async def conversations(self, *, since, session_id, limit=60):
+        if type(limit) is not int or not 1 <= limit <= 60 or (minimum := _stamp(since)) is None:
             raise ValueError('bounded conversation sample required')
-        def read(db):
-            columns = self._columns(db, 'conversations')
-            if not {'user_id', 'content', 'updated_at'} <= columns:
-                raise InsightSourceUnavailable('conversation_schema_unavailable')
-            where, args = 'julianday(updated_at)>=julianday(?)', [since]
-            if session_id is not None:
-                where += ' AND user_id=?'; args.append(session_id)
-            # Bound the cumulative returned text before Python materializes it.
-            sql = '''WITH chosen AS (
-                SELECT content,updated_at,length(CAST(content AS BLOB)) bytes,
-                    ROW_NUMBER() OVER(ORDER BY updated_at DESC,rowid DESC) pos
-                FROM conversations WHERE ''' + where + ''' ORDER BY updated_at DESC,rowid DESC LIMIT ?),
-                bounded AS (SELECT *,SUM(COALESCE(bytes,0)) OVER(ORDER BY pos) budget FROM chosen)
-                SELECT CASE WHEN bytes<=262144 AND budget<=2097152 THEN content ELSE NULL END content,
-                    updated_at,CASE WHEN bytes>262144 OR budget>2097152 THEN 1 ELSE 0 END oversize
-                FROM bounded ORDER BY pos'''
-            rows = [dict(row) for row in db.execute(sql, [*args, limit])]
-            if any(row['oversize'] for row in rows):
+        session_id = self._session(session_id)
+        rows = await self._call('get_conversations', session_id)
+        if not isinstance(rows, (tuple, list)):
+            raise InsightSourceUnavailable('conversation_shape_unavailable')
+        if any(getattr(row, 'user_id', None) != session_id for row in rows):
+            raise InsightSourceUnavailable('conversation_identity_mismatch')
+        return await asyncio.to_thread(self._project, rows, minimum, limit)
+
+    async def calibration_sample(self, *, since, limit, authorized):
+        """Page metadata first; fetch the content only for current allowed private scopes."""
+        if type(limit) is not int or not 1 <= limit <= 30 or (minimum := _stamp(since)) is None:
+            raise ValueError('bounded conversation sample required')
+        rows, _ = await self._call('get_filtered_conversations', page=1, page_size=limit,
+                                   message_types=['FriendMessage'], include_history=False)
+        chosen = []
+        for row in rows[:limit]:
+            umo = getattr(row, 'user_id', None)
+            stamp = _stamp(getattr(row, 'updated_at', None))
+            if (stamp is None or stamp < minimum or not isinstance(umo, str)
+                    or ':FriendMessage:' not in umo or authorized(umo) is not True):
+                continue
+            self._session(umo)
+            result = await self._get(umo, getattr(row, 'cid', None))
+            if result is not None and authorized(umo) is True:
+                chosen.append(result)
+        return await asyncio.to_thread(self._project, chosen, minimum, limit)
+
+    @staticmethod
+    def _project(rows, minimum, limit):
+        eligible = [(stamp, row) for row in rows
+                    if (stamp := _stamp(getattr(row, 'updated_at', None))) is not None and stamp >= minimum]
+        eligible.sort(key=lambda item: item[0], reverse=True)
+        result, total = [], 0
+        for stamp, row in eligible[:limit]:
+            raw = _history(row)
+            size = len(raw.encode('utf-8'))
+            total += size
+            if size > _ITEM_BYTES or total > _SAMPLE_BYTES:
                 raise InsightSourceUnavailable('conversation_sample_budget_exceeded')
-            for row in rows:
-                if row['content'] is None:continue
-                try:messages=json.loads(row['content'])
-                except (ValueError,TypeError):raise InsightSourceUnavailable('conversation_json_unavailable')
-                if not isinstance(messages,list):raise InsightSourceUnavailable('conversation_shape_unavailable')
-            return rows
-        return self._read(read)
+            _decode(raw)
+            result.append(dict(content=raw, updated_at=stamp))
+        return result
+
+
+class AstrBotUsageReader:
+    """Project the host's statistics API; never infer missing per-session fields."""
+
+    def __init__(self, context):
+        self.context = context
+
+    async def _stats(self, days):
+        # This is the same supported service the AstrBot dashboard uses. Older
+        # AstrBot builds may not expose it; return unavailable rather than SQL.
+        try:
+            from astrbot.core import db_helper
+            from astrbot.dashboard.services.stat_service import StatService
+            service = StatService(db_helper, None, self.context.get_config())
+            result = await service.get_provider_token_stats(days)
+        except Exception as exc:
+            raise InsightSourceUnavailable('dashboard_usage_api_unavailable') from exc
+        if not isinstance(result, dict) or result.get('days') != days:
+            raise InsightSourceUnavailable('dashboard_usage_shape_unavailable')
+        return result
+
+    async def usage(self, days, *, session_id=None):
+        effective = 7 if days >= 7 else 3 if days >= 3 else 1
+        value = await self._stats(effective)
+        scoped = session_id is not None
+        common = dict(requested_days=days, days=effective, by_model=[], daily=[], hourly=[],
+                      coverage='current_private_session' if scoped else 'administrator_server_aggregate',
+                      source='astrbot_dashboard_statistics', monetary_cost='not_available_without_pricing')
+        if scoped:
+            rows = value.get('range_by_umo')
+            if not isinstance(rows, list):
+                raise InsightSourceUnavailable('scoped_usage_not_supported')
+            tokens = sum(int(row.get('tokens') or 0) for row in rows if row.get('umo') == session_id)
+            return dict(common, state='available' if tokens else 'empty', totals=dict(tokens=tokens, calls=None))
+        if not {'range_total_calls', 'range_total_tokens', 'range_by_provider', 'trend'} <= set(value):
+            raise InsightSourceUnavailable('dashboard_usage_shape_unavailable')
+        provider = value['range_by_provider']
+        common['by_model'] = [dict(model=str(row['provider_id'])[:120], tokens=int(row['tokens']),
+                                   calls=None, avg_ttft=None) for row in provider[:30]]
+        per_day = Counter()
+        zone = timezone(timedelta(hours=8))
+        for millis, tokens in value['trend'].get('total_series', ()):
+            per_day[datetime.fromtimestamp(millis / 1000, zone).date().isoformat()] += int(tokens)
+        common['daily'] = [dict(day=day, tokens=tokens, calls=None) for day, tokens in sorted(per_day.items())]
+        calls = int(value['range_total_calls'])
+        return dict(common, state='available' if calls else 'empty',
+                    totals=dict(tokens=int(value['range_total_tokens']), calls=calls),
+                    avg_ttft_ms=value.get('range_avg_ttft_ms'), models_truncated=len(provider) > 30,
+                    time_zone='UTC+08:00')

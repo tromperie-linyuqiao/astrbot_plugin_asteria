@@ -4945,7 +4945,9 @@ class DailyStateMixin:
                 has_holiday_signal = True
             if any(token in joined for token in override_tokens):
                 has_override_signal = True
-        schedule_prompt = self._get_schedule_planning_prompt()
+        schedule_prompt = "\n".join(str(value or "") for value in (
+            self._get_default_persona_prompt(), getattr(self, "schedule_persona_prompt", ""),
+            getattr(self, "schedule_worldview_prompt", "")))
         if any(token in schedule_prompt for token in override_tokens):
             has_override_signal = True
         return {
@@ -6077,11 +6079,11 @@ class DailyStateMixin:
         await self._maybe_settle_skill_growth(force=True)
         return await generate_daily_plan(self)
 
-    def _get_schedule_planning_prompt(self) -> str:
-        return get_schedule_planning_prompt(self)
+    async def _get_schedule_planning_prompt(self) -> str:
+        return await get_schedule_planning_prompt(self)
 
-    def _build_daily_plan_prompt(self, now: str, memory_companion_context: str = "") -> str:
-        return build_daily_plan_prompt(self, now, memory_companion_context=memory_companion_context)
+    async def _build_daily_plan_prompt(self, now: str, memory_companion_context: str = "") -> str:
+        return await build_daily_plan_prompt(self, now, memory_companion_context=memory_companion_context)
 
     async def _ensure_yesterday_conversation_summary(self, force: bool = False) -> dict[str, Any]:
         today = _today_key()
@@ -6420,14 +6422,14 @@ class DailyStateMixin:
             )
         return result or "只作轻微背景承接,不要强行改写今日主线。"
 
-    def _build_detail_enhancement_prompt(
+    async def _build_detail_enhancement_prompt(
         self,
         segment: dict[str, Any],
         plan: dict[str, Any],
         state: dict[str, Any],
         memory_companion_context: str = "",
     ) -> str:
-        return build_detail_enhancement_prompt(self, segment, plan, state, memory_companion_context=memory_companion_context)
+        return await build_detail_enhancement_prompt(self, segment, plan, state, memory_companion_context=memory_companion_context)
 
     @staticmethod
     def _persona_prompt_cache_scope(umo: str = "", specific_id: str = "") -> str:
@@ -12745,15 +12747,10 @@ class DailyStateMixin:
                     except Exception as _intimacy_err:
                         logger.warning("[PrivateCompanion][intimacy] 蒸馏任务异常: %s", _intimacy_err)
                     try:
-                        await self._maybe_run_history_hygiene(user)
-                    except Exception as _surgery_err:
-                        logger.warning("[PrivateCompanion][surgery] 健康检查异常: %s", _surgery_err)
-                    try:
                         await self._run_life_enhancer(user)
                     except Exception as _enhancer_err:
                         logger.warning("[PrivateCompanion][enhancer] 生活增强任务异常: %s", _enhancer_err)
-                    # 钩子改动的用户状态（梦话夜标记/来访计数/健康检查窗口）需要落盘，
-                    # 否则重启后重复触发（健康检查会重复做LLM手术）
+                    # 梦话和来访等本插件业务状态沿原写入链路保存。
                     if getattr(self, "_life_hooks_dirty", False):
                         self._life_hooks_dirty = False
                         async with self._data_lock:

@@ -33,6 +33,7 @@ from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 from xml.etree import ElementTree as ET
 
 from astrbot.api import AstrBotConfig, logger
+from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path, get_astrbot_plugin_path
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 try:
     from astrbot.api.message_components import At, Image, Plain, Record, Reply
@@ -893,12 +894,12 @@ class NewsExplorationMixin:
         for path in candidates:
             if self._is_bilibili_ai_bot_dir(path):
                 return path
-        return Path(self.data_dir).parent.parent / "plugins" / BILIBILI_AI_BOT_PLUGIN_NAME
+        return Path(get_astrbot_plugin_path()) / BILIBILI_AI_BOT_PLUGIN_NAME
 
     def _bilibili_plugin_roots(self) -> list[Path]:
         return [
             Path(__file__).resolve().parent.parent,
-            Path(self.data_dir).parent.parent / "plugins",
+            Path(get_astrbot_plugin_path()),
         ]
 
     def _is_bilibili_ai_bot_dir(self, path: Path) -> bool:
@@ -952,7 +953,7 @@ class NewsExplorationMixin:
 
     def _bilibili_ai_bot_data_dirs(self) -> list[Path]:
         candidates: list[Path] = []
-        plugin_data_root = Path(self.data_dir).parent.parent / "plugin_data"
+        plugin_data_root = Path(get_astrbot_plugin_data_path())
         for plugin_name in BILIBILI_AI_BOT_LEGACY_DATA_NAMES:
             candidates.append(plugin_data_root / plugin_name)
         deduped: list[Path] = []

@@ -45,7 +45,7 @@ async def generate_detail_enhancement(
             state=state,
             max_chars=1100,
         )
-    prompt = plugin._build_detail_enhancement_prompt(
+    prompt = await plugin._build_detail_enhancement_prompt(
         segment,
         plan,
         state,
@@ -612,7 +612,7 @@ async def generate_daily_plan(plugin) -> dict[str, Any]:
     memory_companion_context_getter = getattr(plugin, "_memory_companion_compose_schedule_context", None)
     if callable(memory_companion_context_getter):
         memory_companion_context = await memory_companion_context_getter(kind="daily_plan", max_chars=1300)
-    prompt = plugin._build_daily_plan_prompt(now, memory_companion_context=memory_companion_context)
+    prompt = await plugin._build_daily_plan_prompt(now, memory_companion_context=memory_companion_context)
     plan_provider = plugin._task_provider(
         getattr(plugin, "daily_plan_provider_id", ""),
         getattr(plugin, "mai_style_provider_id", ""),
@@ -670,7 +670,7 @@ async def generate_daily_plan(plugin) -> dict[str, Any]:
     return plan
 
 
-def _build_schedule_reference_sections(
+async def _build_schedule_reference_sections(
     plugin,
     *,
     knowledge_max_chars: int = 3600,
@@ -686,7 +686,7 @@ def _build_schedule_reference_sections(
         identity_parts.append("【日程专用世界观/生活背景】\n" + worldview)
     knowledge_formatter = getattr(plugin, "_format_roleplay_knowledge_context", None)
     if callable(knowledge_formatter):
-        knowledge_context = knowledge_formatter(
+        knowledge_context = await knowledge_formatter(
             purpose="schedule",
             max_chars=max(800, int(knowledge_max_chars or 3600)),
             max_chunks=max(4, int(knowledge_max_chunks or 20)),
@@ -745,8 +745,8 @@ def _relationship_authority_guard(plugin) -> str:
     )
 
 
-def get_schedule_planning_prompt(plugin) -> str:
-    identity_context, behavior_context = _build_schedule_reference_sections(plugin)
+async def get_schedule_planning_prompt(plugin) -> str:
+    identity_context, behavior_context = await _build_schedule_reference_sections(plugin)
     return "\n\n".join(part for part in (identity_context, behavior_context) if part)
 
 
@@ -794,9 +794,9 @@ def _build_maslow_schedule_influence_prompt(plugin) -> str:
     )
 
 
-def build_daily_plan_prompt(plugin, now: str, memory_companion_context: str = "") -> str:
+async def build_daily_plan_prompt(plugin, now: str, memory_companion_context: str = "") -> str:
     custom = plugin.daily_plan_prompt
-    identity_context, planning_style_context = _build_schedule_reference_sections(plugin)
+    identity_context, planning_style_context = await _build_schedule_reference_sections(plugin)
     schedule_prompt = "\n\n".join(part for part in (identity_context, planning_style_context) if part)
     can_do_text = _sanitize_relationship_generation_source(
         plugin,
@@ -1018,7 +1018,7 @@ Bot 自身连续记忆：
 """.strip()
 
 
-def build_detail_enhancement_prompt(
+async def build_detail_enhancement_prompt(
     plugin,
     segment: dict[str, Any],
     plan: dict[str, Any],
@@ -1031,7 +1031,7 @@ def build_detail_enhancement_prompt(
     start_text = plugin._minutes_to_hhmm(_safe_int(segment.get("start"), 0))
     end_text = plugin._minutes_to_hhmm(_safe_int(segment.get("end"), 0))
     target_event_count = detail_target_event_count(plugin, segment)
-    identity_context, planning_style_context = _build_schedule_reference_sections(
+    identity_context, planning_style_context = await _build_schedule_reference_sections(
         plugin,
         knowledge_max_chars=2400,
         knowledge_max_chunks=12,

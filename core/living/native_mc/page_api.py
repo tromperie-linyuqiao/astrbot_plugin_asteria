@@ -5,7 +5,7 @@ import base64
 import json
 import hashlib
 import inspect
-import logging
+from astrbot.api import logger
 import mimetypes
 import re
 import sys
@@ -32,7 +32,6 @@ from .models import SessionContext, clean_text
 PLUGIN_NAME = "astrbot_plugin_memory_companion"
 PAGE_API_PREFIXES = ("/astrbot_plugin_virtual_body/page/native-memory",)
 
-logger = logging.getLogger("MemoryCompanion.PageAPI")
 
 THEME_NAME_TO_KEY = {
     "黄白游": "huangbaiyou",

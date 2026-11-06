@@ -7,9 +7,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
+from ...async_http import HttpStatusError, HttpTransportError, read_json
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 import aiofiles
 import aiofiles.os as aio_os
@@ -208,38 +207,21 @@ class NotificationCenter:
         if not url:
             return []
 
-        def _request() -> list[dict[str, Any]]:
-            # 某些站点会对“过于裸”的默认 Python 请求做拦截，因此这里补齐常见请求头，
-            # 让通知拉取行为更接近正常浏览器 / 前端 fetch 请求，降低被 403 拒绝的概率。
-            request = Request(
-                url,
-                method="GET",
-                headers={
-                    "Accept": "application/json, text/plain, */*",
-                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                    "Cache-Control": "no-cache",
-                    "Pragma": "no-cache",
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/133.0.0.0 Safari/537.36"
-                    ),
-                },
-            )
-            with urlopen(request, timeout=10) as response:
-                body = response.read().decode("utf-8")
-            payload = json.loads(body)
-            # 规范要求返回体必须是数组；若格式变化，直接抛错给上层处理。
-            if not isinstance(payload, list):
-                raise ValueError("通知接口返回体不是数组")
-            return payload
-
         try:
-            raw_items = await asyncio.to_thread(_request)
-        except HTTPError as e:
-            raise RuntimeError(f"通知接口请求失败，HTTP {e.code}") from e
-        except URLError as e:
-            raise RuntimeError(f"通知接口连接失败: {e.reason}") from e
+            raw_items = await read_json("GET", url, timeout=10, maximum=1024 * 1024, headers={
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                               "AppleWebKit/537.36 Chrome/133.0.0.0 Safari/537.36"),
+            })
+            if not isinstance(raw_items, list):
+                raise ValueError("通知接口返回体不是数组")
+        except HttpStatusError as e:
+            raise RuntimeError(f"通知接口请求失败，HTTP {e.status}") from e
+        except HttpTransportError as e:
+            raise RuntimeError("通知接口连接失败") from e
         except TimeoutError as e:
             raise RuntimeError("通知接口请求超时") from e
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import hashlib
+import re
 import time
 
 from astrbot.core.agent.message import TextPart
@@ -98,12 +99,15 @@ def _touch_session(username, session_id):
     return 'webchat-' + hashlib.sha256(json.dumps([username, session_id], ensure_ascii=False).encode()).hexdigest()
 
 
+_PAUSE_CONTACT = re.compile(r'(?:先停一下|我们先停一下|暂停接触)[。！!]?')
+
+
 def apply_chat_touch(plugin, username, session_id, parts):
     """One explicit submit, through the original TLS parser/advance/store."""
     from .. import events, interaction
     from .chat_expressions import SELF_ACTIONS
-    scene = {}
-    for part in parts:
+    scene, retreat = {}, set()
+    for index, part in enumerate(parts):
         if (part.get('type') != 'action' or part.get('source') != 'user_self_action'
                 or part.get('actor') != 'user' or part.get('target') != 'self'):
             continue
@@ -117,6 +121,8 @@ def apply_chat_touch(plugin, username, session_id, parts):
             if field == 'position' and template['id'] == 'sit_beside':
                 scene['posture'] = {'template': 'sit', 'target': 'beside_character'}
             scene[field] = {'template': template['id'], 'target': part['target_part']}
+            if template['id'] == 'step_back':
+                retreat.add(index)
     def character_input(part):
         return part.get('actor', 'user') == 'user' and part.get('target', 'character') == 'character'
     selected = [part for part in parts if character_input(part) and part.get('type') == 'action' and part.get('source') == 'user_action']
@@ -142,14 +148,35 @@ def apply_chat_touch(plugin, username, session_id, parts):
                                    for part in profile.get('parts', [])])
     # Direct speech may end contact; quotes/references cannot. It never creates
     # new physical events here: those still require an explicit action selection.
-    stopping_speech = [part for part in speech if events.extract_stops(part.get('text') or '', profile)]
-    selected = [part for part in parts if part in selected or part in stopping_speech]
-    if not selected and not scene:
+    speech_stops = {}
+    pause = set()
+    for index, part in enumerate(parts):
+        if part not in speech:
+            continue
+        line = (part.get('text') or '').strip()
+        if stopped := events.extract_stops(line, profile):
+            speech_stops[index] = stopped
+        elif _PAUSE_CONTACT.fullmatch(line):
+            pause.add(index)
+    if not selected and not scene and not speech_stops and not pause:
         return None
+    session = _touch_session(username, session_id)
+    load = getattr(plugin._store, 'load', None)
+    active = {}
+    if (retreat or pause) and callable(load):
+        previous = load(catalog['character'], session)
+        active = dict.fromkeys(item['part'] for item in interaction.snapshot(previous, profile)['contacts'])
     evs, action_results, stops = [], [], []
-    for part in selected:
-        if part in stopping_speech:
-            parsed = []
+    for index, part in enumerate(parts):
+        parsed, stopped = [], []
+        if index in retreat or index in pause:
+            stopped = list(active)
+            if not stopped:
+                continue
+        elif index in speech_stops:
+            stopped = speech_stops[index]
+        elif part not in selected:
+            continue
         elif part.get('native_touch'):
             value = validate_touch(catalog, part['native_touch'])
             target = next(row for row in catalog['parts'] if row['id'] == value['part'])
@@ -168,11 +195,14 @@ def apply_chat_touch(plugin, username, session_id, parts):
             if isinstance(role_name, str) and role_name:
                 description = description.replace(role_name + '的', '')
             parsed = events.extract_events(description, profile)
-        stopped = events.extract_stops(part.get('text') if part in stopping_speech else part.get('description') or '', profile) if not part.get('native_touch') else []
+            stopped = events.extract_stops(part.get('description') or '', profile)
         # Apply final contact state in message order. The original direct events
         # remain accountable even when a later fragment ends their contact.
         stops = [pid for pid in stops if pid not in {event['part'] for event in parsed}]
         stops.extend(pid for pid in stopped if pid not in stops)
+        active.update(dict.fromkeys(event['part'] for event in parsed if event.get('s', 0) > 0))
+        for pid in stopped:
+            active.pop(pid, None)
         evs.extend(parsed)
         action_results.append({'fragment_id': part.get('fragment_id'), 'action_id': part.get('action_id'),
             'state': 'native_touch_applied' if parsed else 'contact_ended' if stopped else 'roleplay_input', 'applied': len(parsed),
@@ -180,20 +210,21 @@ def apply_chat_touch(plugin, username, session_id, parts):
             'parts': list(dict.fromkeys(event['part'] for event in parsed)),
             'verb': part['native_touch']['verb'] if part.get('native_touch') else None})
     if not evs and not stops and not scene:
+        if not action_results:
+            return None
         return {'state': 'roleplay_input', 'applied': 0, 'scope': 'owned_webchat', 'source': 'user_action',
                 'results': action_results}
     now = time.time()
     for event in evs:
         event['t'] = now
-    result = plugin._advance_session(catalog['character'], _touch_session(username, session_id), evs, now,
+    result = plugin._advance_session(catalog['character'], session, evs, now,
                                      webchat_interaction=dict(scene, stops=stops))
     if result is None:
         raise ChatExpressionError('TLS身体服务正在更新，互动未确认')
     # _advance_session returns only after the original BodyStore save. Read its
     # timestamp rather than inventing a state revision or claiming every event
     # necessarily increased a value (cooldowns/phase rules may suppress it).
-    load = getattr(plugin._store, 'load', None)
-    stored = load(catalog['character'], _touch_session(username, session_id)) if callable(load) else None
+    stored = load(catalog['character'], session) if callable(load) else None
     return {'state': 'native_touch_applied' if evs else 'contact_ended' if stops else 'roleplay_input',
             'character': catalog['character'], 'applied': len(evs), 'stopped_parts': stops,
             'scope': 'owned_webchat', 'source': 'user_action', 'applied_at': now,

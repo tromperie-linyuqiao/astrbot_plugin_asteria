@@ -54,7 +54,7 @@ class NativeBusinessDelivery:
             data = reply.body
         else:
             path = Path(raw).resolve()
-            roots = (media.resolve(),(self.integrations.data_dir.parent/'astrbot_plugin_private_companion').resolve())
+            roots = self._media_roots(media)
             if (not any(path.is_relative_to(root) for root in roots) or not path.is_file()
                     or path.is_symlink() or path.stat().st_size > 20*1024**2):
                 raise ValueError('business image must belong to the existing media roots')
@@ -79,7 +79,7 @@ class NativeBusinessDelivery:
         if raw.startswith('file://'):raw=unquote(raw[7:])
         path=Path(raw).resolve()
         media=Path(host.runtime.native_services.path)/'media'
-        roots=(media.resolve(),(self.integrations.data_dir.parent/'astrbot_plugin_private_companion').resolve())
+        roots=self._media_roots(media)
         if (not any(path.is_relative_to(root) for root in roots) or path.is_symlink()
                 or not path.is_file() or not 0 < path.stat().st_size <= 20*1024**2):
             raise ValueError('business audio must belong to the existing media roots')
@@ -96,6 +96,11 @@ class NativeBusinessDelivery:
         else:
             with destination.open('xb') as stream:stream.write(data)
         return str(destination)
+
+    def _media_roots(self, media):
+        service = getattr(getattr(self.integrations, 'pc_full', None), 'service', None)
+        root = getattr(service, 'data_dir', None)
+        return (media.resolve(), Path(root).resolve()) if root else (media.resolve(),)
 
     async def platform_action(self, scope, action, payload):
         """One scoped private poke, recorded before the existing SDK action."""

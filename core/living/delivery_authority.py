@@ -14,7 +14,7 @@ import asyncio
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
-import logging
+from astrbot.api import logger
 import math
 import secrets
 import socket
@@ -29,7 +29,6 @@ MAX_REQUEST = 65536
 MAX_RESPONSE = 262144
 WORKER_OPERATIONS = frozenset({"get", "claim", "begin", "finish", "defer", "counters", "health"})
 _METRIC_OPERATIONS = WORKER_OPERATIONS | frozenset({"renew", "permit"})
-_LOGGER = logging.getLogger(__name__)
 
 
 class AuthorityUnavailable(RuntimeError):
@@ -268,7 +267,7 @@ class AuthorityClient:
         # Bound repeated failure logging while retaining every counter. First,
         # second, fourth, eighth... failures remain visible without log storms.
         if outcome not in {None, "succeeded", "cancelled"} and failures & (failures - 1) == 0:
-            _LOGGER.warning("TLS authority RPC failed: operation=%s outcome=%s failures=%d",
+            logger.warning("TLS authority RPC failed: operation=%s outcome=%s failures=%d",
                             key, outcome, failures)
 
     def _call(self, operation, *args, **kwargs):

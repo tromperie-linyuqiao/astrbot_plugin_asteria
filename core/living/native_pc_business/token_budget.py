@@ -975,10 +975,9 @@ class TokenBudgetMixin:
                 if not attempt_provider:
                     # 旧版硬编码回退deepseek-v4-pro（可能未配置且计费更高）；改为配置默认→插件主provider，都无则跳过
                     try:
-                        import json
-                        with open("/AstrBot/data/cmd_config.json") as _cmdf:
-                            attempt_provider = str(json.load(_cmdf).get("default_provider_id") or "")
-                    except Exception:
+                        settings = self.context.get_config().get("provider_settings") or {}
+                        attempt_provider = str(settings.get("default_provider_id") or "")
+                    except (AttributeError, TypeError, ValueError):
                         attempt_provider = ""
                     attempt_provider = attempt_provider or str(getattr(self, "llm_provider_id", "") or "")
                     if not attempt_provider:

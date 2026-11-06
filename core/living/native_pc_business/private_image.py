@@ -11,13 +11,13 @@ import os
 import re
 import shutil
 import time
-import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlunparse
 
 from astrbot.api import logger
+from ..async_http import read_http
 from astrbot.api.event import AstrMessageEvent
 try:
     from astrbot.api.message_components import Image, Plain
@@ -249,57 +249,33 @@ class PrivateImageMixin:
         if not re.match(r"^https?://", text, flags=re.I):
             return ""
 
-        def download() -> str:
-            try:
-                request = urllib.request.Request(
-                    text,
-                    headers={
-                        "User-Agent": "Mozilla/5.0 AstrBot PrivateCompanion/5.0.0",
-                        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-                    },
-                )
-                with urllib.request.urlopen(request, timeout=15) as response:
-                    content_type = str(response.headers.get("Content-Type") or "").lower()
-                    length = _safe_int(response.headers.get("Content-Length"), 0, 0)
-                    max_bytes = 12 * 1024 * 1024
-                    if length and length > max_bytes:
-                        logger.info("[PrivateCompanion] 私聊远程图片过大,跳过下载: size=%s url=%s", length, _single_line(text, 120))
-                        return ""
-                    chunks: list[bytes] = []
-                    total = 0
-                    while True:
-                        chunk = response.read(1024 * 256)
-                        if not chunk:
-                            break
-                        total += len(chunk)
-                        if total > max_bytes:
-                            logger.info("[PrivateCompanion] 私聊远程图片下载超过限制,已中止: url=%s", _single_line(text, 120))
-                            return ""
-                        chunks.append(chunk)
-                data = b"".join(chunks)
-                if not data:
-                    return ""
-                prefix = data[:16]
-                suffix = ".jpg"
-                if prefix.startswith(b"\x89PNG\r\n\x1a\n") or "png" in content_type:
-                    suffix = ".png"
-                elif (prefix.startswith(b"RIFF") and b"WEBP" in data[:32]) or "webp" in content_type:
-                    suffix = ".webp"
-                elif prefix.startswith(b"GIF8") or "gif" in content_type:
-                    suffix = ".gif"
-                elif prefix.startswith(b"\xff\xd8\xff") or "jpeg" in content_type or "jpg" in content_type:
-                    suffix = ".jpg"
-                elif "image/" not in content_type:
-                    logger.info("[PrivateCompanion] 私聊远程图片响应不是图片,跳过: content_type=%s url=%s", content_type or "-", _single_line(text, 120))
-                    return ""
-                target = target_dir / f"{re.sub(r'[^0-9A-Za-z_.-]+', '_', stem)}{suffix}"
-                target.write_bytes(data)
-                return str(target)
-            except Exception as exc:
-                logger.info("[PrivateCompanion] 私聊远程图片下载失败: %s url=%s", _single_line(exc, 120), _single_line(text, 120))
+        try:
+            data, headers = await read_http("GET", text, timeout=15, maximum=12 * 1024 * 1024, headers={
+                "User-Agent": "Mozilla/5.0 AstrBot Asteria",
+                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            })
+            if not data:
                 return ""
-
-        return await asyncio.to_thread(download)
+            content_type = headers.get("Content-Type", "").lower()
+            prefix = data[:16]
+            if prefix.startswith(b"\x89PNG\r\n\x1a\n"):
+                suffix = ".png"
+            elif prefix.startswith(b"RIFF") and data[8:12] == b"WEBP":
+                suffix = ".webp"
+            elif prefix.startswith(b"GIF8"):
+                suffix = ".gif"
+            elif prefix.startswith(b"\xff\xd8\xff"):
+                suffix = ".jpg"
+            elif content_type.startswith("image/") and "svg" not in content_type:
+                suffix = ".jpg"
+            else:
+                return ""
+            target = target_dir / f"{re.sub(r'[^0-9A-Za-z_.-]+', '_', stem)}{suffix}"
+            await asyncio.to_thread(target.write_bytes, data)
+            return str(target)
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.info("[PrivateCompanion] 私聊远程图片下载失败: %s", type(exc).__name__)
+            return ""
 
     async def _prepare_private_image_sources_for_model(self, image_sources: list[str], *, namespace: str = "vision") -> list[str]:
         target_dir = Path(self.data_dir) / "private_inbound_images" / re.sub(r"[^0-9A-Za-z_.-]+", "_", str(namespace or "vision"))

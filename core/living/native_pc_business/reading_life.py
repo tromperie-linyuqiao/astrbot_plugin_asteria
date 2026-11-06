@@ -18,10 +18,13 @@ import time
 from typing import Any
 
 from astrbot.api import logger
+from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
 from .helpers import _now_ts, _safe_float, _safe_int, _single_line
 
-BOOKSHELF_ROOT = "/AstrBot/data/plugin_data/astrbot_plugin_bookshelf"
+def _bookshelf_root() -> str:
+    # Existing bookshelf products are an optional read-only reference.
+    return os.path.join(get_astrbot_plugin_data_path(), "astrbot_plugin_bookshelf")
 READING_SHARE_WINDOW = (18, 22)  # 18:00-22:59 才安排读书分享（避开模型高峰+晚间阅读时段）
 
 
@@ -33,8 +36,8 @@ class ReadingLifeMixin:
     def _bookshelf_books(self) -> list[dict[str, Any]]:
         """扫描书柜，返回 [{book_id, title, chapter_count, digest_dir}]，按入库顺序。"""
         books: list[dict[str, Any]] = []
-        books_root = os.path.join(BOOKSHELF_ROOT, "books")
-        digests_root = os.path.join(BOOKSHELF_ROOT, "digests")
+        books_root = os.path.join(_bookshelf_root(), "books")
+        digests_root = os.path.join(_bookshelf_root(), "digests")
         if not os.path.isdir(books_root):
             return books
         try:
@@ -68,7 +71,7 @@ class ReadingLifeMixin:
 
     def _reading_chapters_list(self, book_id: str) -> list[dict[str, Any]]:
         """带mtime缓存的chapters.json读取（大书可达15MB，避免反复解析）。"""
-        path = os.path.join(BOOKSHELF_ROOT, "books", book_id, "chapters.json")
+        path = os.path.join(_bookshelf_root(), "books", book_id, "chapters.json")
         try:
             mtime = os.path.getmtime(path)
         except Exception:

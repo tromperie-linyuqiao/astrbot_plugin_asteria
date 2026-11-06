@@ -13,7 +13,6 @@ import os
 import random
 import re
 import shutil
-import sqlite3
 import time
 import unicodedata
 import zoneinfo
@@ -138,7 +137,6 @@ from .device_life import DeviceLifeMixin
 from .intimacy_life import IntimacyLifeMixin
 from .persona_modules import PersonaModulesMixin
 from .music_life import MusicLifeMixin
-from .history_surgery import HistorySurgeryMixin
 from .life_enhancer import LifeEnhancerMixin
 from .proactive import ProactiveMixin
 from .group_wakeup import GroupWakeupMixin
@@ -708,7 +706,6 @@ class PrivateCompanionPlugin(
     IntimacyLifeMixin,
     PersonaModulesMixin,
     MusicLifeMixin,
-    HistorySurgeryMixin,
     LifeEnhancerMixin,
     ProactiveMixin,
     ProactivePhotoMixin,
@@ -777,7 +774,7 @@ class PrivateCompanionPlugin(
             _set_into_config(config, key, value)
         return value
 
-    def __init__(self, context: Context, config: AstrBotConfig):
+    def __init__(self, context: Context, config: AstrBotConfig, *, data_dir: Path):
         super().__init__(context)
         global _private_companion_plugin
         _private_companion_plugin = self
@@ -785,7 +782,7 @@ class PrivateCompanionPlugin(
         self._external_proactive_abilities: dict[str, dict[str, Any]] = {}
         self.config = config
         c = config
-        self.data_dir = StarTools.get_data_dir(PLUGIN_NAME)
+        self.data_dir = data_dir
         os.makedirs(self.data_dir, exist_ok=True)
         self.data_file = os.path.join(self.data_dir, "companions.json")
         self.storage_backend = self._cfg_str(c, "storage_backend", "json", "json").strip().lower() or "json"
@@ -1826,151 +1823,6 @@ class PrivateCompanionPlugin(
         self.page_api = None
         self._register_page_api_if_available()
 
-    def _sqlite_wal_candidate_paths(self) -> list[Path]:
-        data_root = Path(get_astrbot_data_path())
-        candidates = [
-            data_root / "data_v4.db",
-            data_root / "plugin_data" / "astrbot_plugin_livingmemory" / "conversations.db",
-            data_root / "plugin_data" / "astrbot_plugin_livingmemory" / "livingmemory.db",
-            data_root / "plugin_data" / "astrbot_plugin_livingmemory" / "livingmemory_graph_documents.db",
-            data_root / "knowledge_base" / "kb.db",
-        ]
-        seen: set[str] = set()
-        paths: list[Path] = []
-        for path in candidates:
-            try:
-                resolved = str(path.resolve())
-            except Exception:
-                resolved = str(path)
-            if resolved in seen or not path.exists() or not path.is_file():
-                continue
-            seen.add(resolved)
-            paths.append(path)
-        return paths
-
-    def _apply_sqlite_wal_to_file(self, db_path: Path) -> str:
-        conn = sqlite3.connect(str(db_path), timeout=15.0)
-        try:
-            conn.execute("PRAGMA busy_timeout=15000")
-            mode_row = conn.execute("PRAGMA journal_mode=WAL").fetchone()
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA wal_autocheckpoint=1000")
-            conn.execute("PRAGMA temp_store=MEMORY")
-            conn.commit()
-            return str(mode_row[0] if mode_row else "")
-        finally:
-            conn.close()
-
-    def _apply_sqlite_pragmas_to_dbapi_connection(self, dbapi_connection: Any) -> None:
-        try:
-            cursor = dbapi_connection.cursor()
-            try:
-                cursor.execute("PRAGMA busy_timeout=15000")
-                cursor.execute("PRAGMA journal_mode=WAL")
-                cursor.execute("PRAGMA synchronous=NORMAL")
-                cursor.execute("PRAGMA wal_autocheckpoint=1000")
-            finally:
-                cursor.close()
-        except Exception:
-            try:
-                dbapi_connection.execute("PRAGMA busy_timeout=15000")
-                dbapi_connection.execute("PRAGMA journal_mode=WAL")
-                dbapi_connection.execute("PRAGMA synchronous=NORMAL")
-                dbapi_connection.execute("PRAGMA wal_autocheckpoint=1000")
-            except Exception:
-                pass
-
-    def _iter_possible_sqlalchemy_engines(self) -> list[Any]:
-        roots = [
-            getattr(self, "context", None),
-            getattr(getattr(self, "context", None), "conversation_manager", None),
-        ]
-        engines: list[Any] = []
-        seen_objects: set[int] = set()
-
-        def _visit(obj: Any, depth: int = 0) -> None:
-            if obj is None or depth > 3:
-                return
-            obj_id = id(obj)
-            if obj_id in seen_objects:
-                return
-            seen_objects.add(obj_id)
-            cls_name = obj.__class__.__name__.lower()
-            module_name = str(getattr(obj.__class__, "__module__", "")).lower()
-            if "sqlalchemy" in module_name and "engine" in cls_name:
-                engines.append(obj)
-            for attr in (
-                "engine", "_engine", "async_engine", "_async_engine", "sync_engine",
-                "db", "_db", "store", "_store", "session_maker", "_session_maker",
-                "conversation_manager",
-            ):
-                try:
-                    child = getattr(obj, attr, None)
-                except Exception:
-                    continue
-                if child is not None and child is not obj:
-                    _visit(child, depth + 1)
-
-        for root in roots:
-            _visit(root)
-        unique: list[Any] = []
-        seen_engines: set[int] = set()
-        for engine in engines:
-            target = getattr(engine, "sync_engine", engine)
-            if id(target) in seen_engines:
-                continue
-            seen_engines.add(id(target))
-            unique.append(target)
-        return unique
-
-    def _install_sqlite_wal_engine_hooks(self) -> int:
-        try:
-            from sqlalchemy import event as sqlalchemy_event
-        except Exception:
-            return 0
-        installed = 0
-        for engine in self._iter_possible_sqlalchemy_engines():
-            if bool(getattr(engine, "_private_companion_sqlite_wal_hooked", False)):
-                continue
-            try:
-                url = str(getattr(engine, "url", "") or "").lower()
-                if url and "sqlite" not in url:
-                    continue
-            except Exception:
-                pass
-
-            def _on_connect(dbapi_connection, _connection_record, plugin_self=self):
-                plugin_self._apply_sqlite_pragmas_to_dbapi_connection(dbapi_connection)
-
-            try:
-                sqlalchemy_event.listen(engine, "connect", _on_connect)
-                setattr(engine, "_private_companion_sqlite_wal_hooked", True)
-                installed += 1
-            except Exception as exc:
-                logger.debug("[PrivateCompanion] SQLite WAL engine hook 安装失败: %s", _single_line(exc, 120))
-        return installed
-
-    async def _apply_sqlite_wal_optimizations(self) -> None:
-        return  # 2026-09-21 WAL僵尸修复：data_v4.db 已改 DELETE 日志，本补丁停用（详见 backups/pc_main_pre_waloff.py）
-
-        applied: list[str] = []
-        failed: list[str] = []
-        for path in self._sqlite_wal_candidate_paths():
-            try:
-                mode = await asyncio.to_thread(self._apply_sqlite_wal_to_file, path)
-                applied.append(f"{path.name}:{mode or 'unknown'}")
-            except Exception as exc:
-                failed.append(f"{path.name}:{_single_line(exc, 80)}")
-        hooks = self._install_sqlite_wal_engine_hooks()
-        if applied or hooks:
-            logger.info(
-                "[PrivateCompanion] SQLite WAL 并发优化已应用: files=%s engine_hooks=%s",
-                "，".join(applied) or "无",
-                hooks,
-            )
-        if failed:
-            logger.warning("[PrivateCompanion] SQLite WAL 并发优化部分失败: %s", "；".join(failed))
-
     def _repair_private_companion_handler_bindings(self) -> None:
         """热更新后强制把残留 handler 重新绑定到当前插件实例。"""
         try:
@@ -2128,10 +1980,6 @@ class PrivateCompanionPlugin(
                 elapsed_ms = int((time.perf_counter() - config_started) * 1000)
                 if elapsed_ms > 1200:
                     logger.warning("[PrivateCompanion] 启动后台配置保存耗时较高: elapsed=%sms", elapsed_ms)
-            try:
-                await asyncio.wait_for(self._apply_sqlite_wal_optimizations(), timeout=20)
-            except asyncio.TimeoutError:
-                logger.warning("[PrivateCompanion] SQLite WAL 后台优化超时,已跳过本轮启动优化")
             async with self._data_lock:
                 if self._run_startup_data_maintenance_locked():
                     self._save_data_sync()
@@ -8450,7 +8298,7 @@ wakeup_type={_single_line(wakeup.get('type'), 40)} score={_single_line(wakeup.ge
             if memo_notes:
                 prompt_surface.add("memo.notes", memo_notes, priority=37, source="daily_state")
             worldview_context = (
-                self._format_worldview_adaptation_prompt()
+                await self._format_worldview_with_knowledge()
                 if self._feature_enabled_or_temp_unlocked("enable_environment_perception") and self.enable_worldview_perception
                 else ""
             )
@@ -9564,7 +9412,7 @@ wakeup_type={_single_line(wakeup.get('type'), 40)} score={_single_line(wakeup.ge
             memory_companion_context_getter = getattr(self, "_memory_companion_compose_schedule_context", None)
             if callable(memory_companion_context_getter):
                 memory_companion_context = await memory_companion_context_getter(kind="daily_plan", max_chars=1300)
-            return self._build_daily_plan_prompt(
+            return await self._build_daily_plan_prompt(
                 self._environment_now().strftime("%Y-%m-%d %H:%M"),
                 memory_companion_context=memory_companion_context,
             )
@@ -9595,7 +9443,7 @@ wakeup_type={_single_line(wakeup.get('type'), 40)} score={_single_line(wakeup.ge
                     state=state,
                     max_chars=1100,
                 )
-            return self._build_detail_enhancement_prompt(
+            return await self._build_detail_enhancement_prompt(
                 segment,
                 plan,
                 state,

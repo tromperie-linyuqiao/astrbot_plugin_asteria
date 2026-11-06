@@ -81,13 +81,15 @@ class VirtualBodyWebApi:
         self.plugin = plugin
 
     _NAV_PAGES = ("console", "home", "status", "manor", "materials", "mood", "memory", "memory-native", "pc-native")
-    _jwt_secret_cache: tuple[int, str | None] = (0, None)
 
     def _dashboard_jwt_secret(self) -> str | None:
-        cfg = self.plugin.context.get_config()
-        dashboard = cfg.get('dashboard', {}) if hasattr(cfg, 'get') else {}
-        value = dashboard.get('jwt_secret') if isinstance(dashboard, dict) else None
-        return value if isinstance(value, str) and value.strip() else None
+        """Read the running host configuration used by its navigation middleware."""
+        try:
+            config = self.plugin.context.get_config()
+            value = (config.get("dashboard") or {}).get("jwt_secret")
+            return value if isinstance(value, str) and value else None
+        except (AttributeError, TypeError, ValueError):
+            return None
 
     async def nav_redirect(self):
         """Authenticated navigation; SDK clients request JSON, existing clients keep 302."""

@@ -32,6 +32,7 @@ from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 from xml.etree import ElementTree as ET
 
 from astrbot.api import AstrBotConfig, logger
+from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path, get_astrbot_plugin_path
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 try:
     from astrbot.api.message_components import At, Image, Plain, Record, Reply
@@ -284,7 +285,7 @@ class IntegrationStatusMixin:
                 if selected: return service is not None
         roots = [
             Path(__file__).resolve().parent.parent,
-            Path(self.data_dir).parent.parent / "plugins",
+            Path(get_astrbot_plugin_path()),
         ]
         for root in roots:
             for name in names:
@@ -300,7 +301,7 @@ class IntegrationStatusMixin:
         """Describe the existing bookshelf provider without changing routing."""
         name = "astrbot_plugin_bookshelf"
         roots = [Path(__file__).resolve().parent.parent,
-                 Path(self.data_dir).parent.parent / "plugins"]
+                 Path(get_astrbot_plugin_path())]
         directory = next((root / name for root in roots
                           if (root / name / "main.py").exists() or (root / name / "metadata.yaml").exists()), roots[0] / name)
         installed = (directory / "main.py").exists() or (directory / "metadata.yaml").exists()
@@ -438,18 +439,20 @@ class IntegrationStatusMixin:
         ]
         if custom:
             base.append(f"自定义适配：{custom}")
-        knowledge_formatter = getattr(self, "_format_roleplay_knowledge_context", None)
-        if callable(knowledge_formatter):
-            knowledge_context = knowledge_formatter(purpose="worldview", max_chars=1800, max_chunks=10)
-            if knowledge_context:
-                base.append(knowledge_context)
         return "\n".join(base)
+
+    async def _format_worldview_with_knowledge(self) -> str:
+        local = self._format_worldview_adaptation_prompt()
+        if not local:
+            return ""
+        selected = await self._format_roleplay_knowledge_context(purpose="worldview", max_chars=1800, max_chunks=10)
+        return "\n".join(part for part in (local, selected) if part)
 
     def _livingmemory_plugin_dir(self) -> Path:
         candidates = [
             Path(__file__).resolve().parent.parent / "astrbot_plugin_livingmemory",
-            Path(self.data_dir).parent / "astrbot_plugin_livingmemory",
-            Path(self.data_dir).parent.parent / "plugins" / "astrbot_plugin_livingmemory",
+            Path(get_astrbot_plugin_data_path()) / "astrbot_plugin_livingmemory",
+            Path(get_astrbot_plugin_path()) / "astrbot_plugin_livingmemory",
         ]
         for path in candidates:
             if (path / "main.py").exists():
@@ -532,8 +535,8 @@ class IntegrationStatusMixin:
         candidates = [
             Path(__file__).resolve().parent.parent / "astrbot_plugin_llmperception",
             Path(__file__).resolve().parent.parent / "astrbot_plugin_LLMPerception",
-            Path(self.data_dir).parent.parent / "plugins" / "astrbot_plugin_llmperception",
-            Path(self.data_dir).parent.parent / "plugins" / "astrbot_plugin_LLMPerception",
+            Path(get_astrbot_plugin_path()) / "astrbot_plugin_llmperception",
+            Path(get_astrbot_plugin_path()) / "astrbot_plugin_LLMPerception",
         ]
         for path in candidates:
             if (path / "main.py").exists():

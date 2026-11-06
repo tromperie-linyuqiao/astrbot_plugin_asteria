@@ -312,7 +312,7 @@ class PrivateCompanionPageApi(
                 "cache": self._cache_summary(data),
                 "livingmemory": self._livingmemory_summary(),
                 "screen_companion": self._screen_companion_summary(data),
-                "knowledge": self.plugin._roleplay_knowledge_summary(),
+                "knowledge": await self.plugin._roleplay_knowledge_summary(),
                 "worldbook": self._worldbook_summary(data),
                 "proactive_candidates": self._proactive_candidate_summary(data),
                 "proactive_tasks": self._proactive_task_summary(data),

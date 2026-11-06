@@ -49,6 +49,7 @@ class NativePCFullOwner:
     def __init__(self, integrations):
         self.integrations = integrations
         self.plugin, self.context = integrations.plugin, integrations.context
+        self._retain_prior_storage = self.plugin.config.get(BINDING) not in (None, {})
         self.service = None
         self.active = False
         self.binding_state = None
@@ -631,13 +632,19 @@ class NativePCFullOwner:
         self._save({FLAG: True})
         config = NestedConfig(self, raw)
         self._last_config = deepcopy(dict(config))
+        from ...identity import component_data_directory
+        # The former executor has already been proven closed. Keep a previously
+        # owned store in place; never provision a new store in the old namespace.
+        expected = component_data_directory('companion', LEGACY,
+            retain_existing=self._retain_prior_storage,
+            markers=('companions.json', 'companions.db', 'companions.sqlite3'))
         service = NativePCService(self.context, config, legacy_closed=self.legacy_closed,
             authorize=self._authorize, send_chain=self._send, platform_action=self._platform_action,
-            register_ui=False, journal=self._host().journal, music_library_reader=self._music_library_view)
+            register_ui=False, journal=self._host().journal, music_library_reader=self._music_library_view,
+            data_dir=expected)
         self.service = service  # retain partially initialized resources on failure
-        expected = (self.integrations.data_dir.parent / LEGACY).resolve()
         if Path(service.data_dir).resolve() != expected:
-            raise RuntimeError('native PC must reuse the exact original state directory')
+            raise RuntimeError('native PC state directory changed')
         self.active = True
         await service.initialize()
         if not service.native_source_current():

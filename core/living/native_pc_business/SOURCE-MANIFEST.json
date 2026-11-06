@@ -23,8 +23,8 @@
   },
   "modules": {
     "astrbot_knowledge.py": {
-      "sha256": "5e68d922b366536deba782f216e398fbf55a7f32cec951c9a8222200f4ce97a4",
-      "bytes": 17218,
+      "sha256": "ff02255648e4be98c88f311194709a95473ec0e20ede1b54db601661cea8a0a7",
+      "bytes": 15532,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/astrbot_knowledge.py",
       "original_sha256": "5e68d922b366536deba782f216e398fbf55a7f32cec951c9a8222200f4ce97a4",
       "source_kind": "migrated_legacy"
@@ -107,22 +107,22 @@
       "source_kind": "migrated_legacy"
     },
     "daily_state.py": {
-      "sha256": "6a7465fbdac99503369fb9801d28d5c6147e3610db9c7e5b39a4220a9a99de6d",
-      "bytes": 729988,
+      "sha256": "22abdad315e4feb6de46b0eefce45542fec90d024075dba0a2d4e9bad8527500",
+      "bytes": 729812,
       "reference": ".runtime/pc_memo_deps_actual_r32/astrbot_plugin_private_companion/daily_state.py",
       "original_sha256": "fb396ecc82f860b71b7071ef598a39ea7de6b935d5a75838603760561e6646d9",
       "source_kind": "migrated_legacy"
     },
     "device_life.py": {
-      "sha256": "761d36403a0c114cbbcdd45892fa4b4caf2993d5276dacdf1cc693b202340824",
-      "bytes": 9043,
+      "sha256": "982662062fe173f8cbe9476629e4f0029e66267429b7874b210e9e5aa7311e47",
+      "bytes": 9224,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/device_life.py",
       "original_sha256": "761d36403a0c114cbbcdd45892fa4b4caf2993d5276dacdf1cc693b202340824",
       "source_kind": "migrated_legacy"
     },
     "dreaming.py": {
-      "sha256": "9f8ec8e7dc8fd8a08203e7237c80009f4006ca6ef900abb4c61d9af084cb4792",
-      "bytes": 52225,
+      "sha256": "f849400a97cf6981607861b659444bbe643ac3ea8fb69bcda0db1935c264e3eb",
+      "bytes": 52231,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/dreaming.py",
       "original_sha256": "3e2650c12e11941a092daa098880d71cc1da91046297c02dcff1c7de5aee3faa",
       "source_kind": "migrated_legacy"
@@ -162,16 +162,9 @@
       "original_sha256": "bb9b98b2ee9e781b2cd3a7a5d52d485b1e087aa0db58ff19d7b4a9733c79bdaa",
       "source_kind": "migrated_legacy"
     },
-    "history_surgery.py": {
-      "sha256": "0d4f7c1227e86bc6125f1a294c88d5c6a897d14823ba5c567c5c077c4557e265",
-      "bytes": 15291,
-      "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/history_surgery.py",
-      "original_sha256": "5fd701be841ef4a5a9703b8c280562d84cebe79b29236f701348a14764fdfa73",
-      "source_kind": "migrated_legacy"
-    },
     "integration_status.py": {
-      "sha256": "557ae4d3d353078732d95c239ae288bb50bcaaeca65f57b4cbf4669431c465cf",
-      "bytes": 50469,
+      "sha256": "f907970f16fc564fb0316aed15ddf925cafb4d2f8cd3c71a79acf8037a8a3b02",
+      "bytes": 50543,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/integration_status.py",
       "original_sha256": "ff773a0aa4d318f9c79c007e3e45ea003c5059d81b1faae536f3b030c59c53bd",
       "source_kind": "migrated_legacy"
@@ -184,8 +177,8 @@
       "source_kind": "migrated_legacy"
     },
     "intimacy_life.py": {
-      "sha256": "7960b487123ffdc021dcacb51d5f28a803644066d82c336d67d80c6763b6a1a2",
-      "bytes": 34207,
+      "sha256": "067d1d322a29ab90794bc5e62a4cb0752bae8ce51a249a6bdd0e4f58b07bb181",
+      "bytes": 34057,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/intimacy_life.py",
       "original_sha256": "57c47dd22cad6f94d06c2fd8423c5cba18cb1e84a15541dfd068e7ab538cd7ac",
       "source_kind": "migrated_legacy"
@@ -205,8 +198,8 @@
       "reference": ".runtime/pc_memo_router_overlay_r33_r1/llm_tool_actions.py"
     },
     "main.py": {
-      "sha256": "b9c8c0d3db388e096ab3e17a8b54f727c9ac513c849b8d6714294d9993ca9ed5",
-      "bytes": 606175,
+      "sha256": "112659aedb5fbaca4aa1a9a2b023f034a1eacbb3e5405deb73db752ca70b6578",
+      "bytes": 599716,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/main.py",
       "original_sha256": "43df488644dd4621b3f720d682214cfe48fb43fbc7665f4c93e7acc84c6b0e94",
       "source_kind": "migrated_legacy"
@@ -226,22 +219,22 @@
       "source_kind": "migrated_legacy"
     },
     "music_life.py": {
-      "sha256": "5e78524b1f04690ac3a7d9681842392e5fc28026b51ab4cac3a04a3a66cf5f0b",
-      "bytes": 6859,
+      "sha256": "5abbbba03944af126834352c121c76b53555ee72f52d38c905f556f07c8a72d3",
+      "bytes": 7023,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/music_life.py",
       "original_sha256": "b0a166d11f7db8c3ff6b1f2ba17d759476e78e7370b9935e3e1e4a6935e9f2ca",
       "source_kind": "migrated_legacy"
     },
     "news_exploration.py": {
-      "sha256": "d166d01bb9ad5a468e7b00732f0b4dfdcbc8c4d34bba6600a825fb84f00cdf47",
-      "bytes": 218671,
+      "sha256": "8694ecc21b9af09ae235d593f7853942c34225b14a832a725851bce073c488c2",
+      "bytes": 218728,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/news_exploration.py",
       "original_sha256": "a528c672ca96d51d56043906f5aeca6c5da702e3aa50dbf20c25b10f1d3bac61",
       "source_kind": "migrated_legacy"
     },
     "page_api.py": {
-      "sha256": "0b3b127d6fc0a7ddd5346a1ef743051b4554bc4124e069d888bc3fc6b75dc60a",
-      "bytes": 41615,
+      "sha256": "d706da89e11004c03d43da44f91af89e604c5b1885970e1b3e5440df66427f22",
+      "bytes": 41621,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/page_api.py",
       "original_sha256": "9dffdc7d503c079d365db7fe835fff23aeae0bdbc149161ed4a4e016c4aae025",
       "source_kind": "migrated_legacy"
@@ -331,8 +324,8 @@
       "source_kind": "migrated_legacy"
     },
     "planning.py": {
-      "sha256": "7655cde463ae02c02755bb8a9534f9514a234c3d659a9831099c75dbf817e577",
-      "bytes": 81976,
+      "sha256": "7c3b940d1ef218943803cf180bdc1adab9e3809e7a7e7feac2c829c94324a251",
+      "bytes": 80755,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/planning.py",
       "original_sha256": "7655cde463ae02c02755bb8a9534f9514a234c3d659a9831099c75dbf817e577",
       "source_kind": "migrated_legacy"
@@ -352,22 +345,22 @@
       "source_kind": "migrated_legacy"
     },
     "private_image.py": {
-      "sha256": "4fd2b7bd2d1bf6d4a7bc5067bb7b2490a9229734ffe0681df1219327ade25347",
-      "bytes": 215121,
+      "sha256": "1914c92e3a9f6a8310e98e2750856a4f4b89b18498896d85245741f879a51192",
+      "bytes": 213612,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/private_image.py",
       "original_sha256": "4fd2b7bd2d1bf6d4a7bc5067bb7b2490a9229734ffe0681df1219327ade25347",
       "source_kind": "migrated_legacy"
     },
     "private_reading.py": {
-      "sha256": "e524d9cd8ca8fd2b5fe404db33e8a6c5ce1a72be94c2d8caa0a93d2f9069c116",
-      "bytes": 87962,
+      "sha256": "5db6e525517ac17056f1c4a40d9acb45c4d49da8e290bea7ff8ad8f253ffdfcb",
+      "bytes": 88019,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/private_reading.py",
       "original_sha256": "be43cbba51d9ffc34e755c6f7635d58de429596e0cf406f7203943e496899e24",
       "source_kind": "migrated_legacy"
     },
     "proactive.py": {
-      "sha256": "51cf125b5a4ee84ea198099b305154fb1928b9342761e2bb07a175a1379b5672",
-      "bytes": 953003,
+      "sha256": "4e6ab0d77b003221f87bd04ecfbbae9458170612b6396ac9f4570969dc702ad2",
+      "bytes": 953024,
       "reference": ".runtime/phase4_pc_actual_proactive_r38_20261024.py",
       "original_sha256": "b26d068d386b3acb3f5f57bebdd35d3249bc2e978c438c72776ffb9d325f1ac4",
       "source_kind": "migrated_legacy"
@@ -394,8 +387,8 @@
       "source_kind": "migrated_legacy"
     },
     "qzone_integration.py": {
-      "sha256": "42a471cfa35f746b360eabae22a5c6952618967ca105e5cc6a3616922177f548",
-      "bytes": 159879,
+      "sha256": "c6816b61b311df03eebdfeae2841e7a0a7979ee45a16a8ce255f3c05a26e6326",
+      "bytes": 159948,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/qzone_integration.py",
       "original_sha256": "a59ee0097a8571946e7b8cf31123b00f96d89119e6af40347845767ec6bf3440",
       "source_kind": "migrated_legacy"
@@ -422,8 +415,8 @@
       "source_kind": "migrated_legacy"
     },
     "reading_life.py": {
-      "sha256": "5a84234f89092b85bb27b9917870c77feaa24c7e41aade41540168024d770592",
-      "bytes": 17962,
+      "sha256": "6b33d9a5163cd7ca5ad10283aafecddc35e8d86bd056ead7f34aaf2e7ff67438",
+      "bytes": 18159,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/reading_life.py",
       "original_sha256": "5a84234f89092b85bb27b9917870c77feaa24c7e41aade41540168024d770592",
       "source_kind": "migrated_legacy"
@@ -506,15 +499,15 @@
       "source_kind": "migrated_legacy"
     },
     "token_budget.py": {
-      "sha256": "11058b0008593792f261f0fd105e11370594563c2a5a230fb65a3544478e2b84",
-      "bytes": 49110,
+      "sha256": "6e616d96af5638004de0598aa9c484df2fdf2ac74e911c8136b806684d8706d3",
+      "bytes": 49107,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/token_budget.py",
       "original_sha256": "11058b0008593792f261f0fd105e11370594563c2a5a230fb65a3544478e2b84",
       "source_kind": "migrated_legacy"
     },
     "tts_enhancement.py": {
-      "sha256": "c1ba8c86d50b1d98801324ddb53f900f87aeb109ebf7aabf4fa70c23b1960e3d",
-      "bytes": 163462,
+      "sha256": "08a80103274231852d75875dade0a9df34a96029e90f4a1ba74a4b2b2b679a94",
+      "bytes": 163226,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/tts_enhancement.py",
       "original_sha256": "c1ba8c86d50b1d98801324ddb53f900f87aeb109ebf7aabf4fa70c23b1960e3d",
       "source_kind": "migrated_legacy"

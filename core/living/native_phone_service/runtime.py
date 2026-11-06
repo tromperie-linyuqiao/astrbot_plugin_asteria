@@ -390,44 +390,39 @@ class NativePhoneService:
 
     async def _resync_playlist_from_kb(self) -> int:
         import re as _re
-        import sqlite3 as _sq
+        from ..astrbot_knowledge_reader import AstrBotKnowledgeReader
 
-        kb = _sq.connect("/AstrBot/data/knowledge_base/kb.db")
-        docs = kb.execute(
-            "SELECT doc_id, doc_name FROM kb_documents WHERE doc_name LIKE '歌曲_%'"
-        ).fetchall()
-        kb.close()
-        doc_cat = {}
-        for doc_id, name in docs:
-            m = _re.match(r"歌曲_(.+?)_第", name)
-            doc_cat[doc_id] = m.group(1) if m else "其他"
+        reader = AstrBotKnowledgeReader(self.context)
         playlist: dict = {}
         row_re = _re.compile(r"^\|\s*\d+\s*\|\s*([^|]+?)\s*\|")
-        for kb_dir in Path("/AstrBot/data/knowledge_base").iterdir():
-            doc_db = kb_dir / "doc.db"
-            if not doc_db.exists():
-                continue
-            d = _sq.connect(str(doc_db))
-            try:
-                rows = d.execute("SELECT text, metadata FROM documents").fetchall()
-            except Exception:
-                d.close()
-                continue
-            d.close()
-            for text, meta in rows:
-                try:
-                    kd = json.loads(meta or "{}").get("kb_doc_id")
-                except Exception:
+        chunks_read = 0
+        async with asyncio.timeout(20):
+            for base in (await reader.bases())[:30]:
+                helper = await reader.base(base.kb_id)
+                if helper is None:
                     continue
-                if kd not in doc_cat:
-                    continue
-                note = "方舟曲" if "明日方舟" in doc_cat[kd] else ""
-                for line in (text or "").splitlines():
-                    mm = row_re.match(line.strip())
-                    if mm:
-                        song = mm.group(1).strip()
-                        if song and song != "歌曲名" and len(song) < 60:
-                            playlist.setdefault(song, note)
+                for doc in await reader.documents(helper, limit=100, search="歌曲_"):
+                    if not doc.doc_name.startswith("歌曲_"):
+                        continue
+                    match = _re.match(r"歌曲_(.+?)_第", doc.doc_name)
+                    note = "方舟曲" if match and "明日方舟" in match.group(1) else ""
+                    # Do not overwrite the previous list with a partial import.
+                    count = await helper.get_chunk_count_by_doc_id(doc.doc_id)
+                    if count > 500 or chunks_read + count > 3000:
+                        raise RuntimeError("知识库歌曲片段超出单次读取范围，原歌单保留")
+                    chunks = await reader.chunks(helper, doc, limit=count) if count else []
+                    if len(chunks) != count:
+                        raise RuntimeError("歌曲片段未完整读取，原歌单保留")
+                    chunks_read += len(chunks)
+                    for chunk in chunks:
+                        for line in chunk["text"].splitlines():
+                            match = row_re.match(line.strip())
+                            if match:
+                                song = match.group(1).strip()
+                                if song and song != "歌曲名" and len(song) < 60:
+                                    playlist.setdefault(song, note)
+        if not playlist:
+            raise RuntimeError("未找到可解析的歌曲资料，原歌单保留")
         path = self._origin_file.parent / "playlist.json"
         import shutil as _sh
 

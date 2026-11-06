@@ -6,14 +6,14 @@ QQ/Presence lease, alter device ownership or run a second perception collector.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import hashlib
 import json
 import math
 import re
 import time
-from urllib.error import HTTPError
 from urllib.parse import urlencode
-from urllib.request import Request,HTTPRedirectHandler,build_opener
+from .async_http import HttpStatusError, read_json
 
 from .chat_expressions import ChatExpressions,ChatExpressionError
 from .chat_identity import identity_service
@@ -80,10 +80,6 @@ def frame(value,allowed,*,now):
   if clean:result[name]=clean
  if len(result)==1:raise ChatExpressionError('没有已授权的感知数据')
  return result
-
-
-class _NoRedirect(HTTPRedirectHandler):
- def redirect_request(self,*args,**kwargs):return None
 
 
 class ChatPhonePerception:
@@ -183,23 +179,20 @@ class ChatPhonePerception:
      expected_revision=current['revision'],authorize=self.links.current)
   return self.snapshot(username,session,install)
 
- def _forward(self,phone,device,event,payload,current):
-  # The existing Phone client owns its configured bridge address/token. No
-  # arbitrary URL, credential or device is accepted from a mobile report.
-  if current()is not True:raise PermissionError('感知授权已经变化')
+ async def _forward(self,phone,device,event,payload,current):
+  # Use the authenticated bridge configuration; no mobile-supplied URL or token.
+  if not await asyncio.to_thread(current):raise PermissionError('感知授权已经变化')
   phone._sync_client();client=phone.client
   if not client.configured:raise RuntimeError('原感知桥连接尚未配置')
-  request=Request(client.base_url+'/report?'+urlencode({'device_id':device}),
-    data=json.dumps(payload,ensure_ascii=False,separators=(',',':')).encode('utf-8'),
-    headers={'Authorization':'Bearer '+client.token,'Content-Type':'application/json; charset=utf-8','Idempotency-Key':event},method='POST')
-  if current()is not True:raise PermissionError('感知授权已经变化')
+  base,token,timeout=client.base_url,client.token,client.timeout
+  if not await asyncio.to_thread(current) or (base,token)!=(client.base_url,client.token):
+   raise PermissionError('感知授权已经变化')
   try:
-   with build_opener(_NoRedirect).open(request,timeout=min(float(client.timeout),8))as response:
-    raw=response.read(262145)
-    if len(raw)>262144:raise RuntimeError('感知桥返回过大')
-    value=json.loads(raw)
-  except HTTPError as error:
-   if error.code in(400,401,403,404,409,429):return dict(state='rejected',bridge_status=error.code)
+   value=await read_json('POST',base+'/report?'+urlencode({'device_id':device}),
+      headers={'Authorization':'Bearer '+token,'Idempotency-Key':event},
+      timeout=min(float(timeout),8),maximum=262144,payload=payload)
+  except HttpStatusError as error:
+   if error.status in(400,401,403,404,409,429):return dict(state='rejected',bridge_status=error.status)
    raise RuntimeError('感知桥上报结果未知')from None
   if not isinstance(value,dict)or value.get('ok')is not True:raise RuntimeError('感知桥未确认上报')
   client.invalidate()
@@ -237,7 +230,12 @@ class ChatPhonePerception:
   state,new=await asyncio.to_thread(reserve)
   if not new:return dict(state=state['state'],duplicate=True,report_id=event)
   key='chat-'+hashlib.sha256(canonical([scope,install,event]).encode()).hexdigest()
-  try:result=await asyncio.to_thread(self.forward,phone,before['device_id'],key,payload,current)
+  try:
+   if inspect.iscoroutinefunction(self.forward):
+    result=await self.forward(phone,before['device_id'],key,payload,current)
+   else:
+    # Compatibility for explicitly injected local adapters, not HTTP transport.
+    result=await asyncio.to_thread(self.forward,phone,before['device_id'],key,payload,current)
   except PermissionError:raise
   except Exception:return dict(state='unknown',report_id=event,retry=False)
   def finish():

@@ -7198,7 +7198,7 @@ class ProactiveMixin:
         }
         return "、".join(labels.get(action, action) for action in actions)
 
-    def _build_full_test_detail_prompt(
+    async def _build_full_test_detail_prompt(
         self,
         segment: dict[str, Any],
         plan: dict[str, Any],
@@ -7207,7 +7207,7 @@ class ProactiveMixin:
         *,
         missing_actions: list[str] | None = None,
     ) -> str:
-        base_prompt = self._build_detail_enhancement_prompt(segment, plan, state)
+        base_prompt = await self._build_detail_enhancement_prompt(segment, plan, state)
         action_text = "、".join(actions) if actions else "message"
         extra = [
             "",
@@ -7247,7 +7247,7 @@ class ProactiveMixin:
         }
         missing_actions = list(required_actions)
         for _ in range(3):
-            prompt = self._build_full_test_detail_prompt(
+            prompt = await self._build_full_test_detail_prompt(
                 segment,
                 plan,
                 state,
@@ -11953,7 +11953,7 @@ class ProactiveMixin:
             return self._sanitize_action_context_text(action, action_context)
         cleaned_context = self._sanitize_action_context_text(action, action_context)
         terms = self._worldview_terms()
-        worldview_adaptation = self._format_worldview_adaptation_prompt()
+        worldview_adaptation = await self._format_worldview_with_knowledge()
         prompt = f"""
 请把下面的{terms['screen']}观察结果转成“视觉识别后的内部摘要”,供角色继续私聊使用。
 要求：

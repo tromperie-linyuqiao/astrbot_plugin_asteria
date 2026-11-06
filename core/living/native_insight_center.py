@@ -9,11 +9,11 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
-import sqlite3
 import time
 
+from ...identity import canonical_data_directory
 from .models import private_scope, scope_key
-from .native_insight_source import NativeInsightReadStore, InsightSourceUnavailable
+from .native_insight_source import AstrBotConversationReader, AstrBotUsageReader, InsightSourceUnavailable
 from .native_insight_statistics import _analyze_conv_rows, _bounded as bounded_pattern
 from . import native_insight_mood as mood
 from .native_material_diagnostics import NativeMaterialDiagnostics
@@ -40,16 +40,11 @@ def _keywords(query):
 
 
 class NativeInsightCenter:
-    def __init__(self, plugin, *, db_path=None, plugin_data_dir=None, clock=time.time):
+    def __init__(self, plugin, *, clock=time.time):
         self.plugin, self.context, self.clock = plugin, plugin.context, clock
-        if db_path is None:
-            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-            db_path = Path(get_astrbot_data_path()) / 'data_v4.db'
-        if plugin_data_dir is None:
-            from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
-            plugin_data_dir = get_astrbot_plugin_data_path()
-        self.source = NativeInsightReadStore(db_path, clock=clock)
-        self.plugin_data_dir = str(plugin_data_dir)
+        self.source = AstrBotConversationReader(self.context)
+        self.usage_source = AstrBotUsageReader(self.context)
+        self.plugin_data_dir = canonical_data_directory()
         self.active = True
         self._calibration_lock = asyncio.Lock()
         self._cron_manager = self._job_id = None
@@ -86,19 +81,19 @@ class NativeInsightCenter:
 
     async def _rows(self, scope, days, limit):
         since = datetime.fromtimestamp(self.clock() - days*86400, timezone.utc).isoformat()
-        return await asyncio.to_thread(self.source.conversations, since=since,
-                                       session_id=scope['session_id'], limit=limit)
+        return await self.source.conversations(since=since, session_id=scope['session_id'], limit=limit)
 
     async def _usage(self, scope, days):
-        value = await asyncio.to_thread(self.source.usage, days, session_id=scope['session_id'] if scope else None)
-        lines = [f'📊 最近{days}天模型用量分析', '范围：当前私聊' if scope else '范围：管理员服务器聚合']
+        value = await self.usage_source.usage(days, session_id=scope['session_id'] if scope else None)
+        lines = [f"📊 最近{value['days']}天模型用量分析（AstrBot 面板口径）",
+                 '范围：当前私聊' if scope else '范围：管理员服务器聚合']
+        if days != value['days']:
+            lines.append('宿主提供 1、3、7 天窗口；采用不超过所选范围的窗口。')
         for row in value['by_model']:
-            ttft = row['avg_ttft']
-            latency = f'{ttft:.0f}ms' if isinstance(ttft, (int, float)) else '未知'
-            lines.append(f"{_clip(row['model'],80)}：{row['calls']}次，{int(row['tokens'] or 0):,} tokens，TTFT {latency}")
-        lines.append(f"合计{value['totals']['calls']}次，{int(value['totals']['tokens'] or 0):,} tokens")
-        if value['hourly']:
-            lines.append('活跃时段：' + '、'.join(f"{row['hour']}时({row['calls']}次)" for row in value['hourly'][:3]))
+            lines.append(f"{_clip(row['model'],80)}：{row['tokens']:,} tokens")
+        total = value['totals']
+        lines.append(f"合计 {total['tokens']:,} tokens" +
+                     (f"，{total['calls']} 次" if total['calls'] is not None else '；宿主未提供当前私聊调用次数。'))
         lines.append('未提供模型单价，不推算费用；统计不代表手机可见或消息送达。')
         return '\n'.join(lines), value
 
@@ -212,8 +207,9 @@ class NativeInsightCenter:
             raise ValueError('known insight action required')
         if action=='overview' and administrator is True and scope is None:
             return dict(ok=True,backend='tls_native_insight',tools=list(TOOL_NAMES),read_only=True,
-                sources=dict(astrbot_statistics='existing_readonly_database',native_material='existing_tls_services',
-                             calibration='legacy_compatible_daily_file'),metrics=dict(self.metrics),
+                sources=dict(astrbot_statistics='astrbot_dashboard_statistics',native_material='existing_tls_services',
+                             conversations='astrbot_conversation_manager',
+                             calibration='asteria_plugin_data'),metrics=dict(self.metrics),
                 calibration_job=dict(registration_receipt_present=self._job_id is not None,
                     scheduler_live_status='not_queried_here',name=JOB_NAME,cron='30 4 * * *',
                     timezone='Asia/Shanghai',inflight=self._calibration_lock.locked()),
@@ -260,7 +256,7 @@ class NativeInsightCenter:
         except PermissionError:
             self.metrics['denied']+=1
             return '[数据洞察] 当前真实私聊权限不可用。'
-        except (RuntimeError, OSError, ValueError, sqlite3.Error):
+        except (RuntimeError, OSError, ValueError):
             return '[数据洞察] 当前数据源暂不可用；不会把读取失败当作零数据。'
 
     async def usage_analytics(self,event,days=7):return await self._tool('usage',event,days=days)
@@ -323,13 +319,23 @@ class NativeInsightCenter:
                     result=await provider.text_chat(prompt=prompt)
                 self._check_active()
                 return getattr(result,'completion_text',str(result)) or ''
-            async def query(sql,params):
+            def authorized(umo):
                 self._check_active()
-                if not sql.startswith('SELECT content, updated_at FROM conversations WHERE updated_at >= ?'):
-                    raise ValueError('fixed calibration read required')
-                rows=await asyncio.to_thread(self.source.conversations,since=params[0],session_id=None,limit=30)
+                integration = getattr(self.plugin, '_presence', None)
+                host = getattr(integration, 'living_host', None)
+                if host is None:
+                    return False
+                try:
+                    scope = host.presence.peek_scope_for_session(umo)
+                    self._resources(scope=scope)
+                    return scope['session_id'] == umo
+                except (AttributeError, KeyError, PermissionError, TypeError, ValueError):
+                    return False
+            async def sample(since, limit):
+                self._check_active()
+                rows = await self.source.calibration_sample(since=since, limit=limit, authorized=authorized)
                 self._check_active();return rows
-            result=await mood.run_daily_calibration(query,call,plugin_data_dir=self.plugin_data_dir,guard=self._check_active)
+            result=await mood.run_daily_calibration(sample,call,plugin_data_dir=self.plugin_data_dir,guard=self._check_active)
             self.metrics['calibration_finished']+=1
             return result
 

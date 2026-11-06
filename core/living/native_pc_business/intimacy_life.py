@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import json
 import random
-import sqlite3
 import time
 from typing import Any
 
 from astrbot.api import logger
+from ..native_insight_source import AstrBotConversationReader, InsightSourceUnavailable
+from ....identity import canonical_data_directory
 
 from .helpers import _now_ts, _safe_float, _safe_int, _single_line
 
@@ -257,7 +258,7 @@ class IntimacyLifeMixin:
     def _export_intimacy_cards_to_files(self) -> None:
         """把工艺卡/规则卡/种子语料导出为可见文件（WebUI/dashboard可读，只读参考）。"""
         import os
-        base = "/AstrBot/data/plugin_data/astrbot_plugin_private_companion/intimacy_cards"
+        base = canonical_data_directory() / "intimacy_cards"
         os.makedirs(base, exist_ok=True)
         exports = {
             "情色工艺卡.md": EROTIC_CRAFT_CARD,
@@ -279,7 +280,10 @@ class IntimacyLifeMixin:
             if not isinstance(user, dict) or not self._is_target_private_user(str(uid), user):
                 continue
             state = self._intimacy_state(user)
-            distill_path = os.path.join(base, f"蒸馏语料_{uid}.json")
+            # The actual host-provided identity may contain non-filename characters.
+            import hashlib
+            safe_id = hashlib.sha256(str(uid).encode()).hexdigest()[:24]
+            distill_path = os.path.join(base, f"蒸馏语料_{safe_id}.json")
             with open(distill_path, "w", encoding="utf-8") as f:
                 json.dump({"corpus": state.get("corpus", []), "lexicon": state.get("lexicon", [])}, f, ensure_ascii=False, indent=1)
         logger.info("[PrivateCompanion][intimacy] 工艺卡已导出到 %s", base)
@@ -290,7 +294,7 @@ class IntimacyLifeMixin:
     async def _api_get_intimacy_cards(self, request=None) -> dict:
         """WebUI API：返回所有关系语料卡片。"""
         import os
-        base = "/AstrBot/data/plugin_data/astrbot_plugin_private_companion/intimacy_cards"
+        base = canonical_data_directory() / "intimacy_cards"
         cards = []
 
         tier_map = {"轻熟": "familiar", "暧昧": "ambiguous", "深爱": "deep", "缠绵": "passionate"}
@@ -480,40 +484,24 @@ class IntimacyLifeMixin:
 
     # ---------- 自蒸馏 ----------
 
-    def _intimacy_recent_dialogue(self, session: str, limit: int = 60) -> list[tuple[str, str]]:
+    async def _intimacy_recent_dialogue(self, session: str, limit: int = 60) -> list[tuple[str, str]]:
+        """Read only the exact bound private conversation via AstrBot."""
         try:
-            conn = sqlite3.connect("/AstrBot/data/data_v4.db", timeout=10)
-            conn.execute("PRAGMA busy_timeout=10000")
-            row = conn.execute(
-                "SELECT content FROM conversations WHERE user_id=? ORDER BY updated_at DESC LIMIT 1",
-                (session,),
-            ).fetchone()
-            conn.close()
-            if not row:
-                return []
-            turns = json.loads(row[0])
-            if not isinstance(turns, list):
-                return []
-            out: list[tuple[str, str]] = []
-            for t in turns[-limit:]:
-                if not isinstance(t, dict):
-                    continue
-                role = str(t.get("role") or "")
-                content = t.get("content")
-                text = ""
-                if isinstance(content, str):
-                    text = content
-                elif isinstance(content, list):
-                    text = " ".join(
-                        p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
-                    )
-                text = _single_line(text, 160)
-                if text and not text.startswith("【"):
-                    out.append((role, text))
-            return out
-        except Exception as e:
-            logger.warning("[PrivateCompanion][intimacy] 读取对话历史失败: %s", e)
+            turns = await AstrBotConversationReader(self.context).current_history(session)
+        except (ValueError, InsightSourceUnavailable):
             return []
+        out: list[tuple[str, str]] = []
+        for turn in turns[-limit:]:
+            if not isinstance(turn, dict) or turn.get("role") not in {"user", "assistant"}:
+                continue
+            content = turn.get("content")
+            if isinstance(content, list):
+                content = " ".join(str(part.get("text") or "") for part in content
+                                   if isinstance(part, dict) and part.get("type") == "text")
+            text = _single_line(content, 160) if isinstance(content, str) else ""
+            if text and not text.startswith("【"):
+                out.append((turn["role"], text))
+        return out
 
     async def _maybe_distill_intimacy_corpus(self, user: dict[str, Any]) -> None:
         """每日一次：从真实对话蒸馏高质量亲密回合与新词汇。"""
@@ -530,8 +518,10 @@ class IntimacyLifeMixin:
         # 失败冷却：3小时内不重试（避免每tick打一次）
         if _now_ts() < _safe_float(state.get("distill_retry_after"), 0):
             return
-        session = _single_line(user.get("umo"), 80) or ""
-        turns = self._intimacy_recent_dialogue(session)
+        session = user.get("umo")
+        if not isinstance(session, str) or ":FriendMessage:" not in session:
+            return
+        turns = await self._intimacy_recent_dialogue(session)
         if len(turns) < 6:
             return
         dialogue_text = "\n".join(f"{'他' if r == 'user' else '她'}：{t}" for r, t in turns[-50:])

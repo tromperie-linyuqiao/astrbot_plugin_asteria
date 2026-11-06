@@ -14,32 +14,35 @@ import time
 from typing import Any
 
 from astrbot.api import logger
+from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
 from .helpers import _single_line
 
-MUSIC_DB_PATH = "/AstrBot/data/plugin_data/astrbot_plugin_private_companion/music_library.json"
+def _music_reference_path() -> str:
+    return os.path.join(get_astrbot_plugin_data_path(), "astrbot_plugin_private_companion", "music_library.json")
 
 
 class MusicLifeMixin:
     """曲库生活。"""
 
     def _music_db(self) -> dict[str, Any]:
+        path = _music_reference_path()
         cache = getattr(self, "_music_db_cache", None)
         try:
-            mtime = os.path.getmtime(MUSIC_DB_PATH)
+            mtime = os.path.getmtime(path)
         except Exception:
             return {}
-        if cache and cache[0] == mtime:
+        if cache and cache[0] == (path, mtime):
             return cache[1]
         try:
-            with open(MUSIC_DB_PATH, encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 db = json.load(f)
         except Exception as e:
             logger.warning("[PrivateCompanion][music] 曲库读取失败: %s", e)
             return {}
         if not isinstance(db, dict):
             db = {}
-        self._music_db_cache = (mtime, db)
+        self._music_db_cache = ((path, mtime), db)
         return db
 
     def _music_capability_hint(self) -> str:

@@ -11,12 +11,12 @@ import struct
 import subprocess
 import sys
 import time
-import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
+from ..async_http import read_http
 try:
     from astrbot.api.message_components import Plain, Record
 except ImportError:
@@ -2659,22 +2659,13 @@ Provider 规则：{emotion_rule}
             return
         url = str(getattr(self, "tts_live_subtitle_url", "") or "").strip() or "http://127.0.0.1:18081/show"
 
-        def _post() -> None:
-            payload = json.dumps({"text": cleaned}, ensure_ascii=False).encode("utf-8")
-            request = urllib.request.Request(
-                url,
-                data=payload,
-                headers={"Content-Type": "application/json; charset=utf-8"},
-                method="POST",
-            )
-            with urllib.request.urlopen(request, timeout=2.0) as response:
-                response.read(256)
-
+        payload = json.dumps({"text": cleaned}, ensure_ascii=False).encode("utf-8")
         try:
-            await asyncio.to_thread(_post)
-            logger.info("[PrivateCompanion] 已同步 TTS 文本到直播打字机字幕: %s", _single_line(cleaned, 80))
-        except Exception as exc:
-            logger.debug("[PrivateCompanion] TTS 直播字幕同步失败: %s", _single_line(exc, 120))
+            await read_http("POST", url, timeout=2, maximum=0, data=payload,
+                            headers={"Content-Type": "application/json; charset=utf-8"})
+            logger.info("[PrivateCompanion] 已同步 TTS 文本到直播打字机字幕")
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.debug("[PrivateCompanion] TTS 直播字幕同步失败: %s", type(exc).__name__)
 
     async def _after_tts_audio_generated(
         self,

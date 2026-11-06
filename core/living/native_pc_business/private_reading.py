@@ -32,6 +32,7 @@ from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 from xml.etree import ElementTree as ET
 
 from astrbot.api import AstrBotConfig, logger
+from astrbot.core.utils.astrbot_path import get_astrbot_plugin_path
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 try:
     from astrbot.api.message_components import At, Image, Plain, Record, Reply
@@ -250,7 +251,7 @@ class PrivateReadingMixin:
     def _jm_cosmos_plugin_dir(self) -> Path:
         candidates = [
             Path(__file__).resolve().parent.parent / "astrbot_plugin_jm_cosmos",
-            Path(self.data_dir).parent.parent / "plugins" / "astrbot_plugin_jm_cosmos",
+            Path(get_astrbot_plugin_path()) / "astrbot_plugin_jm_cosmos",
         ]
         for path in candidates:
             if (path / "main.py").exists():
@@ -701,7 +702,7 @@ class PrivateReadingMixin:
             )
             persona = _single_line(self._get_default_persona_prompt(), 1200)
             schedule_persona = _single_line(getattr(self, "schedule_persona_prompt", ""), 800)
-            worldview_context = _single_line(self._format_worldview_adaptation_prompt(), 1200)
+            worldview_context = _single_line(await self._format_worldview_with_knowledge(), 1200)
             daily_state = self.data.get("daily_state", {})
             state_text = _single_line(
                 self._format_state_for_prompt(daily_state if isinstance(daily_state, dict) else {}),

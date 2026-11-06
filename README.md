@@ -78,6 +78,13 @@
 - 会话、日常、语料及共享记忆随请求提供。共享内容的权限在加入前复查，既有结构化历史中的旧注入片段在请求投影中过滤。
 - 本轮使用隔离 SDK 与网页验证，模型回复质量和手机设备表现待实测。发布仅含通用插件源码，沿用已发布的 Asteria Chat 2.7.1。
 
+## AstrBot 市场审核整改（0.75.11）
+
+- 移除了定时改写会话历史及相关写入代码。数据洞察、情绪分析、语料整理使用 AstrBot 会话接口，只读；知识资料通过知识库接口读取。已保存历史不会回写或补写。
+- 插件统一使用 AstrBot logger；桥接、图片、字幕和通知请求改用异步 HTTP，限制响应大小和超时。
+- 新组件资料保存在 AstrBot 提供的 Asteria 数据目录。已确认由 Asteria 持有的历史存储仍原位兼容；未自动复制、移动或删除历史资料。
+- APP 虚构互动中的明确退开会结束已有接触，明确的短暂停请求不因引号或疑问误触发。原有临时上下文机制不变。Android 客户端维持上一版。
+
 ## 本轮改进
 
 - 细分部位与用户动作，保存姿态、相对位置和接触状态；明确结束接触，持续状态不靠时间重复增加数值。
@@ -117,7 +124,7 @@ https://cdn.jsdelivr.net/gh/tromperie-linyuqiao/astrbot_plugin_asteria@main/mark
 
 [下载 Android 安装包](https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria/releases) · [客户端说明](client/asteria-chat/README.md)
 
-当前发布：**Asteria 0.75.10 / Asteria Chat 2.7.1（code 79）**。在 Releases 选择对应版本的源码 ZIP 或公开客户端 APK；旧版文件保留，不代表当前版本。公开客户端不预置服务器，包名与私人 Texas Chat 不同。
+当前发布：**Asteria 0.75.11 / Asteria Chat 2.7.1（code 79）**。在 Releases 选择对应版本的源码 ZIP 或公开客户端 APK；旧版文件保留，不代表当前版本。公开客户端不预置服务器，包名与私人 Texas Chat 不同。
 
 客户端连接你自己的 AstrBot 服务，复用现有角色、模型与聊天历史。默认不预置服务器或账号。服务端连接配置见 [反向代理示例](deploy/nginx-chat.conf.example)。
 

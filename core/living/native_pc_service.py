@@ -43,7 +43,8 @@ class NativePCService(_Business):
     """
 
     def __init__(self, context, config, *, legacy_closed, authorize,
-                 send_chain=None, platform_action=None, register_ui=False, journal=None, music_library_reader=None):
+                 send_chain=None, platform_action=None, register_ui=False, journal=None, music_library_reader=None,
+                 data_dir=None):
         if not callable(legacy_closed) or not callable(authorize):
             raise ValueError('actual legacy closure and current TLS authority callbacks required')
         if legacy_closed() is not True:
@@ -63,7 +64,10 @@ class NativePCService(_Business):
         if journal is not None and not isinstance(journal, LivingJournal): raise ValueError('existing LivingJournal required')
         # Original storage backend, data directory, locks, indexes and persisted
         # business state are reused. No state is re-created or bulk imported.
-        super().__init__(context, config)
+        if data_dir is None:
+            from ...identity import canonical_data_directory
+            data_dir = canonical_data_directory() / 'companion'
+        super().__init__(context, config, data_dir=data_dir)
         self._tls_apply_ownership()
         self._tls_pin_sources()
 

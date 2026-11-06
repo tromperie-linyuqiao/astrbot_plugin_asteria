@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import logging
+from astrbot.api import logger
 import re
 from typing import Any
-
-try:
-    from astrbot.api import logger  # type: ignore
-except Exception:  # pragma: no cover - useful for local syntax/unit checks
-    logger = logging.getLogger("MemoryCompanion")
 
 try:
     from astrbot.core.agent.message import TextPart

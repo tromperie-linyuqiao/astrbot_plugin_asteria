@@ -62,11 +62,14 @@ def _unpack(value):
 class NativeServerIntegrations:
     def __init__(self, plugin):
         from astrbot.api.star import StarTools
-        from ...identity import data_directory
+        from ...identity import component_data_directory, data_directory
         self.plugin, self.context = plugin, plugin.context
         self.data_dir = Path(data_directory(StarTools))
-        self.phone_data_dir = self.data_dir.parent/'astrbot_plugin_phone_perception'
-        self.flow_store_path = self.data_dir.parent/'astrbot_plugin_dialogue_flow'/'preferences.db'
+        keep_phone = plugin.config.get('living_phone_native_enabled') is True
+        self.phone_data_dir = component_data_directory('phone', 'astrbot_plugin_phone_perception',
+            retain_existing=keep_phone, markers=('state.json', 'origins.json', 'diary.jsonl', 'playlist.json'))
+        self.flow_store_path = component_data_directory('dialogue_flow', 'astrbot_plugin_dialogue_flow',
+            retain_existing=keep_phone, markers=('preferences.db',))/'preferences.db'
         self._config_lock = threading.RLock()
         self._lock = asyncio.Lock()
         self._prepared_phone = None
@@ -217,7 +220,7 @@ class NativeServerIntegrations:
 
     def _make_insight(self):
         from .native_insight_center import NativeInsightCenter
-        self.insight = NativeInsightCenter(self.plugin, plugin_data_dir=self.data_dir.parent)
+        self.insight = NativeInsightCenter(self.plugin)
         self.plugin._native_insight = self.insight
         return self.insight
 
@@ -481,8 +484,11 @@ class NativeServerIntegrations:
         # host in NativeProactiveChatFullOwner._prepare_native.
         if host is None:
             return None
-        self.proactive_chat=NativeProactiveChatHost(self.plugin,host,values,
-            self.data_dir.parent/'astrbot_plugin_proactive_chat',
+        from ...identity import component_data_directory
+        directory = component_data_directory('proactive_chat', 'astrbot_plugin_proactive_chat',
+            retain_existing=self.plugin.config.get('living_proactive_chat_native_enabled') is True,
+            markers=('session_data.json', 'session_overrides.json', 'notification_cache.json'))
+        self.proactive_chat=NativeProactiveChatHost(self.plugin,host,values,directory,
             legacy_closed=self._proactive_chat_legacy_closed,
             authorize=lambda scope:host.authorized_scope(scope) and host.runtime.native_services._delivery_allowed(scope))
         self.plugin._native_proactive_chat=self.proactive_chat

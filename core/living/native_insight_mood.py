@@ -7,27 +7,20 @@
 
 设计依据: 词典法是冷启动底线(零成本全覆盖), LLM校准是增量精修(低置信度的日优先)。
 本模块独立于插件骨架(main.py/adapters.py), 由 main.py 注入依赖调用:
-- mood_timeline_impl(query_db_fn, db_path, days): 情绪时间线报告(≤400字)
 - llm_calibrate_daily(date_str, sample_msgs, text_score, provider_fn): 单日LLM校准
-- run_daily_calibration(query_db_fn, provider_fn, plugin_data_dir, lookback): 定时校准钩子
+- run_daily_calibration(read_sample, provider_fn, plugin_data_dir, lookback): 定时校准钩子
   (每日校准成本: ~lookback天×5条×30token)
 """
 
 import asyncio
-import inspect
 import json
 import os
 import re
-import sqlite3
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
-try:
-    from astrbot.api import logger
-except Exception:  # 独立编译/测试时无astrbot环境
-    import logging
-
-    logger = logging.getLogger("insight_center")
+from astrbot.api import logger
+from ...identity import canonical_data_directory
 
 # 本地时区(+08:00), 与 gather/analysis 保持一致
 LOCAL_TZ = timezone(timedelta(hours=8))
@@ -85,15 +78,6 @@ def _now() -> datetime:
 def _clamp(v: float, lo: float, hi: float) -> float:
     """clamp到[lo, hi]。"""
     return max(lo, min(hi, v))
-
-
-def _plugin_data_dir() -> str:
-    """plugin_data基准路径: 优先官方API, 回退容器内默认路径。"""
-    try:
-        from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
-        return get_astrbot_plugin_data_path()
-    except Exception:
-        return "/AstrBot/data/plugin_data"
 
 
 def _parse_ts(v) -> "datetime | None":
@@ -173,28 +157,6 @@ def _bounded(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# DB读取(行形状自适应 + 本地sqlite回退, 同gather.py模式)
-# ---------------------------------------------------------------------------
-
-def _row_dict(row, keys) -> dict:
-    """行形状自适应: dict / sqlite3.Row / tuple。"""
-    if isinstance(row, dict):
-        return row
-    if isinstance(row, sqlite3.Row):
-        return dict(row)
-    if isinstance(row, (tuple, list)):
-        return dict(zip(keys, row))
-    return {}
-
-
-async def _query_rows(query_db_fn, db_path: str, sql: str, params: tuple) -> list:
-    if not callable(query_db_fn):
-        raise RuntimeError('explicit_readonly_source_required')
-    result = query_db_fn(sql, params)
-    return await result if inspect.isawaitable(result) else result
-
-
-
 def _text_signal(messages: list) -> tuple:
     """文本情绪信号 → (分数[-1,+1], 消息样本数)。
 
@@ -279,52 +241,6 @@ def _behavior_signal(day_msgs: list, baseline_len: float, baseline_freq: float) 
 # 信号3: 生活信号
 # ---------------------------------------------------------------------------
 
-def _load_life_texts(max_days: int = 14) -> dict:
-    """dynamic_life_state时间线 → {date_str: 文本dump}。
-
-    发现模式同gather.py: 最近max_days修改过的JSON(下探1层子目录),
-    文件名日期优先, 回退mtime日期, 同日多文件合并。
-    """
-    def _sync() -> dict:
-        ls_dir = os.path.join(_plugin_data_dir(), "astrbot_plugin_dynamic_life_state")
-        if not os.path.isdir(ls_dir):
-            return {}
-        cutoff_ts = (_now() - timedelta(days=max_days)).timestamp()
-        files = []
-        for root, dirs, names in os.walk(ls_dir):
-            if root.count(os.sep) - ls_dir.count(os.sep) > 1:
-                dirs[:] = []
-                continue
-            for fn in names:
-                if not fn.endswith(".json"):
-                    continue
-                p = os.path.join(root, fn)
-                try:
-                    if os.path.getmtime(p) >= cutoff_ts:
-                        files.append(p)
-                except OSError:
-                    continue
-        texts = {}
-        files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-        for p in files[:10]:
-            data = _load_json(p)
-            if data is None:
-                continue
-            m = re.search(r"(\d{4})[-_]?(\d{2})[-_]?(\d{2})", os.path.basename(p))
-            if m:
-                day = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
-            else:
-                try:
-                    day = datetime.fromtimestamp(os.path.getmtime(p)).strftime("%Y-%m-%d")
-                except OSError:
-                    continue
-            dump = json.dumps(data, ensure_ascii=False)
-            texts[day] = (texts[day] + " " + dump) if day in texts else dump
-        return texts
-
-    return _sync()
-
-
 def _life_scan(text: str) -> tuple:
     """生活文本 → (信号分或None, 特征标签列表); 空文本返回(None, [])。"""
     if not text:
@@ -397,7 +313,7 @@ def _group_by_day(rows: list) -> dict:
     """
     by_day = {}
     for row in rows:
-        r = _row_dict(row, ("content", "updated_at"))
+        r = row if isinstance(row, dict) else {}
         conv_time = _conv_local_time(r.get("updated_at"))
         for msg in _load_content(r.get("content")):
             if not isinstance(msg, dict) or msg.get("role") != "user":
@@ -525,38 +441,6 @@ def _render_timeline(results: list, days: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 核心入口1: 情绪时间线
-# ---------------------------------------------------------------------------
-
-async def mood_timeline_impl(query_db_fn=None, db_path: str = "/AstrBot/data/data_v4.db", days: int = 7) -> str:
-    """情绪时间线: 三类信号加权 → 按日聚合 → 突变/低谷检测 → LLM校准分替换。"""
-    try:
-        days = max(1, min(int(days), 30))
-        fetch_days = days + 7  # 多拿7天做行为基线
-        cutoff = (
-            (_now() - timedelta(days=fetch_days)).astimezone(timezone.utc).replace(tzinfo=None)
-            .strftime("%Y-%m-%d %H:%M:%S")
-        )
-        sql = "SELECT content, updated_at FROM conversations WHERE updated_at >= ? ORDER BY updated_at DESC LIMIT ?"
-        rows = await _query_rows(query_db_fn, db_path, sql, (cutoff, _SAMPLE_CONV))
-        if not rows:
-            return "🎭 情绪时间线\n\n暂无对话数据(数据库不可用或 conversations 表为空)。"
-
-        by_day, life_texts, cal = await asyncio.gather(
-            asyncio.to_thread(_group_by_day, rows),
-            asyncio.to_thread(_load_life_texts, fetch_days),
-            asyncio.to_thread(_load_calibration, _plugin_data_dir()),
-        )
-        results = await asyncio.to_thread(_eval_days, by_day, life_texts, cal, days)
-        if not results:
-            return "🎭 情绪时间线\n\n最近无用户消息, 无法分析。"
-        return await asyncio.to_thread(_render_timeline, results, days)
-    except Exception as e:
-        logger.warning(f"[mood] 时间线生成异常: {e}")
-        return f"🎭 情绪时间线\n\n生成失败: {e}"
-
-
-# ---------------------------------------------------------------------------
 # LLM校准
 # ---------------------------------------------------------------------------
 
@@ -599,11 +483,15 @@ async def llm_calibrate_daily(date_str: str, sample_msgs: list, text_score: floa
 
 
 # ---------------------------------------------------------------------------
-# 校准结果持久化(plugin_data/insight_center/mood_calibration.json)
+# 校准结果写入 Asteria 自有目录。
 # ---------------------------------------------------------------------------
 
 def _cal_path(plugin_data_dir) -> str:
-    return os.path.join(plugin_data_dir or _plugin_data_dir(), _CAL_DIR, CALIBRATION_FILE)
+    base = (plugin_data_dir or canonical_data_directory()) / _CAL_DIR
+    path = base / CALIBRATION_FILE
+    if path.resolve() != path:
+        raise RuntimeError("校准文件不能重定向到其他路径")
+    return path
 
 
 def _load_calibration(plugin_data_dir) -> dict:
@@ -623,7 +511,7 @@ def _save_calibration(plugin_data_dir, data: dict) -> None:
 # 核心入口2: 定时校准钩子(供main.py的定时任务调用)
 # ---------------------------------------------------------------------------
 
-async def run_daily_calibration(query_db_fn, provider_fn, plugin_data_dir=None, lookback: int = 3, guard=None) -> str:
+async def run_daily_calibration(read_sample, provider_fn, plugin_data_dir=None, lookback: int = 3, guard=None) -> str:
     """校准最近lookback天中词典置信度<0.7的日子(已校准过的日跳过)。
 
     流程: 读最近lookback+7天消息 → 分日算词典分+置信度 → 选低置信度日
@@ -634,24 +522,22 @@ async def run_daily_calibration(query_db_fn, provider_fn, plugin_data_dir=None, 
         if not provider_fn:
             return "[mood校准] 未注入LLM provider, 跳过"
         lookback = max(1, min(int(lookback), 7))
-        base = plugin_data_dir or _plugin_data_dir()
+        base = plugin_data_dir or canonical_data_directory()
         fetch_days = lookback + 7  # 基线窗口与时间线保持一致
         cutoff = (
             (_now() - timedelta(days=fetch_days)).astimezone(timezone.utc).replace(tzinfo=None)
             .strftime("%Y-%m-%d %H:%M:%S")
         )
-        sql = "SELECT content, updated_at FROM conversations WHERE updated_at >= ? ORDER BY updated_at DESC LIMIT 30"
-        rows = await _query_rows(query_db_fn, "/AstrBot/data/data_v4.db", sql, (cutoff,))
+        rows = await read_sample(cutoff, 30)
         if not rows:
             return "[mood校准] 近期无对话数据, 跳过"
 
-        by_day, life_texts, cal = await asyncio.gather(
+        by_day, cal = await asyncio.gather(
             asyncio.to_thread(_group_by_day, rows),
-            asyncio.to_thread(_load_life_texts, fetch_days),
             asyncio.to_thread(_load_calibration, base),
         )
         # _eval_days(lookback)窗口即最近lookback天; 只校准置信度<0.7且未校准过的日
-        results = await asyncio.to_thread(_eval_days, by_day, life_texts, cal, lookback)
+        results = await asyncio.to_thread(_eval_days, by_day, {}, cal, lookback)
         targets = [r for r in results if r["conf"] < 0.7 and r["date"] not in cal]
         if not targets:
             return f"[mood校准] 最近{lookback}天词典置信度均≥0.7或已校准, 无需校准"
@@ -681,4 +567,4 @@ async def run_daily_calibration(query_db_fn, provider_fn, plugin_data_dir=None, 
         return f"[mood校准] 失败: {e}"
 
 
-__all__ = ["mood_timeline_impl", "llm_calibrate_daily", "run_daily_calibration"]
+__all__ = ["llm_calibrate_daily", "run_daily_calibration"]

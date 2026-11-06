@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import json
+import asyncio
 import re
-import sqlite3
 import unicodedata
-from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
-from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+from ..astrbot_knowledge_reader import AstrBotKnowledgeReader
 
 from .helpers import _single_line
 
@@ -42,95 +40,52 @@ class AstrBotKnowledgeMixin:
                 break
         return ids
 
-    def _astrbot_knowledge_root(self) -> Path:
+    async def _astrbot_knowledge_sources(self) -> list[dict[str, Any]]:
+        reader = AstrBotKnowledgeReader(self.context)
+        items = []
         try:
-            return Path(get_astrbot_data_path()) / "knowledge_base"
-        except Exception:
-            data_dir = Path(str(getattr(self, "data_dir", "") or ".")).resolve()
-            return data_dir.parent.parent / "knowledge_base"
-
-    def _astrbot_knowledge_sources(self) -> list[dict[str, Any]]:
-        root = self._astrbot_knowledge_root()
-        db_path = root / "kb.db"
-        if not db_path.exists():
-            return []
-        try:
-            conn = sqlite3.connect(str(db_path))
-            conn.row_factory = sqlite3.Row
-            bases = conn.execute(
-                "select kb_id, kb_name, description, emoji, doc_count, chunk_count, updated_at "
-                "from knowledge_bases order by updated_at desc, kb_name asc"
-            ).fetchall()
-            docs = conn.execute(
-                "select kb_id, doc_id, doc_name, file_type, chunk_count, updated_at "
-                "from kb_documents order by updated_at desc, doc_name asc"
-            ).fetchall()
-            conn.close()
+            async with asyncio.timeout(8):
+                for base in (await reader.bases())[:30]:
+                    kb_id = base.kb_id
+                    helper = await reader.base(kb_id)
+                    if helper is None:
+                        continue
+                    documents = [
+                        dict(id=f"doc:{kb_id}:{doc.doc_id}", type="document", kb_id=kb_id,
+                             doc_id=doc.doc_id, name=doc.doc_name or doc.doc_id,
+                             file_type=str(doc.file_type or ""), chunk_count=int(doc.chunk_count or 0),
+                             updated_at=str(doc.updated_at or ""))
+                        for doc in await reader.documents(helper, limit=200)
+                    ]
+                    items.append(dict(id=f"kb:{kb_id}", type="knowledge_base", kb_id=kb_id,
+                        name=base.kb_name or kb_id, description=base.description or "", emoji=base.emoji or "",
+                        doc_count=int(base.doc_count or len(documents)), chunk_count=int(base.chunk_count or 0),
+                        updated_at=str(base.updated_at or ""), documents=documents))
         except Exception as exc:
-            logger.warning(f"[PrivateCompanion] 读取 AstrBot 知识库列表失败: {exc}")
+            logger.warning("[Asteria] AstrBot 知识库目录暂不可用: %s", type(exc).__name__)
             return []
-
-        docs_by_kb: dict[str, list[dict[str, Any]]] = {}
-        for row in docs:
-            kb_id = str(row["kb_id"] or "").strip()
-            doc_id = str(row["doc_id"] or "").strip()
-            if not kb_id or not doc_id:
-                continue
-            docs_by_kb.setdefault(kb_id, []).append(
-                {
-                    "id": f"doc:{kb_id}:{doc_id}",
-                    "type": "document",
-                    "kb_id": kb_id,
-                    "doc_id": doc_id,
-                    "name": str(row["doc_name"] or doc_id),
-                    "file_type": str(row["file_type"] or ""),
-                    "chunk_count": int(row["chunk_count"] or 0),
-                    "updated_at": str(row["updated_at"] or ""),
-                }
-            )
-
-        items: list[dict[str, Any]] = []
-        for row in bases:
-            kb_id = str(row["kb_id"] or "").strip()
-            if not kb_id:
-                continue
-            documents = docs_by_kb.get(kb_id, [])
-            items.append(
-                {
-                    "id": f"kb:{kb_id}",
-                    "type": "knowledge_base",
-                    "kb_id": kb_id,
-                    "name": str(row["kb_name"] or kb_id),
-                    "description": str(row["description"] or ""),
-                    "emoji": str(row["emoji"] or ""),
-                    "doc_count": int(row["doc_count"] or len(documents)),
-                    "chunk_count": int(row["chunk_count"] or sum(int(doc.get("chunk_count") or 0) for doc in documents)),
-                    "updated_at": str(row["updated_at"] or ""),
-                    "documents": documents,
-                }
-            )
         return items
 
-    def _roleplay_knowledge_summary(self) -> dict[str, Any]:
+    async def _roleplay_knowledge_summary(self) -> dict[str, Any]:
         selected = self._normalize_roleplay_knowledge_source_ids(
             getattr(self, "roleplay_knowledge_source_ids", [])
         )
-        sources = self._astrbot_knowledge_sources()
-        selected_set = set(selected)
+        sources = await self._astrbot_knowledge_sources()
         available_ids = {str(item.get("id") or "") for item in sources}
         for item in sources:
             for doc in item.get("documents") or []:
                 available_ids.add(str(doc.get("id") or ""))
         return {
             "available": bool(sources),
-            "root": str(self._astrbot_knowledge_root()),
+            "root": "AstrBot 知识库接口",
+            "window": {"knowledge_bases": 30, "documents_per_base": 200},
             "sources": sources,
             "selected_ids": selected,
             "selected_count": len(selected),
             "missing_ids": [item for item in selected if item not in available_ids],
         }
 
-    def _format_roleplay_knowledge_context(
+    async def _format_roleplay_knowledge_context(
         self,
         *,
         query: str = "",
@@ -143,7 +98,7 @@ class AstrBotKnowledgeMixin:
         )
         if not selected:
             return ""
-        sources = self._astrbot_knowledge_sources()
+        sources = await self._astrbot_knowledge_sources()
         if not sources:
             return ""
 
@@ -169,7 +124,10 @@ class AstrBotKnowledgeMixin:
         candidates: list[dict[str, Any]] = []
         for kb_id in sorted(selected_kbs | set(selected_docs)):
             doc_filter = None if kb_id in selected_kbs else selected_docs.get(kb_id, set())
-            chunks = self._read_roleplay_knowledge_chunks(kb_id, doc_filter, scan_limit=max(200, chunk_budget * 80))
+            remaining = min(1200, max(200, chunk_budget * 60)) - len(candidates)
+            if remaining <= 0:
+                break
+            chunks = await self._read_roleplay_knowledge_chunks(kb_id, doc_filter, scan_limit=remaining)
             for chunk in chunks:
                 doc_id = str(chunk.get("kb_doc_id") or "")
                 chunk["kb_id"] = kb_id
@@ -368,46 +326,28 @@ class AstrBotKnowledgeMixin:
         text = unicodedata.normalize("NFKC", str(value or "")).lower()
         return re.sub(r"\s+", "", text)
 
-    def _read_roleplay_knowledge_chunks(
-        self,
-        kb_id: str,
-        doc_filter: set[str] | None,
-        *,
-        scan_limit: int = 1600,
+    async def _read_roleplay_knowledge_chunks(
+        self, kb_id: str, doc_filter: set[str] | None, *, scan_limit: int,
     ) -> list[dict[str, Any]]:
-        db_path = self._astrbot_knowledge_root() / kb_id / "doc.db"
-        if not db_path.exists():
-            return []
+        reader = AstrBotKnowledgeReader(self.context)
+        chunks = []
         try:
-            conn = sqlite3.connect(str(db_path))
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute("select text, metadata from documents order by id asc").fetchall()
-            conn.close()
+            async with asyncio.timeout(8):
+                helper = await reader.base(kb_id)
+                if helper is None:
+                    return []
+                if doc_filter is None:
+                    documents = await reader.documents(helper, limit=40)
+                else:
+                    documents = [doc for identity in sorted(doc_filter)[:40]
+                                 if (doc := await helper.get_document(identity)) is not None
+                                 and doc.doc_id == identity and doc.kb_id == kb_id]
+                for doc in documents:
+                    remaining = scan_limit - len(chunks)
+                    if remaining <= 0:
+                        break
+                    chunks.extend(await reader.chunks(helper, doc, limit=min(100, remaining)))
         except Exception as exc:
-            logger.warning(f"[PrivateCompanion] 读取 AstrBot 知识库片段失败 {kb_id}: {exc}")
+            logger.warning("[Asteria] AstrBot 知识库片段暂不可用: %s", type(exc).__name__)
             return []
-
-        chunks: list[dict[str, Any]] = []
-        for row in rows:
-            try:
-                metadata = json.loads(row["metadata"] or "{}")
-            except Exception:
-                metadata = {}
-            kb_doc_id = str(metadata.get("kb_doc_id") or "")
-            if doc_filter is not None and kb_doc_id not in doc_filter:
-                continue
-            try:
-                chunk_index = int(metadata.get("chunk_index") or 0)
-            except (TypeError, ValueError):
-                chunk_index = 0
-            chunks.append(
-                {
-                    "text": str(row["text"] or ""),
-                    "kb_doc_id": kb_doc_id,
-                    "chunk_index": chunk_index,
-                }
-            )
-            if len(chunks) >= max(1, int(scan_limit or 1600)):
-                break
-        chunks.sort(key=lambda item: (str(item.get("kb_doc_id") or ""), int(item.get("chunk_index") or 0)))
-        return chunks
+        return sorted(chunks, key=lambda row: (row["kb_doc_id"], row["chunk_index"]))

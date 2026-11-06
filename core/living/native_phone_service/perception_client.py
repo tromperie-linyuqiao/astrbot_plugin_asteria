@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
-"""桥接客户端：拉取 /state。仅用标准库（urlopen），不依赖 httpx/requests，
-与服务器 AstrBot 环境零耦合（together_companion 同款选择）。
-带进程内 TTL 缓存 + 异步锁，避免每条消息都打桥。
-"""
+"""异步桥接请求；保留原设备、授权、进程内 TTL 和状态回执。"""
 from __future__ import annotations
 
 import asyncio
 import json
 import threading
 import time
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlencode
+
+from ..async_http import HttpStatusError, HttpTransportError, read_json
 
 
 class PerceptionClient:
@@ -73,19 +71,19 @@ class PerceptionClient:
     def configured(self) -> bool:
         return bool(self.base_url) and bool(self.token)
 
-    def _fetch_once(self, stale_seconds: int, device: str | None = None) -> dict:
-        dev = device or self.device_id
-        url = f"{self.base_url}/state?device={dev}&stale_seconds={stale_seconds}"
-        req = Request(url, headers={"Authorization": f"Bearer {self.token}"})
-        with urlopen(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+    async def _json(self, method: str, path: str, *, payload: dict | None = None, maximum: int = 2 << 20):
+        with self._state_guard:
+            url, token, timeout = self.base_url + path, self.token, self.timeout
+        return await read_json(method, url, timeout=timeout, maximum=maximum,
+                               headers={"Authorization": f"Bearer {token}"}, payload=payload)
 
-    def _history_once(self, minutes: int, device: str | None = None) -> dict:
-        dev = device or self.device_id
-        url = f"{self.base_url}/history?device={dev}&minutes={minutes}"
-        req = Request(url, headers={"Authorization": f"Bearer {self.token}"})
-        with urlopen(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+    async def _fetch_once(self, stale_seconds: int, device: str | None = None) -> dict:
+        query = urlencode(dict(device=device or self.device_id, stale_seconds=stale_seconds))
+        return await self._json("GET", "/state?" + query, maximum=512 * 1024)
+
+    async def _history_once(self, minutes: int, device: str | None = None) -> dict:
+        query = urlencode(dict(device=device or self.device_id, minutes=minutes))
+        return await self._json("GET", "/history?" + query)
 
     async def get_history(self, minutes: int = 360, device: str | None = None) -> dict:
         """返回桥的 /history JSON。失败时返回 {"ok": False, "error": 中文原因}。"""
@@ -93,115 +91,70 @@ class PerceptionClient:
             return {"ok": False, "error": "插件未配置桥地址或令牌"}
         async with self._lock:
             try:
-                return await asyncio.to_thread(self._history_once, minutes, device)
-            except HTTPError as exc:
-                detail = {401: "令牌被拒绝", 503: "桥未配置令牌"}.get(exc.code, f"HTTP {exc.code}")
-                return {"ok": False, "error": detail, "status": exc.code}
-            except (URLError, TimeoutError, OSError) as exc:
+                return await self._history_once(minutes, device)
+            except HttpStatusError as exc:
+                detail = {401: "令牌被拒绝", 503: "桥未配置令牌"}.get(exc.status, f"HTTP {exc.status}")
+                return {"ok": False, "error": detail, "status": exc.status}
+            except (HttpTransportError, TimeoutError, OSError) as exc:
                 return {"ok": False, "error": f"连不上桥：{exc}"}
             except (ValueError, json.JSONDecodeError):
                 return {"ok": False, "error": "桥返回了无法解析的内容"}
             except Exception as exc:
                 return {"ok": False, "error": f"未知错误：{exc}"}
 
-    def _rotate_once(self) -> dict:
-        req = Request(
-            f"{self.base_url}/admin/rotate-token",
-            data=b"{}",
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        with urlopen(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+    async def _rotate_once(self) -> dict:
+        return await self._json("POST", "/admin/rotate-token", payload={}, maximum=128 * 1024)
 
-    def _config_call(self, method: str, payload: dict | None = None) -> dict:
-        req = Request(
-            f"{self.base_url}/client-config",
-            data=json.dumps(payload or {}).encode(),
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
-            },
-            method=method,
-        )
-        with urlopen(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+    async def _config_call(self, method: str, payload: dict | None = None) -> dict:
+        return await self._json(method, "/client-config", payload=payload, maximum=512 * 1024)
 
-    def _surprises_once(self) -> dict:
-        req = Request(
-            f"{self.base_url}/surprises",
-            headers={"Authorization": f"Bearer {self.token}"},
-        )
-        with urlopen(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+    async def _surprises_once(self) -> dict:
+        return await self._json("GET", "/surprises", maximum=512 * 1024)
 
     async def get_surprises(self) -> dict:
         """桥端惊喜内容（greetings/care 覆盖层）。失败返回空 dict（退回内置文案）。"""
         if not self.configured:
             return {}
         try:
-            data = await asyncio.to_thread(self._surprises_once)
+            data = await self._surprises_once()
             return data.get("surprises") if isinstance(data, dict) and data.get("ok") else {}
         except Exception:
             return {}
 
-    def _playlist_bridge_once(self) -> dict:
-        req = Request(
-            f"{self.base_url}/playlist",
-            headers={"Authorization": f"Bearer {self.token}"},
-        )
-        with urlopen(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+    async def _playlist_bridge_once(self) -> dict:
+        return await self._json("GET", "/playlist", maximum=4 << 20)
 
     async def get_playlist_bridge(self) -> dict | None:
         """桥端歌单主存；成功可为空，失败返回 None（退回本地）。"""
         if not self.configured:
             return None
         try:
-            data = await asyncio.to_thread(self._playlist_bridge_once)
+            data = await self._playlist_bridge_once()
             pl = data.get("playlist") if isinstance(data, dict) and data.get("ok") else None
             return pl if isinstance(pl, dict) else None
         except Exception:
             return None
 
-    def _put_playlist_once(self, playlist: dict) -> bool:
-        req = Request(
-            f"{self.base_url}/playlist",
-            data=json.dumps({"playlist": playlist}).encode(),
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
-            },
-            method="PUT",
-        )
-        with urlopen(req, timeout=self.timeout) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            return 200 <= resp.status < 300 and isinstance(result, dict) and result.get("ok") is True
+    async def _put_playlist_once(self, playlist: dict) -> bool:
+        value = await self._json("PUT", "/playlist", payload={"playlist": playlist}, maximum=512 * 1024)
+        return isinstance(value, dict) and value.get("ok") is True
 
     async def put_playlist_bridge(self, playlist: dict) -> bool:
         if not self.configured:
             return False
         try:
-            return await asyncio.to_thread(self._put_playlist_once, playlist)
+            return await self._put_playlist_once(playlist)
         except Exception:
             return False
 
-    def _devices_once(self) -> dict:
-        req = Request(
-            f"{self.base_url}/devices",
-            headers={"Authorization": f"Bearer {self.token}"},
-        )
-        with urlopen(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+    async def _devices_once(self) -> dict:
+        return await self._json("GET", "/devices", maximum=512 * 1024)
 
     async def get_devices(self) -> dict:
         if not self.configured:
             return {"ok": False, "error": "未配置"}
         try:
-            return await asyncio.to_thread(self._devices_once)
+            return await self._devices_once()
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -210,7 +163,7 @@ class PerceptionClient:
             return {"ok": False, "error": "未配置"}
         async with self._lock:
             try:
-                return await asyncio.to_thread(self._config_call, "GET")
+                return await self._config_call("GET")
             except Exception as exc:
                 return {"ok": False, "error": str(exc)}
 
@@ -219,7 +172,7 @@ class PerceptionClient:
             return {"ok": False, "error": "未配置"}
         async with self._lock:
             try:
-                return await asyncio.to_thread(self._config_call, "POST", {"config": patch})
+                return await self._config_call("POST", {"config": patch})
             except Exception as exc:
                 return {"ok": False, "error": str(exc)}
 
@@ -229,12 +182,19 @@ class PerceptionClient:
             return {"ok": False, "error": "插件未配置桥地址或令牌"}
         async with self._lock:
             try:
-                result = await asyncio.to_thread(self._rotate_once)
-                if result.get("ok"):
-                    self.token = str(result.get("token", "")).strip()
+                with self._state_guard:
+                    generation = self._generation
+                result = await self._rotate_once()
+                with self._state_guard:
+                    if generation != self._generation:
+                        return {"ok": False, "error": "桥配置已变化，旧轮换结果未应用", "code": "configuration_changed"}
+                    token = str(result.get("token") or "").strip()
+                    if result.get("ok") and token:
+                        self.token = token
+                        self.invalidate()
                 return result
-            except HTTPError as exc:
-                return {"ok": False, "error": f"HTTP {exc.code}"}
+            except HttpStatusError as exc:
+                return {"ok": False, "error": f"HTTP {exc.status}"}
             except Exception as exc:
                 return {"ok": False, "error": str(exc)}
 
@@ -256,7 +216,7 @@ class PerceptionClient:
             try:
                 with self._state_guard:
                     generation = self._generation
-                data = await asyncio.to_thread(self._fetch_once, stale_seconds, device)
+                data = await self._fetch_once(stale_seconds, device)
                 if not isinstance(data, dict):
                     raise ValueError("桥状态必须为对象")
                 with self._state_guard:
@@ -268,12 +228,12 @@ class PerceptionClient:
                         for k in sorted(self._cache, key=lambda k: self._cache[k][0])[:-8]:
                             self._cache.pop(k, None)
                     return self._state_result(cache_key, data, now)
-            except HTTPError as exc:
+            except HttpStatusError as exc:
                 detail = {401: "令牌被拒绝", 404: "设备尚无上报", 429: "请求过频",
-                          503: "桥未配置令牌"}.get(exc.code, f"HTTP {exc.code}")
-                result = {"ok": False, "error": detail, "status": exc.code}
+                          503: "桥未配置令牌"}.get(exc.status, f"HTTP {exc.status}")
+                result = {"ok": False, "error": detail, "status": exc.status}
                 code = "http_error"
-            except (URLError, TimeoutError, OSError) as exc:
+            except (HttpTransportError, TimeoutError, OSError) as exc:
                 result = {"ok": False, "error": f"连不上桥：{exc}"}
                 code = "transport_error"
             except (ValueError, json.JSONDecodeError):

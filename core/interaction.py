@@ -110,9 +110,10 @@ def snapshot(state, profile):
 
 def render(state, profile):
     value = snapshot(state, profile)
-    descriptions = [value[field]['label'] for field in ('posture', 'position') if value.get(field)]
-    descriptions.extend(str(item['action']) + '·' + item['label'] for item in value['contacts'])
-    if not descriptions:
+    if not value['available']:
         return ''
+    descriptions = [value[field]['label'] for field in ('posture', 'position') if value.get(field)]
+    contacts = '、'.join(str(item['action']) + '·' + item['label'] for item in value['contacts'])
+    descriptions.append('当前持续接触：' + (contacts or '无'))
     return ('[本会话用户明确选择的虚构互动状态；不代表现实观察或角色已经同意；'
             '最新表达与停止要求优先]\n' + '；'.join(descriptions))[:600]

@@ -14,12 +14,11 @@ from __future__ import annotations
 
 import json
 import time
-import urllib.error
-import urllib.request
 from typing import Any
 
 from astrbot.api import logger
 
+from ..async_http import read_http
 from .helpers import _now_ts, _safe_float, _safe_int, _single_line
 
 _DEVICE_STOP_WORDS = ("停", "停下", "别动", "不要动", "停下来", "关掉", "松开")
@@ -36,23 +35,19 @@ _DEVICE_DEFAULT_PORTS_HINT = "ear/tail/heart/warm/custom"
 class DeviceLifeMixin:
     """外设生活：她自主触发的外设控制通道。"""
 
-    def _device_send_stop(self, user: dict[str, Any] | None = None) -> None:
-        """立即向桥接端发送停止指令（掐断正在运行的会话），尽力而为。"""
+    async def _device_send_stop(self) -> bool:
+        """Request a stop once; a bridge response is not a physical sensor reading."""
         url, token = self._device_bridge_config()
         if not url:
-            return
+            return False
         try:
-            payload = json.dumps({"token": token}).encode("utf-8")
-            req = urllib.request.Request(
-                url.rstrip("/") + "/stop",
-                data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            urllib.request.urlopen(req, timeout=3).read(200)
-            logger.info("[PrivateCompanion][device_life] 已向桥接端发送停止指令")
-        except Exception as e:
-            logger.warning("[PrivateCompanion][device_life] 停止指令发送失败: %s", e)
+            await read_http("POST", url.rstrip("/") + "/stop", timeout=3, maximum=0,
+                            data=json.dumps({"token": token}).encode(),
+                            headers={"Content-Type": "application/json"})
+            return True
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.warning("[PrivateCompanion][device_life] 未确认停止回执: %s", type(exc).__name__)
+            return False
     """外设生活：她自主触发的外设控制通道。"""
 
     def _device_life_enabled(self) -> bool:
@@ -107,21 +102,22 @@ class DeviceLifeMixin:
             return '{"status":"rejected","message":"仅对主用户私聊可用"}'
         norm_action = _single_line(action, 24).lower()
         norm_part = _single_line(part, 24).lower()
-        if norm_action in ("stop", "停", "停下") or norm_part == "stop":
-            self._device_send_stop()
-            return '{"status":"ok","message":"已发送停止指令"}'
-
         now = _now_ts()
         state = self._device_state(user)
+        if norm_action in ("stop", "停", "停下") or norm_part == "stop":
+            state["pause_until"] = now + 600
+            if await self._device_send_stop():
+                return '{"status":"ok","message":"桥已响应停止指令；本地暂停10分钟"}'
+            return '{"status":"unknown","message":"未确认桥端停止；本地暂停10分钟"}'
 
         # 安全栏1：用户刚说停 → 立即掐断运行中的会话并进入10分钟暂停
         if state.get("pause_until", 0) and _safe_float(state.get("pause_until"), 0) > now:
             return '{"status":"paused","message":"外设处于暂停中"}'
         if self._device_recent_inbound_says_stop(user):
             state["pause_until"] = now + 600
-            self._device_send_stop()
-            logger.info("[PrivateCompanion][device_life] 检测到用户停止指令，已停止外设并暂停10分钟")
-            return '{"status":"paused","message":"检测到停止指令，外设已停止并暂停10分钟"}'
+            if await self._device_send_stop():
+                return '{"status":"paused","message":"桥已响应停止指令；本地暂停10分钟"}'
+            return '{"status":"paused","message":"未确认桥端停止；本地暂停10分钟"}'
 
         # 安全栏2：冷却
         cooldown = _safe_int(getattr(self, "device_cooldown_seconds", 45), 45, 5, 3600)
@@ -152,29 +148,28 @@ class DeviceLifeMixin:
         payload = json.dumps(
             {"token": token, "part": part, "action": action, "intensity": intensity, "duration": duration}
         ).encode("utf-8")
-        req = urllib.request.Request(
-            url.rstrip("/") + "/command",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+        if getattr(self, "_device_command_inflight", False):
+            return '{"status":"busy","message":"已有指令等待桥接端确认"}'
+        self._device_command_inflight = True
         try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                body = resp.read(2000).decode("utf-8", "replace")
+            raw, _ = await read_http("POST", url.rstrip("/") + "/command", timeout=5, maximum=2048,
+                                     data=payload, headers={"Content-Type": "application/json"})
             state["last_call_at"] = now
             state["today_count"] = _safe_int(state.get("today_count"), 0, 0) + 1
-            state["last_result"] = _single_line(body, 120)
+            state["last_result"] = _single_line(raw.decode("utf-8", "replace"), 120)
+            if _safe_float(state.get("pause_until"), 0) > now:
+                return '{"status":"paused","message":"本地已暂停；不能根据指令回执判断设备状态"}'
             logger.info(
                 "[PrivateCompanion][device_life] 外设指令已发送: part=%s action=%s intensity=%d",
                 part, action, intensity,
             )
-            return f'{{"status":"ok","part":"{part}","action":"{action}","bridge":"{state.get("last_result", "")}"}}'
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            logger.warning("[PrivateCompanion][device_life] 桥接端不可达: %s", e)
-            return '{"status":"unreachable","message":"外设桥接端不可达（设备可能离线）"}'
-        except Exception as e:
-            logger.warning("[PrivateCompanion][device_life] 外设调用异常: %s", e)
-            return '{"status":"error","message":"外设调用异常"}'
+            return json.dumps(dict(status="ok", part=part, action=action, bridge=state["last_result"]), ensure_ascii=False)
+        except (OSError, RuntimeError, ValueError) as exc:
+            state["last_call_at"] = now
+            logger.warning("[PrivateCompanion][device_life] 桥端结果未确认: %s", type(exc).__name__)
+            return '{"status":"unknown","message":"外设未确认指令结果，未重试"}'
+        finally:
+            self._device_command_inflight = False
 
     def _format_device_capability_hint(self) -> str:
         """给 system_prompt 的能力说明：让她知道身体是真实存在的。"""

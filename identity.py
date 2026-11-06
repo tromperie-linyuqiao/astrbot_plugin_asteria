@@ -5,6 +5,35 @@ PLUGIN_NAME = 'astrbot_plugin_asteria'
 DISPLAY_NAME = '星栖 Asteria'
 LEGACY_PLUGIN_NAME = 'astrbot_plugin_virtual_body'
 REPOSITORY = 'https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria'
+_OWNED_COMPONENT_DIRS = frozenset({'companion', 'memory_companion', 'phone', 'dialogue_flow',
+                                  'proactive_chat', 'insight_center', 'intimacy_cards'})
+
+
+def canonical_data_directory():
+    """Resolve the storage root through AstrBot, independent of the installation path."""
+    from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
+    parent = Path(get_astrbot_plugin_data_path()).resolve()
+    target = parent / PLUGIN_NAME
+    if target.resolve() != target:
+        raise RuntimeError('Asteria 的数据目录不能重定向到其他目录')
+    return target
+
+
+def component_data_directory(component, legacy_name, *, retain_existing, markers):
+    """New component stores belong to Asteria; keep previously owned files in place."""
+    own = canonical_data_directory()
+    if component not in _OWNED_COMPONENT_DIRS:
+        raise ValueError('unknown Asteria component')
+    path, previous = own / component, own.parent / legacy_name
+    if path.resolve() != path:
+        raise RuntimeError('组件数据目录不能重定向')
+    if not retain_existing or path.is_dir() and any(path.iterdir()):
+        return path
+    if previous.resolve() != previous:
+        raise RuntimeError('旧组件数据目录不能重定向')
+    if any((previous / name).is_file() and not (previous / name).is_symlink() for name in markers):
+        return previous
+    return path
 
 
 def ensure_single_instance(context):
@@ -32,7 +61,10 @@ def existing_data_directory(parent):
     legacy = Path(parent) / LEGACY_PLUGIN_NAME
     populated = lambda p: p.is_dir() and any(p.iterdir())
     if populated(legacy):
-        if populated(canonical):
+        # The canonical namespace may already contain component subdirectories
+        # without hosting a second primary state owner.
+        if canonical.is_dir() and any(child.name not in _OWNED_COMPONENT_DIRS or not child.is_dir()
+                                      or child.is_symlink() for child in canonical.iterdir()):
             raise RuntimeError('Asteria 与旧标识的数据目录均有资料，请明确选择，不能自动合并')
         return legacy
     return canonical

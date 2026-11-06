@@ -77,13 +77,15 @@ class NativeMCFullOwner:
         raise NativeMCLifecyclePending(code)
 
     def _native_directory(self):
-        from astrbot.api.star import StarTools
         record = getattr(self.context, RETIRED_SLOT, None)
         if self._legacy_service is not None:
             return Path(self._legacy_service.data_dir).resolve()
         if type(record) is dict and record.get('context') is self.context:
             return Path(record['service'].data_dir).resolve()
-        return Path(StarTools.get_data_dir(LEGACY)).resolve()
+        from ...identity import component_data_directory
+        return component_data_directory('memory_companion', LEGACY,
+            retain_existing=self.plugin.config.get(FLAG) is True,
+            markers=('memory_companion.db',))
 
     def _claim_native(self, directory, adapter):
         if getattr(self.context, NATIVE_SLOT, None) is not None:

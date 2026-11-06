@@ -13,7 +13,7 @@ import asyncio
 from contextvars import ContextVar
 from dataclasses import replace
 import inspect
-import logging
+from astrbot.api import logger
 from pathlib import Path
 import threading
 import weakref
@@ -772,7 +772,7 @@ class NativeMCTakeoverRuntime:
                     setattr(self.context,_SUMMARY_RECOVERY_SLOT,dict(context=self.context,
                         service=self.service,controller=self.summary,runtime=self,
                         restore=self.summary.restore))
-                logging.getLogger(__name__).warning('MC summary recovery retained: %s',type(exc).__name__)
+                logger.warning('MC summary recovery retained: %s',type(exc).__name__)
         finally:self._summary_lock.release()
         try:
             self.stop()

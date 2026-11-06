@@ -572,9 +572,9 @@ async def generate_enhanced_dream_pick(plugin, weather: dict[str, Any] | None = 
         theme_hint = f"主调偏{primary_name}，但中途会混进一点{alt_name}的质感。{primary_hint} 同时，{alt_hint}"
     persona = plugin._get_default_persona_prompt()
     worldview_adaptation = ""
-    formatter = getattr(plugin, "_format_worldview_adaptation_prompt", None)
+    formatter = getattr(plugin, "_format_worldview_with_knowledge", None)
     if callable(formatter):
-        worldview_adaptation = formatter()
+        worldview_adaptation = await formatter()
     weather_text = plugin._weather_summary_text(weather or plugin.data.get("daily_weather", {}))
     prompt = f"""
 你现在是 Private Companion 的梦境生成器。请根据本次输入的记忆碎片,写一个拟人化 Bot 今早残留的完整梦境。
@@ -958,9 +958,9 @@ async def generate_daily_diary(plugin) -> dict[str, Any]:
     creativity_instruction = _daily_diary_creativity_instruction(plugin)
     custom_direction = _single_line(getattr(plugin, "daily_diary_custom_direction", ""), 500)
     worldview_adaptation = ""
-    formatter = getattr(plugin, "_format_worldview_adaptation_prompt", None)
+    formatter = getattr(plugin, "_format_worldview_with_knowledge", None)
     if callable(formatter):
-        worldview_adaptation = formatter()
+        worldview_adaptation = await formatter()
     prompt = f"""
 请以当前人格的第一人称，写一篇今天的私人日记。只写日记，不安排主动消息、梦境素材或后续剧情。
 
