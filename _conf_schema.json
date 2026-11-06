@@ -205,7 +205,7 @@
     "description": "语言调情→身体兴奋",
     "type": "bool",
     "default": true,
-    "hint": "读 PC 对话情绪标签（只读 mtime 缓存）：亲密情绪在场时兴奋度持续爬升（托底可感知，不产生部位事件/不计今日次数/不积累耐受）。"
+    "hint": "使用当前私聊陪伴服务的近期情绪标签。匹配时提高语言状态值，触碰事件和触碰次数单独记录。"
   },
   "vb_verbal_arousal_rate": {
     "description": "语言调情爬升率",
@@ -235,7 +235,7 @@
     "description": "亲密情绪集",
     "type": "string",
     "default": "praise,comfort,comfort_need",
-    "hint": "PC 判定的亲密情绪标签（逗号分隔）。PC 实际枚举含 praise/comfort/comfort_need。命中时语言调情通道生效。"
+    "hint": "用逗号分隔。可匹配陪伴情绪事件（例如 praise、comfort、comfort_need），也兼容已自定义的情绪标签。"
   },
   "vb_adaptation_enabled": {
     "description": "长期身体记忆（日级适应）",

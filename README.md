@@ -92,6 +92,12 @@
 - 旧资料在符合归属条件时原位读取，新安装使用 Asteria 自有目录；备忘录适配器采用常规导入并保留来源校验。
 - 通用源码包不再携带已退役的陪伴页面，维护中的页面入口与来源说明仍保留。Android 客户端沿用 2.7.1。
 
+## 私聊语言反应与表情检索（0.75.13）
+
+- 私聊身体状态按当前陪伴服务中获授权会话的近期情绪标签响应，原爬升率、上限和衰减设置继续生效。
+- 表情目录支持独立搜索别名。别名用于手动查找，角色自动选表情仍依据原有语义标签。
+- 公共 Android 客户端沿用 Asteria Chat 2.7.1。
+
 ## 本轮改进
 
 - 细分部位与用户动作，保存姿态、相对位置和接触状态；明确结束接触，持续状态不靠时间重复增加数值。
@@ -131,7 +137,7 @@ https://cdn.jsdelivr.net/gh/tromperie-linyuqiao/astrbot_plugin_asteria@main/mark
 
 [下载 Android 安装包](https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria/releases) · [客户端说明](client/asteria-chat/README.md)
 
-当前发布：**Asteria 0.75.12 / Asteria Chat 2.7.1（code 79）**。在 Releases 选择对应版本的源码 ZIP 或公开客户端 APK；旧版文件保留，不代表当前版本。公开客户端不预置服务器，包名与私人 Texas Chat 不同。
+当前发布：**Asteria 0.75.13 / Asteria Chat 2.7.1（code 79）**。在 Releases 选择对应版本的源码 ZIP 或公开客户端 APK；旧版文件保留，不代表当前版本。公开客户端不预置服务器，包名与私人 Texas Chat 不同。
 
 客户端连接你自己的 AstrBot 服务，复用现有角色、模型与聊天历史。默认不预置服务器或账号。服务端连接配置见 [反向代理示例](deploy/nginx-chat.conf.example)。
 

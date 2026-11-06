@@ -1,6 +1,6 @@
 """信号适配器：四个只读源，mtime 无关直读（每分钟一轮，量级极小）。
 纪律：结构宽容（任何缺失/坏 JSON → 未激活兜底形态而非 None，0.29.1），绝不写入兄弟插件目录。纯函数无 astrbot 依赖。
-0.30.0 新增第五源 read_verbal：PC companions.json 的对话情绪（mtime 缓存——该文件较大且调用频）。"""
+语言信号直接校验当前陪伴服务提供的用户情绪记录。"""
 from __future__ import annotations
 
 import json
@@ -394,78 +394,32 @@ def _presence_rooms(manor: dict[str, Any]) -> set[str]:
     return known_rooms(manor)
 
 
-# read_verbal 的 PC 文件缓存：path → (mtime_ns, 解析出的用户情绪摘要 dict)。mtime 不变免读盘。
-_VERBAL_CACHE: dict[str, tuple[int, dict[str, tuple[str, float | None]]]] = {}
-
-
-def _verbal_users_summary(data: Any) -> dict[str, tuple[str, float | None]]:
-    """从 PC companions.json 抽 {QQ: emotion}——users.<QQ>.intent_profile.emotion 优先，
-    容错回退 users.<QQ>.emotion；非 dict/无 users 回空（结构宽容，绝不抛）。"""
-    out: dict[str, tuple[str, float | None]] = {}
-    users = data.get("users") if isinstance(data, dict) else None
-    if not isinstance(users, dict):
-        return out
-    for uid, u in users.items():
-        if not isinstance(u, dict):
-            continue
-        ip = u.get("intent_profile") if isinstance(u.get("intent_profile"), dict) else {}
-        emotion = ip.get("emotion") if ip.get("emotion") is not None else u.get("emotion")
-        if emotion is None:
-            continue
-        text = str(emotion).strip()
-        if text:
-            out[str(uid)] = (text[:32], _weather_observed_at(u.get("last_user_message_at")))
-    return out
-
-
-def read_verbal(data_dir: str, whitelist: list[str] | tuple[str, ...] | None = None,
-                emotions: Any = None, now: float | None = None,
-                ttl: float | None = None) -> dict[str, Any]:
-    """语言调情信号（0.30.0）：读 PC companions.json 的用户对话情绪标签（只读，mtime 缓存）。
-    whitelist 给定时只认白名单用户（vb 会话的 profile 白名单），全部缺失则回退全体用户的
-    首个可用情绪（排序确定性）；emotions 覆盖亲密情绪集（None 回 CONFIG.VERBAL_INTIMATE_EMOTIONS）。
-    返回 {available, emotion, is_intimate}——PC 未装/无情绪字段/白名单无命中 → available=False（不误触）。"""
-    path = os.path.normpath(os.path.join(
-        _plugin_data_dir(data_dir), "..", "astrbot_plugin_private_companion", "companions.json"))
-    try:
-        mtime = os.stat(path).st_mtime_ns
-    except OSError:
-        _VERBAL_CACHE.pop(path, None)
-        return {"available": False, "emotion": "", "is_intimate": False}
-    cached = _VERBAL_CACHE.get(path)
-    if cached is None or cached[0] != mtime:
-        summary = _verbal_users_summary(_read_json(path))
-        if len(_VERBAL_CACHE) >= 4:
-            _VERBAL_CACHE.pop(next(iter(_VERBAL_CACHE)), None)
-        _VERBAL_CACHE[path] = (mtime, summary)
-    else:
-        summary = cached[1]
-    selected: tuple[str, float | None] | None = None
-    if whitelist:
-        # 白名单口径：只认白名单用户的情绪，全缺失 → available=False（非白名单不误触）
-        for uid in whitelist:
-            if str(uid) in summary:
-                selected = summary[str(uid)]
-                break
-    elif summary:
-        selected = summary[sorted(summary)[0]]   # 未传白名单：首个可用用户（排序确定性）
-    if selected is None:
-        return {"available": False, "emotion": "", "is_intimate": False}
-    emotion, observed_at = selected
-    now = _time.time() if now is None else float(now)
-    ttl = CONFIG.VERBAL_AROUSAL_TAU if ttl is None else float(ttl)
-    future = observed_at is not None and observed_at - now > 300
-    source_time = mtime / 1_000_000_000
-    observed_at = min(source_time, observed_at) if observed_at is not None else source_time
-    age = now - observed_at
-    if future or age >= ttl or age < -300:
-        # 保留旧增益/衰减规则；离线旧标签不再每分钟重新给身体添火。
-        return {"available": False, "emotion": "", "is_intimate": False,
-                "stale": True, "age_seconds": max(0, round(age))}
-    pool = emotions if emotions is not None else CONFIG.VERBAL_INTIMATE_EMOTIONS
-    words = {str(w).strip().lower() for w in (pool or ()) if str(w).strip()}
-    return {"available": True, "emotion": emotion,
-            "is_intimate": emotion.strip().lower() in words}
+def verbal_intent_matches(user: Any, emotions: tuple[str, ...], now: float) -> bool:
+    """判断当前用户的近期陪伴情绪标签是否命中配置。"""
+    if not isinstance(user, dict):
+        return False
+    intent = user.get("intent_profile")
+    if not isinstance(intent, dict):
+        intent = {}
+    if intent.get("emotion_target") == "other":
+        return False
+    message_at = _weather_observed_at(user.get("last_user_message_at"))
+    if message_at is None or not -300 <= now - message_at < CONFIG.VERBAL_AROUSAL_TAU:
+        return False
+    if "updated_at" in intent:
+        # The classifier records local time to the minute. A later inbound
+        # message must not extend the life of an older, unreplaced label.
+        classified_at = _weather_observed_at(intent["updated_at"])
+        if classified_at is None or not -300 <= message_at - classified_at < 60:
+            return False
+    emotion = intent.get("emotion")
+    if emotion is None:
+        emotion = user.get("emotion")
+    words = {word.strip().lower() for word in emotions if word.strip()}
+    for label in (intent.get("emotion_event"), emotion):
+        if isinstance(label, str) and label.strip().lower() in words:
+            return True
+    return False
 
 
 def read_all(data_dir: str, manor: dict | None = None,

@@ -286,7 +286,7 @@ class ChatExpressions:
                 extras = self.journal.fetch(SEMANTICS, row['id'], scope)
                 extra = extras['data'] if extras else {}
                 result.append({'id': identity, 'asset_id': identity, 'name': extra.get('name') or row['caption'][:32] or '表情 ' + row['id'][:6],
-                    'meaning': row['caption'], 'tags': row['tags'],
+                    'meaning': row['caption'], 'tags': row['tags'], 'aliases': extra.get('aliases', []),
                     'scenarios': extra.get('scenarios', []), 'pairing': extra.get('pairing', ''),
                     'enabled': row['enabled'], 'mime_type': row['media_type'], 'revision': row['revision'],
                     'width': row['width'], 'height': row['height'], 'resource_ref': identity,
@@ -320,7 +320,7 @@ class ChatExpressions:
                 continue
             if filter_name not in {'all', 'disabled', 'hidden'} and not row['enabled']:
                 continue
-            if query and query not in _normalize(' '.join([row['name'], row['meaning'], *row['tags'], *row['scenarios']])):
+            if query and query not in _normalize(' '.join([row['name'], row['meaning'], *row['tags'], *row['scenarios'], *row.get('aliases', [])])):
                 continue
             if filter_name not in {'all', 'hidden', 'disabled'} and user['hidden']:
                 continue
@@ -344,7 +344,7 @@ class ChatExpressions:
             result.sort(key=lambda row: (row['user_preference']['quick_order'], not row['user_preference']['favorite'], row['name']))
         return {'items': result, 'total': len(result), 'shared_library': 'existing_tls_manual_assets',
                 'preference_scope': {'owner': scope['user_id'], 'persona_id': scope['character_id']},
-                'preference_separation': ['user', 'texas']}
+                'preference_separation': ['user', 'texas'], 'search_aliases_supported': True}
 
     def preview(self, identity):
         row = self.asset(identity, allow_disabled=True)
@@ -390,7 +390,7 @@ class ChatExpressions:
 
     def metadata(self, identity, changes):
         row = self.asset(identity, allow_disabled=True)
-        if not isinstance(changes, dict) or not changes or set(changes) - {'name', 'meaning', 'tags', 'scenarios', 'pairing', 'enabled'}:
+        if not isinstance(changes, dict) or not changes or set(changes) - {'name', 'meaning', 'tags', 'scenarios', 'pairing', 'enabled', 'aliases'}:
             raise ChatExpressionError('素材语义参数无效')
         current = self.journal.fetch(SEMANTICS, row['_asset_id'], row['_scope'])
         values = dict(current['data'] if current else {})
@@ -400,6 +400,10 @@ class ChatExpressions:
                 if type(value) is not bool:
                     raise ChatExpressionError('素材启用状态须为开关')
                 shared_patch['enabled'] = value
+                continue
+            if key == 'aliases':
+                # This is a catalogue search aid, never a reaction cue.
+                values[key] = _list_text(value, '搜索别名', maximum=8, length=32)
                 continue
             normalized = (_list_text(value, '标签/场景', maximum=16, length=32) if key in {'tags', 'scenarios'}
                           else _text(value, key, 300 if key in {'meaning', 'pairing'} else 64, blank=key != 'name'))

@@ -861,19 +861,23 @@ class AsteriaPlugin(Star):
             return None
 
     def _apply_signal_couplings(self, st: dict[str, Any], profile: dict[str, Any], now: float) -> None:
-        """推进前置的信号耦合（0.30.0）：①语言调情→verbal_arousal（PC 情绪只读 mtime 缓存）；
-        ②情绪→身体临时系数（advance_state 消费即清）。任何一路异常不阻塞演算。"""
+        """在身体推进前消费当前陪伴情绪标签与情绪耦合系数。"""
         if not self._space_data_dir:
             return
         try:
             if self._cfg_bool("vb_verbal_arousal_enabled", True):
-                wl = [str(x) for x in profile.get("whitelist") or []]
                 session = str(st.get("session") or "")
-                info = mood_signals_mod.read_verbal(self._space_data_dir, [session], self._verbal_emotions(), now=now) \
-                    if session and session in wl else {"available": False, "is_intimate": False}
-                decay.verbal_arousal_step(
-                    st, bool(info.get("available") and info.get("is_intimate")), now,
-                    self._verbal_cfg(profile))
+                user = None
+                if session and session in {str(uid) for uid in profile.get("whitelist") or ()}:
+                    service = self._full_pc_service()
+                    scope = getattr(service, "_tls_primary_scope", None)
+                    if (isinstance(scope, dict) and scope.get("user_id") == session
+                            and scope.get("platform") != "webchat"
+                            and service.enable_intent_emotion_analysis
+                            and service._tls_allowed("observe", scope)):
+                        user = service.data.get("users", {}).get(session)
+                intimate = mood_signals_mod.verbal_intent_matches(user, self._verbal_emotions(), now)
+                decay.verbal_arousal_step(st, intimate, now, self._verbal_cfg(profile))
         except Exception as exc:
             logger.debug(f"[Asteria] 语言调情信号异常: {exc}")
         try:
