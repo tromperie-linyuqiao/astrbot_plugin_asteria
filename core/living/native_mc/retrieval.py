@@ -6,7 +6,7 @@ import math
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from .identity import session_target_id
 from .memory_lifecycle import apply_lifecycle_score, evaluate_memory_lifecycle
@@ -59,6 +59,7 @@ class RetrievalEngine:
         private_topology_enabled: bool = True,
         group_topology_enabled: bool = True,
         usage_recorder: Any | None = None,
+        embedding_query_ready: Callable[[int], None] | None = None,
     ):
         self.store = store
         self.policy = policy
@@ -73,6 +74,7 @@ class RetrievalEngine:
         self.embedding_provider = embedding_provider
         self.embedding_provider_id = clean_text(embedding_provider_id, 160)
         self.embedding_enabled = bool(embedding_enabled)
+        self.embedding_query_ready = embedding_query_ready
         self.embedding_candidate_limit = max(1, int(embedding_candidate_limit or 1200))
         self.embedding_top_k = max(1, int(embedding_top_k or 32))
         self.embedding_score_threshold = max(0.0, min(1.0, float(embedding_score_threshold or 0.0)))
@@ -1565,6 +1567,8 @@ class RetrievalEngine:
         if not query_vector:
             info["embedding_reason"] = "empty_query_vector"
             return [], {}, info
+        query_dimension = len(query_vector)
+        info["embedding_query_dimension"] = query_dimension
 
         try:
             rows = await self.store.list_embedding_candidate_rows(
@@ -1584,7 +1588,7 @@ class RetrievalEngine:
             if current_hash and text_hash and current_hash != text_hash:
                 stale_count += 1
                 continue
-            if len(vector) != len(query_vector):
+            if len(vector) != query_dimension:
                 dimension_mismatch += 1
                 continue
             similarity = self._cosine_similarity(query_vector, vector)
@@ -1596,7 +1600,7 @@ class RetrievalEngine:
         scores = {clean_text(memory.id, 120): float(score) for score, memory in selected if memory.id}
         info.update(
             {
-                "embedding_reason": "applied",
+                "embedding_reason": "dimension_mismatch" if rows and dimension_mismatch == len(rows) else "applied",
                 "embedding_candidates": len(rows),
                 "embedding_hits": len(selected),
                 "embedding_stale": stale_count,
@@ -1604,6 +1608,8 @@ class RetrievalEngine:
                 "embedding_threshold": self.embedding_score_threshold,
             }
         )
+        if self.embedding_query_ready is not None:
+            self.embedding_query_ready(query_dimension)
         return [memory for _score, memory in selected], scores, info
 
     @staticmethod

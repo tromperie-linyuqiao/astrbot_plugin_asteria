@@ -226,7 +226,10 @@ class NativeCompanionTakeoverFence:
         async def wrapper(_service,*args,**kwargs):
             ctx=(args[0] if args else kwargs.get('ctx')) if name in ('inject_memories','_compose_memory_injection') else kwargs.get('session_context')
             event=kwargs.get('event');req=(args[1] if len(args)>1 else kwargs.get('req')) if name=='inject_memories' else kwargs.get('req')
-            binding=self.binding_for_legacy(ctx,event,name,dict(kwargs))
+            arguments = dict(kwargs)
+            if name == 'inject_memories':
+                arguments['req'] = req
+            binding=self.binding_for_legacy(ctx,event,name,arguments)
             if inspect.isawaitable(binding):binding=await binding
             if binding is None:
                 if self._active and self.legacy_allowed(ctx,event,name) is True:

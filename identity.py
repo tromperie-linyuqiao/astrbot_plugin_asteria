@@ -29,6 +29,12 @@ def component_data_directory(component, legacy_name, *, retain_existing, markers
         raise RuntimeError('组件数据目录不能重定向')
     if not retain_existing or path.is_dir() and any(path.iterdir()):
         return path
+    # A fresh enable switch or another plugin's files do not establish ownership.
+    # Preserve in-place data only for the original Asteria installation and store.
+    prior = own.parent / LEGACY_PLUGIN_NAME / 'living' / 'living.sqlite3'
+    if (Path(__file__).resolve().parent.name != LEGACY_PLUGIN_NAME
+            or prior.resolve() != prior or not prior.is_file()):
+        return path
     if previous.resolve() != previous:
         raise RuntimeError('旧组件数据目录不能重定向')
     if any((previous / name).is_file() and not (previous / name).is_symlink() for name in markers):

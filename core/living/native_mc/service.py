@@ -5,7 +5,7 @@ import math
 import time
 from collections import Counter, defaultdict
 from copy import deepcopy
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import json
 import hashlib
 import inspect
@@ -247,6 +247,7 @@ class MemoryCompanionService:
         # The mature store/capture/worker business is local now. Root installs
         # the existing Unified final-context owner before opening admission.
         self._tls_native_final_context_owned = True
+        self._tls_injection_persona = None
         self._tls_capture_router = None
         self.native_companion_api = None
         self.data_dir = Path(data_dir)
@@ -328,7 +329,7 @@ class MemoryCompanionService:
         self._embedding_backfill_inflight: set[str] = set()
         self._embedding_memory_inflight: set[str] = set()
         self._embedding_backfill_last_run: dict[str, float] = {}
-        self._embedding_backfill_offsets: dict[str, int] = {}
+        self._embedding_backfill_offsets: dict[str, tuple[int, int]] = {}
         self._embedding_background_semaphore = asyncio.Semaphore(
             max(1, self.config.int("retrieval.embedding_background_concurrency", 2))
         )
@@ -768,7 +769,12 @@ class MemoryCompanionService:
 
         self._hook_stage_timer = stage_timer
         try:
-            await self.inject_memories(ctx, req, event=event)
+            injection_ctx = ctx
+            if self._tls_injection_persona is not None:
+                persona = self._tls_injection_persona(ctx, req, event)
+                if persona is not None and persona != ctx.persona_id:
+                    injection_ctx = replace(ctx, persona_id=persona)
+            await self.inject_memories(injection_ctx, req, event=event)
         except Exception as exc:
             logger.warning(
                 "[MemoryCompanion] 记忆注入失败，已放行本轮 LLM 请求: session=%s error=%s",
@@ -3333,8 +3339,10 @@ class MemoryCompanionService:
         embedding_provider_id = clean_text(self.config.get("retrieval.embedding_provider_id", ""), 160)
         if embedding_enabled:
             embedding_provider, embedding_provider_id = await self._resolve_embedding_provider(ctx)
-            if embedding_provider is not None and embedding_provider_id:
-                self._schedule_embedding_backfill(embedding_provider, embedding_provider_id)
+
+        def backfill_for_query(dimension: int) -> None:
+            self._schedule_embedding_backfill(embedding_provider, embedding_provider_id, dimension)
+
         return RetrievalEngine(
             self.store,
             self.visibility_policy(admin_read_all=admin_read_all),
@@ -3362,6 +3370,7 @@ class MemoryCompanionService:
             private_topology_enabled=self._scope_feature_enabled("private", "topology"),
             group_topology_enabled=self._scope_feature_enabled("group", "topology"),
             usage_recorder=self._record_token_usage,
+            embedding_query_ready=backfill_for_query,
         )
 
     async def _resolve_rerank_provider(self, ctx: SessionContext, *, mode: str) -> tuple[Any, str]:
@@ -3866,7 +3875,7 @@ class MemoryCompanionService:
         if task is None:
             self._embedding_memory_inflight.discard(memory_id)
 
-    def _schedule_embedding_backfill(self, provider: Any, provider_id: str) -> None:
+    def _schedule_embedding_backfill(self, provider: Any, provider_id: str, dimension: int) -> None:
         if not self.config.bool("retrieval.embedding_enabled", False):
             return
         if not self.config.bool("retrieval.embedding_backfill_enabled", True):
@@ -3884,7 +3893,7 @@ class MemoryCompanionService:
         self._embedding_backfill_inflight.add(key)
         self._embedding_backfill_last_run[key] = now
         task = self._spawn_background(
-            self._background_backfill_embeddings(provider, provider_id),
+            self._background_backfill_embeddings(provider, provider_id, dimension),
             label=f"embedding_backfill:{provider_id[:24]}",
         )
         if task is None:
@@ -3903,7 +3912,7 @@ class MemoryCompanionService:
         finally:
             self._embedding_memory_inflight.discard(clean_text(memory_id, 120))
 
-    async def _background_backfill_embeddings(self, provider: Any, provider_id: str) -> None:
+    async def _background_backfill_embeddings(self, provider: Any, provider_id: str, dimension: int) -> None:
         provider_id = clean_text(provider_id, 160)
         indexed = 0
         try:
@@ -3911,7 +3920,9 @@ class MemoryCompanionService:
                 1,
                 min(200, self.config.int("retrieval.embedding_backfill_batch_size", 50)),
             )
-            offset = self._embedding_backfill_offsets.get(provider_id, 0)
+            previous_dimension, offset = self._embedding_backfill_offsets.get(provider_id, (0, 0))
+            if previous_dimension != dimension:
+                offset = 0
             records, next_offset, exhausted = await self.store.scan_memories_missing_embeddings(
                 provider_id=provider_id,
                 limit=batch_size,
@@ -3920,10 +3931,11 @@ class MemoryCompanionService:
                     "retrieval.embedding_max_text_chars", 1200
                 ),
                 offset=offset,
+                expected_dimension=dimension,
             )
-            self._embedding_backfill_offsets[provider_id] = 0 if exhausted else next_offset
+            self._embedding_backfill_offsets[provider_id] = (dimension, 0 if exhausted else next_offset)
             for record in records:
-                if await self._embed_memory_record(provider, provider_id, record):
+                if await self._embed_memory_record(provider, provider_id, record, expected_dimension=dimension):
                     indexed += 1
             if indexed:
                 logger.info(
@@ -3934,7 +3946,9 @@ class MemoryCompanionService:
         finally:
             self._embedding_backfill_inflight.discard(provider_id)
 
-    async def _embed_memory_record(self, provider: Any, provider_id: str, record: MemoryRecord) -> bool:
+    async def _embed_memory_record(
+        self, provider: Any, provider_id: str, record: MemoryRecord, *, expected_dimension: int | None = None,
+    ) -> bool:
         if record.lifecycle == "archived":
             return False
         if record.review_status == "pending" and not self.config.bool("retrieval.embedding_index_pending", False):
@@ -3947,7 +3961,7 @@ class MemoryCompanionService:
             try:
                 vector = await self._embed_text_with_provider(provider, text, provider_id=provider_id)
                 vector = self._normalize_embedding_vector(vector)
-                if not vector:
+                if not vector or expected_dimension is not None and len(vector) != expected_dimension:
                     return False
                 current = await self.store.get_memory(record.id)
                 if current is None or self._memory_embedding_text_hash(current) != text_hash:

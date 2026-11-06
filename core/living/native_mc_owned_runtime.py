@@ -64,6 +64,17 @@ class NativeOwnedMCContextRuntime(NativeMCTakeoverRuntime):
         if not self._source_current():
             raise CompanionTakeoverError('native_memory_source_changed')
 
+    def _injection_persona(self, ctx, req, event):
+        binding = self._request_binding(req, event)
+        if binding is None:
+            return None
+        # The SDK chose the persona for this request. The event-derived
+        # platform, bot, sender and conversation must independently match.
+        for name in ('scope', 'platform', 'bot_id', 'user_id', 'session_id'):
+            if getattr(ctx, name) != binding.mc_scope[name]:
+                return None
+        return binding.mc_scope['persona_id']
+
     async def activate(self):
         if self._closed.is_set() or not self._objects_current() or not self._source_current():
             raise CompanionTakeoverError('current_native_memory_service_required')
@@ -79,6 +90,7 @@ class NativeOwnedMCContextRuntime(NativeMCTakeoverRuntime):
             legacy_allowed=lambda ctx, event, method: False,
             install_guard=self._install_guard).install()
         self.fence._tls_mc_runtime_owner = self
+        self.service._tls_injection_persona = self._injection_persona
         self.memory.mc_context_provider = self.provider
         self.memory.mc_context_runtime = self
         setattr(self.context, '_tls_mc_context_runtime', self)

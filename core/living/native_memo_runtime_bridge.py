@@ -146,10 +146,10 @@ class NativeMemoPCSourceProof:
         self.previous_binding_sha256 = hashlib.sha256(_canonical(dict(schema='tls.memo.single_slot.proof.v1',
             sources={key:value for key,value in SOURCE_PINS.items() if key != 'proactive.py'}, slot=SLOT, legacy_code=self.legacy_code_sha256,
             patched_code=self.patched_code_sha256))).hexdigest()
-        namespace = {'__name__': '_tls_reviewed_pc_memo_adapter'}
-        exec(compile(sources['tls_memo_tool_adapter.py'], '<reviewed-PC-adapter>', 'exec', dont_inherit=True), namespace)
-        self.adapter, self.classify = namespace['dispatch_memo_tool'], namespace['_kind']
-        if namespace['PROTOCOL'] != PROTOCOL or not inspect.iscoroutinefunction(self.adapter):
+        from .native_pc_business import tls_memo_tool_adapter
+        self.adapter = tls_memo_tool_adapter.dispatch_memo_tool
+        self.classify = tls_memo_tool_adapter._kind
+        if tls_memo_tool_adapter.PROTOCOL != PROTOCOL or not inspect.iscoroutinefunction(self.adapter):
             raise ValueError('reviewed thin adapter required')
         from .native_memo_legacy_origin import NativeMemoLegacyOriginInspector
         self.origin = NativeMemoLegacyOriginInspector(pc,pc.context,source_current=self._base_current)

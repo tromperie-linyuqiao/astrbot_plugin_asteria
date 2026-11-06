@@ -11205,6 +11205,7 @@ class MemoryStore:
         include_pending: bool = False,
         embedding_max_text_chars: int = 1200,
         offset: int = 0,
+        expected_dimension: int | None = None,
     ) -> tuple[list[MemoryRecord], int, bool]:
         """Scan one bounded window and return (stale records, next offset, exhausted)."""
 
@@ -11215,6 +11216,7 @@ class MemoryStore:
             include_pending,
             embedding_max_text_chars,
             offset,
+            expected_dimension,
         )
 
     def _list_memories_missing_embeddings_sync(
@@ -11240,6 +11242,7 @@ class MemoryStore:
         include_pending: bool,
         embedding_max_text_chars: int,
         offset: int,
+        expected_dimension: int | None = None,
     ) -> tuple[list[MemoryRecord], int, bool]:
         provider_id = clean_text(provider_id, 160)
         if not provider_id:
@@ -11259,6 +11262,7 @@ class MemoryStore:
                 f"""
                 SELECT m.*
                     ,e.text_hash AS embedding_text_hash
+                    ,e.dimension AS embedding_dimension
                 FROM memories m
                 LEFT JOIN memory_embeddings e
                   ON e.memory_id=m.id AND e.provider_id=?
@@ -11278,7 +11282,8 @@ class MemoryStore:
                 record,
                 max_chars=embedding_max_text_chars,
             )
-            if not stored_hash or stored_hash != expected_hash:
+            wrong_dimension = expected_dimension is not None and row["embedding_dimension"] != expected_dimension
+            if not stored_hash or stored_hash != expected_hash or wrong_dimension:
                 result.append(record)
                 if len(result) >= safe_limit:
                     break

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import sqlite3
 import json
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .importance import ImportanceEvaluator
 from .models import EntityRef, MemoryRecord, clean_text, new_id
@@ -73,12 +76,29 @@ class LivingMemoryMigrator:
         paths = self.candidate_paths(configured_path)
         reports = []
         for path in paths:
-            if not path.exists() or not path.is_file():
+            try:
+                path = self._source_path(path)
+            except (OSError, RuntimeError):
+                continue
+            if not path.is_file():
                 continue
             report = self._inspect_db(path)
             if report:
                 reports.append(report)
         return {"candidates": reports, "count": len(reports)}
+
+    @staticmethod
+    def _source_path(path: Path) -> Path:
+        resolved = path.resolve(strict=True)
+        if resolved.parent == Path(get_astrbot_data_path()).resolve():
+            raise PermissionError("宿主数据目录内的数据库不能作为 LivingMemory 导入源")
+        return resolved
+
+    def _open_source(self, path: Path) -> sqlite3.Connection:
+        resolved = self._source_path(path)
+        connection = sqlite3.connect(resolved.as_uri() + "?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        return connection
 
     async def import_data(
         self,
@@ -168,51 +188,47 @@ class LivingMemoryMigrator:
         updated = 0
         skipped = 0
         try:
-            conn = sqlite3.connect(str(path))
-            conn.row_factory = sqlite3.Row
-            for item in candidates:
-                payload = self._repair_payload(conn, item)
-                if not payload:
-                    skipped += 1
-                    continue
-                if await self.store.update_livingmemory_import_payload(item["id"], payload):
-                    updated += 1
-                else:
-                    skipped += 1
-            conn.close()
+            with closing(self._open_source(path)) as conn:
+                for item in candidates:
+                    payload = self._repair_payload(conn, item)
+                    if not payload:
+                        skipped += 1
+                        continue
+                    if await self.store.update_livingmemory_import_payload(item["id"], payload):
+                        updated += 1
+                    else:
+                        skipped += 1
         except Exception as exc:
             return {"updated": updated, "skipped": skipped, "source_path": str(path), "error": str(exc)}
         return {"updated": updated, "skipped": skipped, "source_path": str(path)}
 
     def _inspect_db(self, path: Path) -> dict[str, Any] | None:
         try:
-            conn = sqlite3.connect(str(path))
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
-            tables = []
-            for row in rows:
-                table = row["name"]
-                table_key = table.lower()
-                if table.startswith("sqlite_") or "_fts" in table_key or table_key in SKIP_TABLES:
-                    continue
-                columns = [item["name"] for item in conn.execute(f"PRAGMA table_info({self._quote(table)})").fetchall()]
-                count = conn.execute(f"SELECT COUNT(*) FROM {self._quote(table)}").fetchone()[0]
-                content_col = self._pick_content_column(columns)
-                is_derived = table_key in DERIVED_TABLES
-                tables.append(
-                    {
-                        "name": table,
-                        "columns": columns,
-                        "count": count,
-                        "content_column": content_col,
-                        "session_column": self._pick_exact(columns, SESSION_COLUMNS),
-                        "persona_column": self._pick(columns, PERSONA_COLUMNS),
-                        "time_column": self._pick_exact(columns, TIME_COLUMNS),
-                        "importable": bool(content_col and count > 0 and not is_derived),
-                        "note": "derived_fragment_not_imported" if is_derived else "",
-                    }
-                )
-            conn.close()
+            with closing(self._open_source(path)) as conn:
+                rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
+                tables = []
+                for row in rows:
+                    table = row["name"]
+                    table_key = table.lower()
+                    if table.startswith("sqlite_") or "_fts" in table_key or table_key in SKIP_TABLES:
+                        continue
+                    columns = [item["name"] for item in conn.execute(f"PRAGMA table_info({self._quote(table)})").fetchall()]
+                    count = conn.execute(f"SELECT COUNT(*) FROM {self._quote(table)}").fetchone()[0]
+                    content_col = self._pick_content_column(columns)
+                    is_derived = table_key in DERIVED_TABLES
+                    tables.append(
+                        {
+                            "name": table,
+                            "columns": columns,
+                            "count": count,
+                            "content_column": content_col,
+                            "session_column": self._pick_exact(columns, SESSION_COLUMNS),
+                            "persona_column": self._pick(columns, PERSONA_COLUMNS),
+                            "time_column": self._pick_exact(columns, TIME_COLUMNS),
+                            "importable": bool(content_col and count > 0 and not is_derived),
+                            "note": "derived_fragment_not_imported" if is_derived else "",
+                        }
+                    )
             if not tables:
                 return None
             tables.sort(key=lambda item: (IMPORT_TABLE_PRIORITY.get(str(item.get("name") or "").lower(), 50), str(item.get("name") or "")))
@@ -224,11 +240,8 @@ class LivingMemoryMigrator:
         if limit <= 0:
             return []
         try:
-            conn = sqlite3.connect(str(path))
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(f"SELECT * FROM {self._quote(table)} LIMIT ?", (limit,)).fetchall()
-            conn.close()
-            return rows
+            with closing(self._open_source(path)) as conn:
+                return conn.execute(f"SELECT * FROM {self._quote(table)} LIMIT ?", (limit,)).fetchall()
         except Exception:
             return []
 

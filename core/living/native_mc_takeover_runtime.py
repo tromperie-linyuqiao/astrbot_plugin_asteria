@@ -143,6 +143,15 @@ class NativeMCTakeoverRuntime:
         if event is not None and state['event']()is not event:return None
         return state
 
+    def _request_binding(self, req, event):
+        if req is None or event is None:
+            return None
+        state = self._state(req=req, event=event)
+        binding = state.get('binding') if state is not None else None
+        if binding is not None and self._authorize(binding):
+            return binding
+        return None
+
     def _authorize(self,binding):
         state=self._current.get()
         if (not self._live() or state is None or not state['active'] or state.get('binding')is not binding
@@ -678,6 +687,9 @@ class NativeMCTakeoverRuntime:
     async def _legacy_binding(self,ctx,event,method,arguments):
         state=self._current.get()
         if state is None or state.get('binding')is None or not self._authorize(state['binding']):return None
+        if method == 'inject_memories' and (arguments.get('req') is not state['req']()
+                                            or event is not state['event']()):
+            raise CompanionTakeoverError('legacy_mc_request_binding_mismatch')
         if method in ('bridge_compose_injection','bridge_compose_context','_bridge_compose_schedule_fast_context'):
             gate=await self.service._p5_gate(sink='bridge_serialization',
                 attestation=arguments.get('p5_attestation'),consumer=arguments.get('p5_attestation_consumer'))

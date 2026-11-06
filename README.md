@@ -85,6 +85,13 @@
 - 新组件资料保存在 AstrBot 提供的 Asteria 数据目录。已确认由 Asteria 持有的历史存储仍原位兼容；未自动复制、移动或删除历史资料。
 - APP 虚构互动中的明确退开会结束已有接触，明确的短暂停请求不因引号或疑问误触发。原有临时上下文机制不变。Android 客户端维持上一版。
 
+## 记忆与部署修复（0.75.12）
+
+- 使用 AstrBot 为当前请求选定的人格装配记忆，保留账号、会话和角色隔离。
+- 识别查询向量与旧索引的维度差异，沿原队列重建；新向量维度异常时保留旧记录。
+- 旧资料在符合归属条件时原位读取，新安装使用 Asteria 自有目录；备忘录适配器采用常规导入并保留来源校验。
+- 通用源码包不再携带已退役的陪伴页面，维护中的页面入口与来源说明仍保留。Android 客户端沿用 2.7.1。
+
 ## 本轮改进
 
 - 细分部位与用户动作，保存姿态、相对位置和接触状态；明确结束接触，持续状态不靠时间重复增加数值。
@@ -124,7 +131,7 @@ https://cdn.jsdelivr.net/gh/tromperie-linyuqiao/astrbot_plugin_asteria@main/mark
 
 [下载 Android 安装包](https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria/releases) · [客户端说明](client/asteria-chat/README.md)
 
-当前发布：**Asteria 0.75.11 / Asteria Chat 2.7.1（code 79）**。在 Releases 选择对应版本的源码 ZIP 或公开客户端 APK；旧版文件保留，不代表当前版本。公开客户端不预置服务器，包名与私人 Texas Chat 不同。
+当前发布：**Asteria 0.75.12 / Asteria Chat 2.7.1（code 79）**。在 Releases 选择对应版本的源码 ZIP 或公开客户端 APK；旧版文件保留，不代表当前版本。公开客户端不预置服务器，包名与私人 Texas Chat 不同。
 
 客户端连接你自己的 AstrBot 服务，复用现有角色、模型与聊天历史。默认不预置服务器或账号。服务端连接配置见 [反向代理示例](deploy/nginx-chat.conf.example)。
 

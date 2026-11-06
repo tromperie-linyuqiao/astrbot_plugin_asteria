@@ -728,25 +728,37 @@ class ChatExpressions:
             _atomic_json(str(path), value, compact=True)
         return parts
 
+    @staticmethod
+    def parts_with_native_results(parts, receipt):
+        if not isinstance(receipt, dict):
+            return parts
+        results = {row['fragment_id']: row for row in receipt.get('results') or ()
+                   if isinstance(row, dict) and row.get('fragment_id')}
+        projected = []
+        for part in parts:
+            result = results.get(part.get('fragment_id'))
+            if part.get('type') == 'action' and result is not None:
+                retreat = (part.get('source') == 'user_self_action' and part.get('target') == 'self'
+                           and part.get('self_template') == 'step_back' and part.get('target_part') == 'away'
+                           and result.get('action_id') == part.get('action_id')
+                           and result.get('state') == 'contact_ended' and result.get('applied') == 0
+                           and result.get('stopped_parts') and receipt.get('body_updated_at'))
+                if part.get('source') == 'user_action' or retreat:
+                    native_result = {key: result.get(key) for key in ('state', 'applied', 'parts', 'verb')}
+                    native_result.update(source='tls.chat.native_touch', character=receipt.get('character'),
+                        applied_at=receipt.get('applied_at'), body_updated_at=receipt.get('body_updated_at'))
+                    part = dict(part, native_result=native_result)
+            projected.append(part)
+        return projected
+
     def bind_user(self, message_scope, preference_scope, submission, record_id, attachments=()):
         parts = [dict(part) for part in submission['parts']]
-        # This receipt came from the original parser/BodyStore before SDK send,
-        # not from a submitted client field. Persist it with the actual saved
-        # user row so reconnect/history does not lose the interaction outcome.
+        # The original parser and BodyStore supply the receipt before SDK send.
         receipt = submission.get('native_touch')
         if not isinstance(receipt, dict):
             actual = self.checkpoint_submission(message_scope, submission['checkpoint_id'])
             receipt = actual.get('native_touch') if actual else None
-        if isinstance(receipt, dict):
-            results = {row.get('fragment_id'): row for row in receipt.get('results', [])
-                       if isinstance(row, dict) and row.get('fragment_id')}
-            for part in parts:
-                result = results.get(part.get('fragment_id'))
-                if part.get('type') == 'action' and part.get('source') == 'user_action' and result is not None:
-                    part['native_result'] = {key: result.get(key) for key in ('state', 'applied', 'parts', 'verb')}
-                    part['native_result'].update(source='tls.chat.native_touch',
-                        character=receipt.get('character'), applied_at=receipt.get('applied_at'),
-                        body_updated_at=receipt.get('body_updated_at'))
+        parts = self.parts_with_native_results(parts, receipt)
         included = {part.get('attachment_id') for part in parts if part.get('attachment_id')}
         parts.extend(dict(part) for part in attachments if part.get('attachment_id') not in included)
         with _LOCK:

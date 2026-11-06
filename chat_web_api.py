@@ -2019,6 +2019,10 @@ class NativeChatWebApi:
                     existing = expressions.assistant_parts(scope, preference_scope, record['id'], content,
                         context=submission.get('expression_context') or {'mode': state['mode'], 'scene': state['scene'],
                             'input_text': '\n'.join(part.get('text', part.get('description', '')) for part in submission.get('parts', []))})
+            elif role == 'user' and submission is not None and submission.get('user_record_id') == str(record['id']):
+                # A sidecar saved by an older release can omit this receipt.
+                # Display it from the matching owned checkpoint without rewriting either record.
+                existing = expressions.parts_with_native_results(existing, submission.get('native_touch'))
             record['tls_parts'] = existing
             record['content']['tls_parts'] = existing
         snapshot['expression_state'] = 'available'

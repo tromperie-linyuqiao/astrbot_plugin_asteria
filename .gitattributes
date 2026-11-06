@@ -1,2 +1,4 @@
 # Reviewed source hashes require exact bytes on every platform.
 * -text
+
+/core/living/native_pc_business/pages/ export-ignore

@@ -338,8 +338,8 @@
       "source_kind": "migrated_legacy"
     },
     "presence_snapshot.py": {
-      "sha256": "4136664db362d4a7237c24d9866ee702eb5fd6eeed2e88333bdf9fa9894d4f72",
-      "bytes": 10308,
+      "sha256": "bae63c5d99aa6d7fadf246e9e6ce5a4276b0667cfe9ec4691daf04e8352cb2e8",
+      "bytes": 10320,
       "reference": ".runtime/stage6_sources/texas/plugins/astrbot_plugin_private_companion/presence_snapshot.py",
       "original_sha256": "bc195c366d87e36cee1682cbda816499bc2b944f12655cb3dd67c6864a8897c6",
       "source_kind": "migrated_legacy"

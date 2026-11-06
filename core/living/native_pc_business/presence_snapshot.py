@@ -4,14 +4,13 @@
 （含该房前 3 件家具）以及身体状态短语，让她主动开口时知道自己身在何处。
 
 数据源（全部只读，绝不写入）：
-  plugin_data/astrbot_plugin_virtual_body/state/<character>_<session>.space.json
+  星栖当前资料根目录/state/<character>_<session>.space.json
       —— 空间状态（she.room / he.room / moving）
-  plugin_data/astrbot_plugin_virtual_body/state/<character>_<session>.json
+  星栖当前资料根目录/state/<character>_<session>.json
       —— 身体状态（arousal / phase）
   manor.json（房名与家具）：
-      1) plugin_data/astrbot_plugin_virtual_body/manor/manor.json（用户覆盖层，vb 语义优先）
-      2) 从 PC 的 plugin_data 目录推 ../../plugins/astrbot_plugin_virtual_body/data/manor.json
-         （运行时服务器上 vb 插件源码目录自带的 builtin），失败则房间用 room id 原文
+      1) 星栖当前资料根目录/manor/manor.json（用户覆盖层优先）
+      2) 插件自带 data/manor.json，失败则房间用 room id 原文
 
 纪律：
 - 纯只读 + 模块级 mtime 缓存（容量 32，dict+清理的简化 LRU）
@@ -27,12 +26,11 @@ import re
 import time as _time
 from typing import Any
 from pathlib import Path
-from ....identity import existing_data_directory
+from ....identity import PLUGIN_NAME, existing_data_directory
 
 _MAX_CHARS = 100
 _CACHE_LIMIT = 32
 _SESSION_RE = re.compile(r"[A-Za-z0-9_:\-]+")          # 对齐 vb SP_SESSION_RE
-_VB_NAME = "astrbot_plugin_virtual_body"
 _SPACE_SUFFIX = ".space.json"
 
 # 模块级 mtime 缓存：path -> (mtime_ns, 解析结果)。容量 32，超限清最旧（插入序）。
@@ -76,11 +74,17 @@ def _find_space_file(state_dir: str, session: str) -> str:
     return ""
 
 
+def _plugin_data_root(pc_data_dir: str) -> Path:
+    directory = Path(pc_data_dir)
+    if directory.name == "companion" and directory.parent.name == PLUGIN_NAME:
+        return directory.parent.parent
+    return directory.parent
+
+
 def _load_manor(pc_data_dir: str) -> Any:
-    """manor.json：用户覆盖层优先，其次 ../../plugins/.../data/manor.json；失败返回 None。"""
-    base = os.path.dirname(os.path.normpath(str(pc_data_dir)))   # plugin_data/
+    """manor.json：用户覆盖层优先，其次插件自带资料；失败返回 None。"""
     candidates = (
-        str(existing_data_directory(base) / 'manor' / 'manor.json'),
+        str(existing_data_directory(_plugin_data_root(pc_data_dir)) / 'manor' / 'manor.json'),
         str(Path(__file__).resolve().parents[3] / 'data' / 'manor.json'),
     )
     for path in candidates:
@@ -160,7 +164,7 @@ def _intent_phrase(body: dict[str, Any]) -> str:
 def build_snapshot(data_dir: str, session: str, now: float) -> str:
     """生成存在层快照（纯只读）。
 
-    data_dir：PC 自己的 plugin_data 目录（plugin_data/astrbot_plugin_private_companion）。
+    data_dir：当前陪伴资料目录，可位于星栖目录内部或保留的历史位置。
     session：目标用户 QQ 号。任何缺失/坏数据 → 空串（调用方跳过拼接即可）。
     样例输出：（她此刻在厨房（中岛·炉灶·咖啡机），身体平静）
     """
@@ -171,7 +175,7 @@ def build_snapshot(data_dir: str, session: str, now: float) -> str:
         pc_data_dir = str(data_dir or "").strip()
         if not pc_data_dir:
             return ""
-        state_dir = str(existing_data_directory(Path(pc_data_dir).parent) / 'state')
+        state_dir = str(existing_data_directory(_plugin_data_root(pc_data_dir)) / 'state')
         space_path = _find_space_file(state_dir, session)
         space = _load_json_file(space_path) if space_path else None
         if not isinstance(space, dict):
@@ -231,11 +235,12 @@ def append_to_prompt(prompt: str, owner: Any, user: dict[str, Any]) -> str:
 def _read_mood_triggers(data_dir: str, now: float) -> str:
     """心绪编排触发（0.27.0 并入存在层后：读 vb 的 plugin_data/mood/triggers.json；
     旧 astrbot_plugin_mood_orchestrator 路径回退兼容）。过期过滤 + 前 3 条拼段；任何缺失 → 空串。"""
-    import os as _os
-    paths = [
-        str(existing_data_directory(Path(data_dir).parent) / 'mood' / 'triggers.json'),
-        _os.path.normpath(_os.path.join(str(data_dir), "..", "astrbot_plugin_mood_orchestrator", "triggers.json")),
-    ]
+    if not data_dir:
+        return ""
+    base = _plugin_data_root(data_dir)
+    paths = [str(existing_data_directory(base) / 'mood' / 'triggers.json')]
+    if Path(data_dir).name == 'astrbot_plugin_private_companion':
+        paths.append(str(base / 'astrbot_plugin_mood_orchestrator' / 'triggers.json'))
     data = None
     for path in paths:
         data = _load_json_file(path)
