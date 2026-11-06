@@ -34,7 +34,7 @@
 .settings-pane label{font-size:13px;font-weight:600}
 .settings-pane input:not([type=checkbox]):not([type=radio]),.settings-pane select{max-width:100%;box-sizing:border-box}
 .settings-pane .about-app{margin-top:12px}
-.hub-bot-inbox{grid-column:1/-1;padding:11px 14px;border:1px solid var(--border);border-radius:14px;background:var(--surface);color:var(--text);font:inherit;text-align:left}
+.hub-maintenance>summary{min-height:44px;padding:12px 14px;border-bottom:1px solid var(--line);color:var(--text);font-size:13px;cursor:pointer}
 .reply-account-preview{margin:10px 0;padding:10px 12px;border-radius:12px;background:var(--surface);white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.6}
 .reply-account-preview small{display:block;color:var(--muted);font-size:11px;margin-bottom:5px}
 .personal-availability{padding:10px 14px;border-radius:12px;background:var(--surface);color:var(--muted);font-size:12px;line-height:1.6;margin:0}

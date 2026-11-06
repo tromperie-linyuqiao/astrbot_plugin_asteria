@@ -399,6 +399,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .perception-permissions>div{display:flex;gap:12px;align-items:center;justify-content:space-between;border-top:1px solid var(--line);padding:10px 0;font-size:11px}.perception-permissions small{display:block;color:var(--muted);margin-top:4px}.perception-permissions button{flex:none}
 #perception-dialog .perception-consent{display:flex;align-items:flex-start;gap:9px;font-size:11px;line-height:1.8;color:var(--text-soft)}.perception-consent input{flex:none;margin-top:4px}
 .perception-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:18px}.perception-actions .primary-button{flex:1;min-width:120px}.perception-actions .secondary-button{padding:11px 13px;border-radius:11px;font-size:12px}.perception-secondary{margin-top:9px;justify-content:space-between}
+#perception-details h3{font-size:12px;margin:14px 0 5px;color:var(--text-soft)}
 #perception-status{white-space:pre-wrap;overflow-wrap:anywhere;min-height:20px}#perception-dialog button:disabled{opacity:.45;cursor:default}
 
 /* Saved server provenance is a quiet label, never a synthetic read receipt. */

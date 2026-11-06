@@ -67,15 +67,31 @@ window.AsteriaChatPerception = (() => {
     const eligible = () => !!server && server.linked === true && server.permission_granted === true && server.bridge_available === true;
     const sections = () => Object.fromEntries(SECTIONS.map(key => [key, $('perception-' + key).checked === true]));
     const uncertain = () => pending.has(owner);
+    const savedSelection = () => eligible() && server.enabled === true && $('perception-enabled').checked
+      && $('perception-device').value === server.device_id && sameSections(sections(), server.sections);
+    const runningSaved = () => nativeState?.running === true && nativeState.session_id === state.activeId
+      && (!nativeState.device_id || nativeState.device_id === server?.device_id)
+      && sameSections(nativeState.sections, server?.sections);
+    const canReportSaved = () => runningSaved() && nativeState.verified === true
+      && nativeState.device_id === server?.device_id;
+    function updateConsent() {
+      const required = $('perception-enabled').checked && !savedSelection();
+      $('perception-consent-row').hidden = !required;
+      if (!required) $('perception-consent').checked = false;
+    }
     function controls() {
       const block = busy || uncertain() || !server || !installationId;
       for (const id of ['perception-device', 'perception-enabled', 'perception-basic', 'perception-app', 'perception-music', 'perception-consent']) $(id).disabled = block;
       $('perception-save').disabled = block;
       $('perception-start').disabled = block || !eligible() || server.enabled !== true;
-      $('perception-report').disabled = busy || uncertain() || !eligible() || server.enabled !== true || nativeState?.running !== true;
+      $('perception-start').hidden = !server?.enabled || runningSaved();
+      $('perception-report').disabled = busy || uncertain() || !eligible() || server.enabled !== true || !canReportSaved();
       $('perception-refresh').disabled = busy;
       // An uncertain server write must never prevent an immediate local stop.
-      $('perception-stop').disabled = !installationId || stopping;
+      const alreadyStopped = !busy && !uncertain() && server?.enabled === false
+        && nativeState?.enabled === false && nativeState?.running === false;
+      $('perception-stop').hidden = alreadyStopped;
+      $('perception-stop').disabled = !installationId || stopping || alreadyStopped;
       for (const key of ['notifications', 'usage', 'music', 'battery']) $('perception-permission-' + key).disabled = busy || !installationId;
       $('perception-reconcile').hidden = pending.get(owner)?.checked !== true;
       $('perception-reconcile').disabled = busy;
@@ -109,6 +125,7 @@ window.AsteriaChatPerception = (() => {
       $('perception-enabled').checked = server.enabled === true;
       for (const key of SECTIONS) $('perception-' + key).checked = server.sections?.[key] === true;
       $('perception-consent').checked = false;
+      updateConsent();
     }
     function validateSnapshot(data) {
       if (!data || typeof data.enabled !== 'boolean' || !Array.isArray(data.devices) || !data.sections
@@ -133,9 +150,12 @@ window.AsteriaChatPerception = (() => {
         const data = await api.json('GET', '/chat/perception/config?session_id=' + encodeURIComponent(ticket.session)
           + '&installation_id=' + encodeURIComponent(installationId));
         if (!current(ticket)) return;
+        const initial = !server;
         server = validateSnapshot(unwrap(data)); const confirmed = reconcile(); drawForm(); drawStatus();
+        if (initial) $('perception-options').open = server.enabled !== true;
         say(confirmed ? '服务器当前值已与上次修改对应。采集不会因核对而自动重启，请明确点击继续采集。'
-          : uncertain() ? '已读取当前配置；上次保存仍未确认，不会自动重发。' : '请按需选择采集项并明确授权；默认不采集。');
+          : uncertain() ? '已读取当前配置；上次保存仍未确认，不会自动重发。'
+          : server.enabled ? '已保存本机的采集范围。设备和范围不变时，可直接继续。' : '首次启用时请选择范围并确认。');
       } catch (error) { if (current(ticket)) { say(errorText(error)); drawStatus(); } }
       finally { if (current(ticket)) { busy = false; controls(); } }
     }
@@ -146,7 +166,7 @@ window.AsteriaChatPerception = (() => {
         if (!eligible()) throw Error(reasonText(server.reason) || '请先在“日程与权限”确认绑定手机的感知查阅权限。');
         if (!(server.devices || []).some(row => row.id === device)) throw Error('请选择你已经拥有的手机设备；不会自动选择或创建设备。');
         if (!Object.values(sections()).some(Boolean)) throw Error('请至少选择一项你愿意提供的手机感知。');
-        if (!$('perception-consent').checked) throw Error('请先确认采集范围，并停止原 PPB 上报端，避免同设备被同时更新。');
+        if (!savedSelection() && !$('perception-consent').checked) throw Error('请先确认采集范围，并停止原 PPB 上报端，避免同设备被同时更新。');
       }
       return { session_id: state.activeId, installation_id: installationId, device_id: device || server.device_id,
         enabled, sections: sections(), consent: true, expected_revision: server.revision };
@@ -163,6 +183,7 @@ window.AsteriaChatPerception = (() => {
     }
     async function save() {
       if (busy || uncertain() || owner !== scope()) return;
+      if (savedSelection()) return resume();
       let body; try { body = prepared($('perception-enabled').checked); } catch (error) { say(errorText(error)); return; }
       const ticket = op(); busy = true; const value = { body, checked: false }; pending.set(owner, value); controls();
       try {
@@ -179,8 +200,9 @@ window.AsteriaChatPerception = (() => {
     }
     async function resume() {
       if (busy || uncertain() || owner !== scope() || server?.enabled !== true) return;
-      let body; try { body = prepared(true); if (body.device_id !== server.device_id || !sameSections(body.sections, server.sections)) throw Error('你已修改设备或采集范围，请先保存设置。'); }
-      catch (error) { say(errorText(error)); return; }
+      if (!eligible()) { say(reasonText(server.reason) || '当前感知权限不可用。'); return; }
+      if (!savedSelection()) { say('你已修改设备或采集范围，请先保存设置。'); return; }
+      if (runningSaved()) { say('已在按保存的范围采集。'); return; }
       const ticket = op(); busy = true; controls();
       try { await start(ticket, server); } catch (error) { if (current(ticket)) say(errorText(error)); }
       finally { if (current(ticket)) { busy = false; controls(); } }
@@ -218,6 +240,7 @@ window.AsteriaChatPerception = (() => {
     }
     async function nativeAction(method, args = []) {
       if (busy || !installationId || owner !== scope()) return;
+      if (method === 'reportPhonePerception' && !canReportSaved()) return;
       const ticket = op(); busy = true; controls();
       try {
         const result = await bridge(method, args); if (!current(ticket)) return;
@@ -236,9 +259,16 @@ window.AsteriaChatPerception = (() => {
       epoch++; owner = scope(); busy = false; server = null; nativeState = null; installationId = '';
       $('perception-device').replaceChildren(); $('perception-enabled').checked = false; $('perception-consent').checked = false;
       for (const key of SECTIONS) $('perception-' + key).checked = false;
+      $('perception-options').open = true; $('perception-details').open = false; updateConsent();
       if (!dialog.open) dialog.showModal(); drawStatus(); refresh();
     }
     $('menu-perception').onclick = open; $('perception-close').onclick = close;
+    for (const id of ['perception-enabled', 'perception-device', ...SECTIONS.map(key => 'perception-' + key)]) {
+      $(id).addEventListener('change', () => {
+        $('perception-consent').checked = false;
+        updateConsent();
+      });
+    }
     $('perception-refresh').onclick = refresh; $('perception-save').onclick = save;
     $('perception-start').onclick = resume; $('perception-stop').onclick = stop;
     $('perception-report').onclick = () => nativeAction('reportPhonePerception');

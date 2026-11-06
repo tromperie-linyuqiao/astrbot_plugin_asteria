@@ -79,8 +79,15 @@
 .touch-selection-preview{margin:12px 0 8px;padding:10px 12px;border-radius:11px;background:var(--surface-sunken)}
 .touch-selection-preview strong{font-size:13px;font-weight:550;color:var(--text-strong)}
 .touch-selection-preview p{font-size:10px;line-height:1.6;color:var(--text-soft);margin:5px 0 0}
-.touch-quick-option{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-soft);margin:9px 1px}
-.touch-quick-option input{accent-color:var(--accent);width:15px;height:15px}
+/* Keep the selected pair and the send action outside the scrolling part list. */
+.touch-action-bar{display:flex;align-items:center;gap:8px;flex:none;padding:6px 9px;border-top:1px solid var(--line);background:var(--surface-raised)}
+.touch-action-bar[hidden]{display:none}
+.touch-action-bar .touch-selection-preview{min-width:0;flex:1;margin:0;padding:0;background:transparent;color:var(--text-strong);font-size:12px;overflow-wrap:anywhere}
+.touch-action-bar button{min-height:42px;flex:none;padding:6px 8px;white-space:nowrap;font-size:12px}
+.touch-part-more{margin-top:8px}
+.touch-part-more summary{min-height:40px;padding:10px 2px;color:var(--accent);font-size:12px;cursor:pointer}
+.touch-part-more .touch-part-search{margin-bottom:8px}
+.touch-common-parts.touch-choices,.touch-part-group .touch-choices{max-height:none;overflow:visible}
 .touch-confirm{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .touch-confirm button{flex:1;min-height:36px;font-size:12px;padding:8px 10px;white-space:nowrap}
 .action-favorite{font-size:20px;color:var(--accent);min-width:30px;min-height:32px;padding:2px}
@@ -94,4 +101,4 @@
   .composer-area { padding-top: 6px; }
 }
 
-.touch-part-browser{display:grid;gap:10px;width:100%;min-width:0}.touch-part-search{width:100%;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-panel);color:var(--text-strong)}.touch-group-filters{display:flex;flex-wrap:wrap;gap:6px}.touch-group-filters .touch-choice{padding:6px 10px;font-size:11px}.touch-group-filters [aria-pressed=true]{color:var(--accent-strong);border-color:var(--accent);background:var(--surface-sunken)}.touch-part-results{display:grid;gap:12px}.touch-part-group h4{margin:0 0 7px;font-size:11px;color:var(--muted)}.touch-part-group .touch-choices{gap:7px}.touch-choice[aria-pressed=true]{outline:1px solid var(--accent)}
+.touch-part-search{width:100%;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-panel);color:var(--text-strong)}.touch-part-results{display:grid;gap:12px}.touch-part-group h4{margin:0 0 7px;font-size:11px;color:var(--muted)}.touch-part-group .touch-choices{gap:7px}.touch-choice[aria-pressed=true]{outline:1px solid var(--accent)}

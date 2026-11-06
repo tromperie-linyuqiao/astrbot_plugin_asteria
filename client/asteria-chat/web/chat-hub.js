@@ -26,7 +26,7 @@ window.ChatSettingsHub = (() => {
     'mobile-settings':'connection', 'refresh-chat':'connection',
     'menu-export':'advanced', 'menu-delete':'advanced'
   };
-  let dialog, menu, home, detail, search, results, searchStatus, active = '', queued = false, initialized = false;
+  let dialog, menu, home, detail, maintenance, search, results, searchStatus, active = '', queued = false, initialized = false;
   const normalize=value=>String(value||'').normalize('NFKC').toLocaleLowerCase().trim();
   const groups = {};
   const node = (tag, text, cls='') => { const n=document.createElement(tag); if(text!==undefined)n.textContent=text; n.className=cls; return n; };
@@ -80,7 +80,9 @@ window.ChatSettingsHub = (() => {
     if(!dialog.open)dialog.showModal();detail.scrollTop=0;
   }
   function open() {
-    if(!initialized)return;hideMoreMenu();organize();showHome();if(!dialog.open)dialog.showModal();
+    if(!initialized)return;
+    hideMoreMenu();organize();showHome();
+    if(!dialog.open){maintenance.open=false;dialog.showModal();}
   }
 
   function aliases(title){
@@ -124,7 +126,7 @@ window.ChatSettingsHub = (() => {
     home=node('nav',undefined,'hub-section-grid hub-organized');home.id='settings-hub-home';home.setAttribute('aria-label','设置分类');
     detail=node('div',undefined,'hub-section-detail');detail.id='settings-hub-detail';detail.hidden=true;
     const bots=node('section',undefined,'hub-bots');bots.setAttribute('aria-label','我的 Bot');bots.append(node('h3','我的 Bot'));
-    for(const name of ['伙伴','苦艾']){const b=button('',()=>{close();window.ChatConnections?.openBot?.(name);},'hub-bot');b.dataset.hubBot=name;b.append(node('strong',name),node('small','已添加 · 待登录'));bots.append(b);}bots.append(button('全部 Bot · 收件与最近消息',()=>{close();openSettings('bots');},'hub-bot-inbox'));home.append(bots);
+    for(const name of ['伙伴','苦艾']){const b=button('',()=>{close();window.ChatConnections?.openBot?.(name);},'hub-bot');b.dataset.hubBot=name;b.append(node('strong',name),node('small','已添加 · 待登录'));bots.append(b);}home.append(bots);
     const categories=[['聊天与表达',['appearance','voice','interaction','expression']],['角色与生活',['role','life','agenda']],['手机与通知',['notifications','perception']],['连接与管理',['connection','models','advanced']]];
     const categoryBoxes={};for(const [name,ids]of categories){const box=node('section',undefined,'hub-category');box.append(node('h3',name));for(const id of ids)categoryBoxes[id]=box;home.append(box);}
     for(const [id,label,description]of sections) {
@@ -132,6 +134,10 @@ window.ChatSettingsHub = (() => {
       card.append(node('strong',label),node('span',description),node('small','›'));categoryBoxes[id].append(card);
       const group=node('section',undefined,'hub-buttons');group.id='hub-'+id;group.hidden=true;groups[id]=group;detail.append(group);
     }
+    maintenance=node('details',undefined,'hub-maintenance');maintenance.id='settings-hub-maintenance';
+    maintenance.append(node('summary','模型、导出与维护'));
+    for(const id of ['models','advanced'])maintenance.append(categoryBoxes[id].querySelector('[data-hub-section="'+id+'"]'));
+    categoryBoxes.connection.append(maintenance);
     const context=node('div');context.id='hub-role-context';groups.role.append(context);
     // The original appearance button is moved below; keep a single entry.
     groups.role.append(button('角色与剧情',()=>[...menu.children].find(value=>value.tagName==='BUTTON'&&value.textContent.trim()==='角色与剧情')?.click()));
