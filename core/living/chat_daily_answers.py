@@ -24,12 +24,20 @@ _GENERAL_STATUS = re.compile(
     r'|都|全部|已经|现在|目前)*'
     r'(?:完成|做完|弄完|弄好|做了|做过|进展|状态|结束)'
     r'(?:了吗|了没|没有呀|没有|没|如何|怎样|怎么样|吗|了|呢|呀|啊)*[?？。!！]*$')
+_QUESTION_LEAD = re.compile(
+    r'^(?:请|麻烦)?你(?:'
+    r'(?:能不能|可不可以|能否|可以|能|方便)?(?:帮我|协助我|替我)'
+    r'(?:看看|看一下|看|检查|核对|确认|判断|评估|分析|审核)(?:一下)?'
+    r'|(?:觉得|认为|看看|看一下|判断|评估)(?:一下)?)\s*')
 
 
 def question_kind(query):
     if not isinstance(query, str) or not query.strip() or len(query) > 200:
         return None
     query = _trigger_text(query).strip()
+    # The opening “you” in a request for help or an opinion is not the owner
+    # of the activity. Classify the actual subject left after that lead-in.
+    query = _QUESTION_LEAD.sub('', query, count=1).lstrip('，,:： ')
     if re.search(r'发送|转发|发到|取消|删除|改成|修改|创建|推迟|挪到', query):
         return None
     # Do not answer the user's own activity from the role's schedule.

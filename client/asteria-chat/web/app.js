@@ -1643,8 +1643,14 @@ function renderMessageRow(message, previous, appearance, existing) {
         const retry = document.createElement('button'); retry.textContent = '重试准备';
         retry.addEventListener('click', async () => {
           if (state.sending) return;
-          const ok = await refreshCurrent();
-          if (!ok || state.remoteRunning) return;
+          const scope = { server: state.server, username: state.username, sessionId: state.activeId };
+          const current = () => messageSendCurrent(scope);
+          const ok = await refreshCurrent({ accept: current });
+          if (!ok || !current() || state.remoteRunning) return;
+          if ($('draft').value && $('draft').value !== message.text) {
+            showNotice('已重新读取记录，当前草稿未被替换。请先核对上条消息；应用不会自动重发。');
+            return;
+          }
           $('draft').value = message.text; saveDraft(); resizeDraft(); $('draft').focus();
           showNotice('已重新读取记录。请先确认上条是否已经保存，再决定是否再次发送；应用不会自动重发。');
         });
@@ -2390,6 +2396,7 @@ function init() {
   });
   $('attach-button').addEventListener('click', () => window.ChatComposer ? window.ChatComposer.setPanel('attachments') : chooseAttachment());
   $('jump-latest').addEventListener('click', jumpToLatest);
+  $('messages').addEventListener('scroll', updateJumpLatest, { passive: true });
   $('sticker-button').addEventListener('click', () => window.ChatComposer ? window.ChatComposer.setPanel('expressions') : stickerPanel($('sticker-panel').hidden));
   $('sticker-close').addEventListener('click', () => stickerPanel(false));
   if (!window.ChatComposer) renderStickers();
