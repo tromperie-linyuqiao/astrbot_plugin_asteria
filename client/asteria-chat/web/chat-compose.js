@@ -4,7 +4,7 @@
    both preference sets live on TLS. Local catalog snapshots are read-only until refreshed. */
 window.ChatComposer = (() => {
   const model = { scope: '', serial: 0, epoch: 0, operation: null, actionEditorSerial: 0, preferenceEditorSerial: 0, loaded: false, loading: false, error: '',
-    assets: [], expressionAliases:false, showExpressionTags:false, actions: [], actionRevision: undefined, defaultActions: [], mutualActions: [], mutualId:'', groupSupported:false, selfActions: [], selfSupported: false, actionGroup:'character', actionFilter:'quick', selfVerb:'', selfPart:'', stickers: [], extras: [], order: [], panel: '', filter: 'all', query: '', touchCatalog:null, touchVerb:'', touchPart:'', touchQuery:'', touchUnknown:false,
+    assets: [], expressionAliases:false, showExpressionTags:false, actions: [], actionRevision: undefined, defaultActions: [], mutualActions: [], mutualId:'', groupSupported:false, selfActions: [], selfSupported: false, actionGroup:'character', actionFilter:'quick', selfVerb:'', selfPart:'', selfQuery:'', stickers: [], extras: [], order: [], panel: '', filter: 'all', query: '', touchCatalog:null, touchVerb:'', touchPart:'', touchQuery:'', touchUnknown:false,
     pickMode: 'attach', category: '', selected: null, actionEditing: null, batch: null, batchSerial: 0, defaultsSerial: 0, busy: false,
     cachedAssets:false, previews: new Map(), nativeViewport: null, watch: null, watchTarget: '', pendingWatch: '', notificationId: null };
   const node = id => document.getElementById(id);
@@ -220,12 +220,12 @@ window.ChatComposer = (() => {
   async function sync(force = false) {
     flushNotification(); updateWatchTarget();
     const current = scope();
-    if (!current) { if (model.scope) { invalidateOperations();closeActive(); closeBatchActions(); model.serial++; model.scope = ''; model.assets = []; model.expressionAliases=false; model.actions = []; model.actionRevision=undefined; model.defaultActions=[]; model.touchCatalog=null; model.touchVerb=''; model.touchPart=''; model.touchQuery=''; model.loaded = false; renderTouchConfirmation(); clearExpressionSearch(); restore(); } return; }
+    if (!current) { if (model.scope) { invalidateOperations();closeActive(); closeBatchActions(); model.serial++; model.scope = ''; model.assets = []; model.expressionAliases=false; model.actions = []; model.actionRevision=undefined; model.defaultActions=[]; model.touchCatalog=null; model.touchVerb=''; model.touchPart=''; model.touchQuery=''; model.selfQuery=''; model.loaded = false; renderTouchConfirmation(); clearExpressionSearch(); restore(); } return; }
     if (model.scope !== current) {
       invalidateOperations();
       closeActive(); closeBatchActions(); model.selected = null; model.actionEditing = null;
       model.serial++; model.scope = current; model.loaded = false; model.loading = false; clearExpressionSearch();
-      model.assets = []; model.expressionAliases=false; model.actions = []; model.actionRevision=undefined; model.defaultActions=[]; model.mutualActions=[]; model.mutualId=''; model.groupSupported=false; model.selfActions=[]; model.selfSupported=false; model.actionGroup='character'; model.selfVerb=''; model.selfPart=''; model.touchCatalog=null; model.touchVerb=''; model.touchPart=''; model.touchQuery=''; model.touchUnknown=false; model.previews.clear(); model.cachedAssets=false; model.error = ''; renderTouchConfirmation(); restore();
+      model.assets = []; model.expressionAliases=false; model.actions = []; model.actionRevision=undefined; model.defaultActions=[]; model.mutualActions=[]; model.mutualId=''; model.groupSupported=false; model.selfActions=[]; model.selfSupported=false; model.actionGroup='character'; model.selfVerb=''; model.selfPart=''; model.selfQuery=''; model.touchCatalog=null; model.touchVerb=''; model.touchPart=''; model.touchQuery=''; model.touchUnknown=false; model.previews.clear(); model.cachedAssets=false; model.error = ''; renderTouchConfirmation(); restore();
     }
     if (model.loading || !force && (model.loaded || model.error)) return;
     model.loading = true; const serial = ++model.serial;
@@ -609,7 +609,7 @@ window.ChatComposer = (() => {
     for (const [id, label] of [['character', '对角色的动作'], ['mutual', '双人互动'], ['self', '我的动作']]) {
       const pick = button(label, () => {
         model.actionGroup=id; model.touchVerb=''; model.touchPart=''; model.touchQuery='';
-        model.selfVerb=''; model.selfPart=''; model.mutualId=''; renderActions();
+        model.selfVerb=''; model.selfPart=''; model.selfQuery=''; model.mutualId=''; renderActions();
       }, 'touch-choice');
       pick.dataset.actionGroup=id;
       pick.setAttribute('aria-pressed', String(model.actionGroup === id));
@@ -681,11 +681,41 @@ window.ChatComposer = (() => {
   function renderSelfBuilder(box){
     if(!model.selfSupported){box.append(Object.assign(document.createElement('p'),{className:'compose-status',textContent:'服务器尚未支持自身动作，请更新后使用。'}));return;}
     const selected=model.selfActions.find(value=>value.id===model.selfVerb),target=selected?.targets?.find(value=>value.id===model.selfPart);
-    const heading=document.createElement('div');heading.className='touch-path';heading.append(button(selected?.label||'① 选择自己的动作',()=>{model.selfVerb='';model.selfPart='';renderTouchBuilder();},'touch-breadcrumb'),Object.assign(document.createElement('strong'),{textContent:target?.label||'② 选择目标'}));box.append(heading);
-    const choices=document.createElement('div');choices.className='touch-choices';
-    if(!selected){for(const value of model.selfActions)choices.append(button(value.label,()=>{model.selfVerb=value.id;model.selfPart=value.targets?.length===1?value.targets[0].id:'';renderTouchBuilder();},'touch-choice'));}
-    else if(selected.targets?.length!==1)for(const value of selected.targets||[]){const pick=button(value.label,()=>{model.selfPart=value.id;renderTouchBuilder();},'touch-choice');pick.setAttribute('aria-pressed',String(value.id===model.selfPart));choices.append(pick);}
-    box.append(choices);
+    const heading=document.createElement('div');heading.className='touch-path';heading.append(button(selected?.label||'① 选择自己的动作',()=>{model.selfVerb='';model.selfPart='';model.selfQuery='';renderTouchBuilder();},'touch-breadcrumb'),Object.assign(document.createElement('strong'),{textContent:target?.label||'② 选择目标'}));box.append(heading);
+    if(selected&&selected.targets?.length!==1){
+      const targets=document.createElement('div');targets.className='touch-choices self-action-targets';
+      for(const value of selected.targets||[]){const pick=button(value.label,()=>{model.selfPart=value.id;renderTouchBuilder();},'touch-choice');pick.setAttribute('aria-pressed',String(value.id===model.selfPart));targets.append(pick);}
+      box.append(targets);
+    }
+    const searchRow=document.createElement('div');searchRow.className='self-action-search';
+    const search=document.createElement('input');search.id='self-action-search';search.type='search';
+    search.maxLength=80;search.placeholder='搜索动作，如喝水、深呼吸';search.className='touch-part-search';
+    search.setAttribute('aria-label','搜索自己的动作');search.value=model.selfQuery;
+    const clear=button('清除',()=>{model.selfQuery='';search.value='';drawChoices();search.focus();},'text-button');
+    clear.setAttribute('aria-label','清除自身动作搜索');searchRow.append(search,clear);
+    const count=document.createElement('p');count.id='self-action-match-count';count.className='compose-status';
+    count.setAttribute('role','status');count.setAttribute('aria-live','polite');
+    const choices=document.createElement('div');choices.className='touch-choices self-action-choices';
+    box.append(searchRow,count,choices);
+    function drawChoices(){
+      const query=model.selfQuery.normalize('NFKC').trim().toLocaleLowerCase();
+      const visible=model.selfActions.filter(value=>[value.label,value.description,value.category,
+        ...(value.targets||[]).map(part=>part.label)].filter(Boolean).join(' ').normalize('NFKC').toLocaleLowerCase().includes(query));
+      choices.replaceChildren();choices.scrollTop=0;clear.hidden=!model.selfQuery;
+      for(const value of visible){
+        const pick=button(value.label,()=>{
+          model.selfVerb=value.id;model.selfPart=value.targets?.length===1?value.targets[0].id:'';renderTouchBuilder();
+          if(value.targets?.length!==1)node('native-touch-picker').querySelector('.self-action-targets')?.scrollIntoView({block:'nearest'});
+        },'touch-choice');
+        pick.dataset.selfAction=value.id;pick.setAttribute('aria-pressed',String(value.id===model.selfVerb));choices.append(pick);
+      }
+      if(!visible.length)choices.append(Object.assign(document.createElement('p'),{
+        className:'compose-status',textContent:'没有匹配的动作，试试其他关键词。'}));
+      count.textContent=visible.length+' / '+model.selfActions.length+' 个动作';
+      if(choices.scrollHeight>choices.clientHeight+1)count.textContent+=' · 在列表内滑动查看更多';
+    }
+    search.addEventListener('input',()=>{model.selfQuery=search.value;drawChoices();});
+    drawChoices();
     if(selected&&target)box.append(Object.assign(document.createElement('p'),{
       className:'compose-status',textContent:selected.description+' 对象：'+target.label+'。'}));
   }

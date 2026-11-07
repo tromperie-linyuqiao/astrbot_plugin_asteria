@@ -106,3 +106,6 @@
 }
 
 .touch-part-search{width:100%;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-panel);color:var(--text-strong)}.touch-part-results{display:grid;gap:12px}.touch-part-group h4{margin:0 0 7px;font-size:11px;color:var(--muted)}.touch-part-group .touch-choices{gap:7px}.touch-choice[aria-pressed=true]{outline:1px solid var(--accent)}
+.self-action-search{display:flex;align-items:center;gap:8px;margin:8px 0}
+.self-action-search .touch-part-search{flex:1;width:0}
+.self-action-search button{flex:none;min-height:40px}
