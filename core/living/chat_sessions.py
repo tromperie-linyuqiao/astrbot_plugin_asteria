@@ -13,7 +13,7 @@ import time
 
 from astrbot.core.agent.message import TextPart
 
-from .chat_expressions import ChatExpressions, ChatExpressionError
+from .chat_expressions import ChatExpressions, ChatExpressionError, MUTUAL_TOUCH_WORDS
 from .context_engine import replace_request_parts
 from .journal import JournalConflict
 
@@ -68,7 +68,8 @@ def touch_catalog(plugin):
     aliases = {part['id']: part['aliases'] for part in parts}
     parse_profile = dict(profile, parts=[dict(part, aliases=aliases.get(part.get('id'), []))
                                          for part in profile.get('parts', [])])
-    verbs = [{'word': word, 'part_ids': [part['id'] for part in parts
+    verbs = [{'word': word, 'group': 'mutual' if word in MUTUAL_TOUCH_WORDS else 'character',
+              'part_ids': [part['id'] for part in parts
               if any(event['part'] == part['id'] for event in events.extract_events(word + part['label'], parse_profile))]}
              for word in events._action_words(profile)]
     return {'available': True, 'character': character, 'name': profile.get('name') or character,

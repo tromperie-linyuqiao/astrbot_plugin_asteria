@@ -70,6 +70,10 @@
 /* Two-step input is driven by the server's accepted verb/part catalogue. */
 .native-touch-picker{padding:4px 1px 12px;border-bottom:1px solid var(--line);margin-bottom:10px}
 .touch-path{display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:12px;color:var(--text-soft)}
+.native-touch-picker>.action-target-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-bottom:12px}
+.native-touch-picker>.action-target-tabs .touch-choice{min-width:0;min-height:40px;padding:7px 4px;font-size:12px}
+.native-touch-picker>.action-target-tabs .touch-choice[aria-pressed=true]{background:var(--accent-soft);border-color:var(--accent);color:var(--text-strong)}
+.mutual-action-choices{margin-bottom:12px}
 .touch-breadcrumb{padding:5px 8px;border-radius:8px;background:var(--surface-sunken);color:var(--text)}
 .touch-path strong{font-size:12px;font-weight:550;color:var(--text-strong)}
 .touch-choices{display:flex;flex-wrap:wrap;gap:7px}

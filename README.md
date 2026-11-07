@@ -137,7 +137,7 @@ https://cdn.jsdelivr.net/gh/tromperie-linyuqiao/astrbot_plugin_asteria@main/mark
 
 [下载 Android 安装包](https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria/releases) · [客户端说明](client/asteria-chat/README.md)
 
-当前发布：**Asteria 0.75.13 / Asteria Chat 2.7.1（code 79）**。在 Releases 选择对应版本的源码 ZIP 或公开客户端 APK；旧版文件保留，不代表当前版本。公开客户端不预置服务器，包名与私人 Texas Chat 不同。
+当前发布：**Asteria 0.75.14 / Asteria Chat 2.7.1（code 79）**。在 Releases 选择对应版本的源码 ZIP 或公开客户端 APK；旧版文件保留，不代表当前版本。公开客户端不预置服务器，包名与私人 Texas Chat 不同。
 
 客户端连接你自己的 AstrBot 服务，复用现有角色、模型与聊天历史。默认不预置服务器或账号。服务端连接配置见 [反向代理示例](deploy/nginx-chat.conf.example)。
 

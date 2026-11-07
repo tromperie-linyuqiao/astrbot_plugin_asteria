@@ -48,6 +48,17 @@ DEFAULT_ACTIONS = (
     {'id': 'hold_hands', 'label': '牵手', 'description': '伸手牵住德克萨斯的手，陪她待一会儿', 'enabled': True, 'quick': True, 'order': 2},
     {'id': 'lean', 'label': '靠一会儿', 'description': '轻轻靠着德克萨斯休息一会儿', 'enabled': True, 'quick': True, 'order': 3},
 )
+ACTION_GROUPS = ('character', 'mutual', 'self')
+MUTUAL_TOUCH_WORDS = frozenset({'亲', '亲吻', '接吻', '吻', '抱', '拥抱', '相拥', '牵', '牵手'})
+MUTUAL_ACTIONS = tuple(dict(row, group='mutual', actor='user', target='character')
+    for row in DEFAULT_ACTIONS if row['id'] in {'hold_hands', 'lean'}) + (
+    {'id': 'hug', 'label': '相拥', 'description': '我张开双臂，轻轻靠近，想和你相拥，等待你的回应。',
+     'group': 'mutual', 'actor': 'user', 'target': 'character'},
+    {'id': 'kiss', 'label': '接吻', 'description': '我轻轻靠近你，示意想和你接吻，等待你的回应。',
+     'group': 'mutual', 'actor': 'user', 'target': 'character'},
+    {'id': 'high_five', 'label': '击掌', 'description': '我抬起一只手，想和你击掌，等待你的回应。',
+     'group': 'mutual', 'actor': 'user', 'target': 'character'},
+)
 SELF_ACTIONS = (
     {'id': 'nod', 'label': '点头', 'description': '我点了点头。', 'targets': [{'id': 'self', 'label': '自己'}], 'category': '神态与手势'},
     {'id': 'shake_head', 'label': '摇头', 'description': '我摇了摇头。', 'targets': [{'id': 'self', 'label': '自己'}], 'category': '神态与手势'},
@@ -65,24 +76,41 @@ SELF_ACTIONS = (
     {'id': 'put_book', 'label': '放下书', 'description': '我把书放下。', 'targets': [{'id': 'book', 'label': '自己的书'}], 'category': '物品互动'},
     {'id': 'put_on_jacket', 'label': '披上外套', 'description': '我披上自己的外套。', 'targets': [{'id': 'jacket', 'label': '自己的外套'}], 'category': '物品互动'},
     {'id': 'offer_item', 'label': '递出物品', 'description': '我把手里的物品递过去，等待对方决定是否接下。', 'targets': [{'id': 'held_item', 'label': '手里的物品'}], 'category': '物品互动'},
-    {'id': 'rub_eyes', 'label': '揉眼睛', 'description': '我轻轻揉了揉自己的眼睛。', 'targets': [{'id': 'eyes', 'label': '自己的眼睛'}]},
-    {'id': 'stretch', 'label': '伸懒腰', 'description': '我伸了个懒腰。', 'targets': [{'id': 'whole_body', 'label': '自己的身体'}]},
-    {'id': 'sit', 'label': '坐下', 'description': '我坐下来，放松了一点。', 'targets': [{'id': 'chair', 'label': '椅子'}, {'id': 'bed_edge', 'label': '床沿'}]},
-    {'id': 'lean_back', 'label': '靠在椅背上', 'description': '我靠在椅背上休息了一会儿。', 'targets': [{'id': 'chair_back', 'label': '椅背'}]},
-    {'id': 'hug_pillow', 'label': '抱着抱枕', 'description': '我把抱枕抱在怀里。', 'targets': [{'id': 'pillow', 'label': '抱枕'}]},
-    {'id': 'drink_water', 'label': '喝水', 'description': '我拿起杯子喝了口水。', 'targets': [{'id': 'water_cup', 'label': '自己的水杯'}]},
-    {'id': 'yawn', 'label': '打哈欠', 'description': '我打了个哈欠。', 'targets': [{'id': 'self', 'label': '自己'}]},
-    {'id': 'lie_down', 'label': '躺下休息', 'description': '我躺下来休息。', 'targets': [{'id': 'bed', 'label': '床上'}, {'id': 'sofa', 'label': '沙发'}]},
-    {'id': 'adjust_clothes', 'label': '整理衣服', 'description': '我整理了一下自己的衣服。', 'targets': [{'id': 'clothes', 'label': '自己的衣服'}]},
-    {'id': 'look_phone', 'label': '看手机', 'description': '我低头看了一眼自己的手机。', 'targets': [{'id': 'phone', 'label': '自己的手机'}]},
+    {'id': 'rub_eyes', 'label': '揉眼睛', 'description': '我轻轻揉了揉自己的眼睛。', 'targets': [{'id': 'eyes', 'label': '自己的眼睛'}], 'category': '照顾自己'},
+    {'id': 'stretch', 'label': '伸懒腰', 'description': '我伸了个懒腰。', 'targets': [{'id': 'whole_body', 'label': '自己的身体'}], 'category': '姿态与位置'},
+    {'id': 'sit', 'label': '坐下', 'description': '我坐下来，放松了一点。', 'targets': [{'id': 'chair', 'label': '椅子'}, {'id': 'bed_edge', 'label': '床沿'}], 'category': '姿态与位置'},
+    {'id': 'lean_back', 'label': '靠在椅背上', 'description': '我靠在椅背上休息了一会儿。', 'targets': [{'id': 'chair_back', 'label': '椅背'}], 'category': '姿态与位置'},
+    {'id': 'hug_pillow', 'label': '抱着抱枕', 'description': '我把抱枕抱在怀里。', 'targets': [{'id': 'pillow', 'label': '抱枕'}], 'category': '物品互动'},
+    {'id': 'drink_water', 'label': '喝水', 'description': '我拿起杯子喝了口水。', 'targets': [{'id': 'water_cup', 'label': '自己的水杯'}], 'category': '照顾自己'},
+    {'id': 'yawn', 'label': '打哈欠', 'description': '我打了个哈欠。', 'targets': [{'id': 'self', 'label': '自己'}], 'category': '神态与手势'},
+    {'id': 'lie_down', 'label': '躺下休息', 'description': '我躺下来休息。', 'targets': [{'id': 'bed', 'label': '床上'}, {'id': 'sofa', 'label': '沙发'}], 'category': '姿态与位置'},
+    {'id': 'adjust_clothes', 'label': '整理衣服', 'description': '我整理了一下自己的衣服。', 'targets': [{'id': 'clothes', 'label': '自己的衣服'}], 'category': '照顾自己'},
+    {'id': 'look_phone', 'label': '看手机', 'description': '我低头看了一眼自己的手机。', 'targets': [{'id': 'phone', 'label': '自己的手机'}], 'category': '物品互动'},
+    {'id': 'fold_arms', 'label': '抱臂', 'description': '我把双臂抱在身前。', 'targets': [{'id': 'arms', 'label': '自己的双臂'}], 'category': '姿态与位置'},
+    {'id': 'deep_breath', 'label': '深呼吸', 'description': '我缓缓吸气，再轻轻呼出。', 'targets': [{'id': 'chest', 'label': '自己的胸口'}], 'category': '照顾自己'},
+    {'id': 'rub_shoulders', 'label': '揉揉肩膀', 'description': '我轻轻揉了揉自己的肩膀，放松紧绷的地方。', 'targets': [{'id': 'shoulder', 'label': '自己的肩膀'}], 'category': '照顾自己'},
 )
+
+
+def action_group(value):
+    if value.get('target') == 'self':
+        return 'self'
+    group = value.get('group')
+    if isinstance(group, str) and group in {'character', 'mutual'}:
+        return group
+    touch = value.get('native_touch')
+    if isinstance(touch, dict) and touch.get('verb') in MUTUAL_TOUCH_WORDS:
+        return 'mutual'
+    return 'mutual' if value.get('label') in {'牵手', '依偎', '靠一会儿', '接吻', '亲吻', '相拥', '拥抱', '抱抱', '击掌', '挽臂'} else 'character'
+
+
 USER_DEFAULT = {'favorite': False, 'liked': False, 'disliked': False, 'hidden': False, 'quick_send': False, 'quick_order': 0,
                 'last_used': None, 'use_count': 0}
 TEXAS_DEFAULT = {'weight': 0, 'contexts': [], 'last_used': None, 'use_count': 0, 'cooldown_seconds': 60}
 _EMOTIONS = {
     '开心': ('开心', '高兴', '好耶', '哈哈', '嘿嘿', '笑', '太好了', '愉快', 'happy', 'great'),
     '喜欢': ('喜欢', '想你', '爱你', '爱着', '抱抱', '亲亲', '心动', '牵手', 'love', 'miss you'),
-    '害羞': ('害羞', '脸红', '不好意思', '别逗', '羞', '心跳', 'shy'),
+    '害羞': ('害羞', '脸红', '不好意思', '别逗', '心跳', 'shy'),
     '关心': ('担心', '照顾', '好好休息', '记得吃', '喝水', '别太累', '辛苦', '陪着', 'care'),
     '安心': ('没关系', '放心', '我在', '安心', '别怕', '不会离开', '没事的', 'safe'),
     '难过': ('难过', '委屈', '伤心', '哭', '抱歉', '对不起', '寂寞', 'sad', 'sorry'),
@@ -432,10 +460,13 @@ class ChatExpressions:
         for item in items:
             used = self.journal.fetch(ACTION_USAGE, item['id'], scope)
             item.update(last_used=used['data']['last_used'] if used else None,
-                        use_count=used['data']['use_count'] if used else 0)
+                        use_count=used['data']['use_count'] if used else 0, group=action_group(item))
         return {'items': sorted(items, key=lambda row: (row['order'], row['id'])), 'revision': record['revision'] if record else 0,
-                'native_touch': self.touch_catalog(), 'defaults': deepcopy(list(DEFAULT_ACTIONS)),
-                'self_actions': deepcopy(list(SELF_ACTIONS)), 'action_targets': ['character', 'self']}
+                'native_touch': self.touch_catalog(),
+                'defaults': [dict(row, group=action_group(row)) for row in deepcopy(list(DEFAULT_ACTIONS))],
+                'mutual_actions': deepcopy(list(MUTUAL_ACTIONS)),
+                'self_actions': [dict(row, group='self') for row in deepcopy(list(SELF_ACTIONS))],
+                'action_groups': list(ACTION_GROUPS), 'action_targets': ['character', 'self']}
 
     def save_action(self, scope, op, record, request_id=None, expected_revision=None):
         if op not in {'create', 'update', 'delete', 'import'} or not isinstance(record, dict):
@@ -447,7 +478,11 @@ class ChatExpressions:
                     raise ChatExpressionError('请先读取当前动作版本')
                 if expected_revision != snapshot['revision']:
                     raise JournalConflict('动作已在其他位置修改，请重新读取后再保存')
-            rows = {row['id']: {key: value for key, value in row.items() if key not in {'last_used', 'use_count'}} for row in snapshot['items']}
+            stored = self.journal.fetch(ACTIONS, 'definitions', scope)
+            if (stored['revision'] if stored else 0) != snapshot['revision']:
+                raise JournalConflict('动作已在其他位置修改，请重新读取后再保存')
+            original_items = stored['data']['items'] if stored else list(DEFAULT_ACTIONS)
+            rows = {row['id']: {key: value for key, value in row.items() if key not in {'last_used', 'use_count'}} for row in original_items}
             if op == 'import':
                 values = record.get('items')
                 if not isinstance(values, list) or not 1 <= len(values) <= 64:
@@ -475,6 +510,8 @@ class ChatExpressions:
                 if op == 'update' and identity not in rows:
                     raise KeyError('动作不存在')
                 value = {**rows.get(identity, {}), **record, 'id': identity}
+                if 'target' in record and 'group' not in record:
+                    value.pop('group', None)
                 value['label'] = _text(value.get('label'), '动作名称', 32)
                 value['description'] = _text(value.get('description'), '动作含义', 500)
                 for key in ('enabled', 'quick'):
@@ -485,7 +522,8 @@ class ChatExpressions:
                 if type(value['order']) is not int or not -1000 <= value['order'] <= 1000:
                     raise ChatExpressionError('动作排序无效')
                 value = self._action_record(value, len(rows), existing=rows.get(identity) if op == 'update' else None)
-                if op == 'create' and identity in rows and rows[identity] != value:
+                if (op == 'create' and identity in rows
+                        and self._action_record(rows[identity], len(rows), existing=rows[identity]) != value):
                     raise ChatExpressionError('动作编号已存在')
                 rows[identity] = value
             if len(rows) > 256:
@@ -506,6 +544,10 @@ class ChatExpressions:
         actor, target = value.get('actor', 'user'), value.get('target', 'character')
         if actor != 'user' or target not in {'character', 'self'}:
             raise ChatExpressionError('用户动作只能由你发起，对象请选择自己或当前角色')
+        group = value.get('group', action_group(value))
+        if not isinstance(group, str) or group not in ACTION_GROUPS or (group == 'self') != (target == 'self'):
+            raise ChatExpressionError('动作分类与对象不一致，请重新选择')
+        result['group'] = group
         if 'actor' in value or 'target' in value or target == 'self':
             result.update(actor='user', target=target)
         if 'target_part' in value:
@@ -618,9 +660,12 @@ class ChatExpressions:
                 target = action.get('target', 'character')
                 if part.get('actor', 'user') != 'user' or part.get('target', target) != target:
                     raise ChatExpressionError('动作执行者或对象与已保存定义不一致，请刷新动作面板')
+                if part.get('group', action['group']) != action['group']:
+                    raise ChatExpressionError('动作分类与已保存定义不一致，请刷新动作面板')
                 action_count += 1
                 result.append({'type': 'action', 'action_id': identity, 'label': action['label'],
                     'description': action['description'], 'actor': 'user', 'target': target,
+                    'group': action['group'],
                     'character_id': scope['character_id'],
                     'target_part': action.get('target_part', action.get('native_touch', {}).get('part', '')),
                     'source': 'user_self_action' if target == 'self' else 'user_action', 'fragment_id': fragment,
