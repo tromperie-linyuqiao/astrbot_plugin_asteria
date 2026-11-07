@@ -99,7 +99,16 @@
       <section id="persona-settings" class="persona-settings" hidden><div class="persona-heading"><label for="persona">角色的角色配置</label><button id="refresh-personas" type="button" class="text-button">刷新</button></div><select id="persona" aria-label="选择服务器已有角色"><option value="">登录后加载真实角色</option></select><p>选择即时保存，首次连接时选用真实角色；长期连接建立后持续复用原记录。</p></section>
       <p id="login-error" class="form-error" role="alert" hidden></p>
       <button id="login-button" class="primary-button" type="submit">登录并同步</button>
-      <section class="notify-settings" aria-label="新回复提醒"><label class="switch-label" for="notify-toggle"><input id="notify-toggle" type="checkbox"> 新回复提醒</label><p>开启后显示常驻通知，Android 原生服务每隔至少 30 秒检查当前对话；不是服务器推送。系统超时或停止后需要你重新开启。</p><p id="reply-watch-status" class="appearance-help" role="status">默认不开启后台服务。</p><details id="notification-diagnostics"><summary>通知权限与系统状态</summary><div id="notification-system-state" aria-live="polite"><p>打开后读取本机实际状态。</p></div><div class="appearance-actions"><button id="notification-status-refresh" type="button" class="text-button">刷新状态</button><button id="notification-settings-open" type="button" class="text-button">打开系统通知设置</button><button id="notification-permission-request" type="button" class="text-button">申请通知权限</button></div><p id="notification-system-note" class="appearance-help" role="status"></p></details></section>
+      <section class="notify-settings" aria-label="新回复提醒">
+        <label class="switch-label" for="notify-toggle"><input id="notify-toggle" type="checkbox"> 新回复提醒</label>
+        <p id="reply-watch-status" class="appearance-help" role="status">默认不开启后台服务。</p>
+        <div class="watch-notice-settings">
+          <button id="reply-watch-settings" type="button" class="secondary-button">隐藏或收起后台收件提示</button>
+          <p>仅设置每 30 秒收件的常驻提示。能否隐藏由手机系统决定，聊天消息类别可单独设置。</p>
+          <p id="reply-watch-settings-note" class="appearance-help" role="status"></p>
+        </div>
+        <details id="notification-diagnostics"><summary>通知权限与系统状态</summary><div id="notification-system-state" aria-live="polite"><p>打开后读取本机实际状态。</p></div><div class="appearance-actions"><button id="notification-status-refresh" type="button" class="text-button">刷新状态</button><button id="notification-settings-open" type="button" class="text-button">打开系统通知设置</button><button id="notification-permission-request" type="button" class="text-button">申请通知权限</button></div><p id="notification-system-note" class="appearance-help" role="status"></p></details>
+      </section>
       <section id="notification-preferences" class="notification-preferences" aria-label="通知偏好"></section>
       <section id="chat-cache-settings" class="chat-cache-settings" aria-labelledby="chat-cache-title">
         <div class="cache-heading"><h3 id="chat-cache-title">本机缓存</h3><button id="chat-cache-refresh" type="button" class="text-button">刷新缓存信息</button></div>

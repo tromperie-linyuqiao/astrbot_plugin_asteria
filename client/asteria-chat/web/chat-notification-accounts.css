@@ -7,6 +7,20 @@
 .reply-account-card{padding:14px;border:1px solid var(--border,#39413d);border-radius:14px;background:var(--surface,#202622);min-width:0}
 .reply-account-card p{margin:8px 0;color:var(--text-muted,#9ba69f)}
 .reply-account-state{flex-shrink:0;font-size:.75rem;padding:4px 8px;border-radius:6px;background:var(--surface-soft,#2b332e);color:var(--text,#e3e8e4)}
+.reply-account-heading strong{flex:1 1 auto}
+.reply-account-state{max-width:55%;white-space:normal;overflow-wrap:anywhere;text-align:center}
+.reply-account-diagnostics{margin-top:10px;padding-top:10px;border-top:1px solid var(--line,var(--border,#39413d));font-size:.8rem}
+.reply-account-diagnostics summary,#reply-diagnostics-export summary{cursor:pointer;line-height:1.6;overflow-wrap:anywhere}
+.reply-account-diagnostics dl{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.4fr);gap:8px 12px;margin:12px 0;line-height:1.6}
+.reply-account-diagnostics dt{color:var(--text-soft,var(--text-muted,#9ba69f))}
+.reply-account-diagnostics dd{margin:0;overflow-wrap:anywhere;min-width:0}
+.reply-diagnostics-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin-top:14px}
+.reply-diagnostics-toolbar button{min-height:42px;max-width:100%;white-space:normal}
+.reply-diagnostics-toolbar p{flex:1 1 190px;margin:0;font-size:.8rem;line-height:1.6;color:var(--text-soft,var(--text-muted,#9ba69f));overflow-wrap:anywhere}
+#reply-diagnostics-note:empty{display:none}
+#reply-diagnostics-export{margin-top:10px;font-size:.8rem;min-width:0}
+#reply-diagnostics-export[hidden]{display:none}
+#reply-diagnostics-text{box-sizing:border-box;width:100%;max-width:100%;min-width:0;margin-top:10px;font-size:12px;line-height:1.6;resize:vertical;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;-webkit-user-select:text}
 .reply-account-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .reply-account-actions button{max-width:100%;white-space:normal}
 .notification-blocked-note{border-left:3px solid var(--accent,#91a99b);padding:8px 12px;background:var(--surface,#202622);border-radius:4px}
@@ -16,6 +30,6 @@ html[data-theme="black"] .reply-account-state{background:#242424;color:#e6e6e6}
 html[data-theme="light"] .reply-account-card,html[data-theme="light"] .notification-blocked-note{background:#f4f5f3;border-color:#d9dfda}
 html[data-theme="light"] .reply-account-card p{color:#59665e}
 html[data-theme="light"] .reply-account-state{background:#e5e9e5;color:#35443a}
-@media(max-width:360px){.reply-account-card{padding:11px}.reply-account-heading{gap:8px}.reply-account-actions button{flex:1 1 110px}}
+@media(max-width:360px){.reply-account-card{padding:11px}.reply-account-heading{gap:8px}.reply-account-actions button{flex:1 1 110px}.reply-account-diagnostics dl{grid-template-columns:minmax(0,1fr);gap:3px}.reply-account-diagnostics dd{margin-bottom:8px}}
 
 .connection-presets{border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:12px}.connection-presets h3{font-size:14px;margin:0 0 12px;color:var(--text-strong)}.connection-preset-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.connection-preset{display:grid;align-content:start;gap:6px;text-align:left;border:1px solid var(--line);border-radius:13px;padding:13px;background:var(--surface-panel);color:var(--text-strong);min-width:0;overflow-wrap:anywhere}.connection-preset strong{font-size:16px;font-weight:550}.connection-preset span{font-size:11px;color:var(--muted);line-height:1.6}.connection-preset small{font-size:10px;color:var(--accent-strong);margin-top:4px}.connection-preset[aria-pressed=true]{border-color:var(--accent);background:var(--accent-soft)}.connection-preset-host{font-variant-numeric:tabular-nums}.connection-presets>.appearance-help{margin:12px 0 0;font-size:11px;line-height:1.7}@media(max-width:360px){.connection-preset-grid{grid-template-columns:1fr}.connection-preset{padding:12px}}

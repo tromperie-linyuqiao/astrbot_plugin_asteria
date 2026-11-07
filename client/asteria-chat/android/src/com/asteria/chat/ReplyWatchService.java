@@ -14,6 +14,9 @@ import android.content.pm.ServiceInfo;
 import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
 import android.net.Uri;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -39,6 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.HttpsURLConnection;
 import org.json.JSONArray;
@@ -49,7 +53,7 @@ import org.json.JSONObject;
 public final class ReplyWatchService extends Service {
     private static final String START = "com.asteria.chat.REPLY_WATCH_START";
     private static final String STOP = "com.asteria.chat.REPLY_WATCH_STOP";
-    private static final String WATCH_CHANNEL = "texas-chat-reply-watch";
+    static final String WATCH_CHANNEL = "texas-chat-reply-watch";
     private static final String REPLY_CHANNEL = "texas-chat-replies";
     private static final int WATCH_NOTIFICATION = 4300;
     private static final int MAX_NOTICE_MESSAGES = 8;
@@ -64,7 +68,7 @@ public final class ReplyWatchService extends Service {
     private static volatile String visibleSession = "";
     private static volatile ReplyWatchService current;
     private static volatile boolean appForeground;
-    private static final String EMPTY_STATUS = "{\"state\":\"stopped\",\"running\":false,\"active\":false,\"accounts\":[],\"verified_session\":false,\"server_push\":false,\"transport\":\"foreground_service_polling\"}";
+    private static final String EMPTY_STATUS = "{\"state\":\"stopped\",\"running\":false,\"active\":false,\"accounts\":[],\"verified_session\":false,\"server_push\":false,\"transport\":\"foreground_service_polling\",\"resume_on_foreground_required\":false,\"diagnosis\":{\"schema\":1,\"last_exit\":{\"reason\":\"unknown\",\"timestamp\":null}}}";
     private static volatile String latest = EMPTY_STATUS;
     private static volatile Observer observer;
 
@@ -79,6 +83,8 @@ public final class ReplyWatchService extends Service {
     private final Map<String, Watch> watches = new ConcurrentHashMap<>();
     private volatile boolean running;
     private SharedPreferences metadata;
+    private ConnectivityManager networkManager;
+    private Network validatedNetwork;
 
     private static final class Watch {
         final String server, token, session, title, scope, baseline;
@@ -87,6 +93,8 @@ public final class ReplyWatchService extends Service {
         volatile HttpsURLConnection connection;
         volatile ScheduledFuture<?> pending;
         volatile long lastNetworkStarted = -POLL_MS, nextPollAt;
+        long scheduleEpoch;
+        boolean networkRecoveryPending;
         volatile String state = "starting", reason = "";
         volatile boolean initialized, verified, receiptsSupported, partialReceipts, syncSupported, syncBlocked;
         volatile String receiptState = "not_reported";
@@ -126,7 +134,7 @@ public final class ReplyWatchService extends Service {
 
     private static JSONObject statusSnapshot(Context context, String state, String reason) throws JSONException {
         ReplyWatchService service = current;
-        SharedPreferences saved = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
+        SharedPreferences saved = context.getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE);
         JSONArray accounts = new JSONArray();
         java.util.Set<String> known = new java.util.HashSet<>();
         Watch selected = null;
@@ -153,17 +161,23 @@ public final class ReplyWatchService extends Service {
                     .put("last_sync_at", active && live.lastSyncAt > 0 ? live.lastSyncAt : JSONObject.NULL)
                     .put("next_poll_seconds", active ? Math.max(0, live.nextPollAt - SystemClock.elapsedRealtime()) / 1000 : 0)
                     .put("notification_outcome_unknown", active ? live.uncertainNotices : 0);
+            row.put("diagnosis", ReplyWatchDiagnostics.account(saved, record.id));
             accounts.put(row);
         }
         JSONArray stopped = stoppedAccounts(saved);
         for (int index = 0; index < stopped.length(); index++) {
             JSONObject row = stopped.optJSONObject(index);
-            if (row != null && !known.contains(row.optString("id"))) accounts.put(row);
+            if (row != null && !known.contains(row.optString("id"))) {
+                row.put("diagnosis", ReplyWatchDiagnostics.account(saved, row.optString("id")));
+                accounts.put(row);
+            }
         }
         return new JSONObject().put("state", state != null ? state : activeCount > 0 ? "running" : "stopped")
                 .put("reason", reason == null ? JSONObject.NULL : reason).put("running", activeCount > 0)
                 .put("active", activeCount > 0).put("active_count", activeCount).put("registered_count", known.size())
                 .put("accounts", accounts).put("maximum_accounts", MAX_WATCHES)
+                .put("diagnosis", ReplyWatchDiagnostics.system(context))
+                .put("resume_on_foreground_required", saved.getBoolean("resume_on_foreground_required", false))
                 .put("verified_session", selected != null && selected.verified)
                 .put("session_id", selected == null ? JSONObject.NULL : selected.session)
                 .put("title", selected == null ? JSONObject.NULL : selected.title)
@@ -314,7 +328,7 @@ public final class ReplyWatchService extends Service {
         // Only known numeric notices on our replies channel can be legacy previews.
         if (scope != null) cancelLegacyNotice(manager, scope);
         else {
-            SharedPreferences registration = context.getSharedPreferences("asteria_chat_reply_watch", Context.MODE_PRIVATE);
+            SharedPreferences registration = context.getSharedPreferences("texas_chat_reply_watch", Context.MODE_PRIVATE);
             cancelLegacyNotice(manager, registration.getString("scope", ""));
             cancelLegacyNotice(manager, registration.getString("registered_auth_scope", ""));
         }
@@ -373,7 +387,7 @@ public final class ReplyWatchService extends Service {
             title = text(title, "Asteria Chat", 40);
             String id = scope(server, token, session);
             ReplyWatchAccounts.Record previous = ReplyWatchAccounts.find(context, id);
-            SharedPreferences saved = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
+            SharedPreferences saved = context.getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE);
             if (previous == null && !saved.edit().putBoolean("paused_" + id, true)
                     .putString("stop_reason_" + id, "notifications_not_enabled").commit())
                 throw new IllegalStateException("saved_account_state_unavailable");
@@ -385,7 +399,7 @@ public final class ReplyWatchService extends Service {
 
     private static void rememberPreview(Context context, String scope, String id, String excerpt) {
         if (!positiveId(id)) return;
-        SharedPreferences saved = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
+        SharedPreferences saved = context.getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE);
         String oldId = saved.getString("preview_id_" + scope, "");
         if (!id.equals(latestCursor(oldId, id))) return;
         String safe = text(excerpt, "[附件或表情消息]", 360);
@@ -401,7 +415,7 @@ public final class ReplyWatchService extends Service {
         if (!ApiPolicy.jwt(token)) throw new IllegalStateException("saved_login_required");
         synchronized (ADMISSION) {
             ReplyWatchAccounts.Record record = ReplyWatchAccounts.save(context, normalized, token, session, title, baseline);
-            SharedPreferences saved = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
+            SharedPreferences saved = context.getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE);
             forgetStoppedAccount(saved, record.id);
             if (!saved.edit().putBoolean("enabled", true).putBoolean("accounts_migrated", true)
                     .putBoolean("paused_" + record.id, false).remove("stop_reason_" + record.id).commit())
@@ -417,6 +431,7 @@ public final class ReplyWatchService extends Service {
             catch (RuntimeException unavailable) {
                 startPending = false;
                 saved.edit().putString("stop_reason_" + record.id, "foreground_start_not_allowed").apply();
+                ReplyWatchDiagnostics.stopped(saved, record.id, "foreground_start_not_allowed");
             }
             return snapshot(context);
         }
@@ -429,7 +444,7 @@ public final class ReplyWatchService extends Service {
             if (!appForeground || startPending || !NotificationPreferences.load(context).enabled) return;
             ReplyWatchService active = current;
             if (active != null && active.running && !active.watches.isEmpty()) return;
-            SharedPreferences saved = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
+            SharedPreferences saved = context.getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE);
             if (!saved.getBoolean("enabled", false)) return;
             List<ReplyWatchAccounts.Record> records = ReplyWatchAccounts.list(context);
             boolean enabledTarget = false;
@@ -455,8 +470,10 @@ public final class ReplyWatchService extends Service {
             ReplyWatchService active = current;
             for (ReplyWatchAccounts.Record record : records) {
                 if (!account.equals(accountKey(record.server, record.token))) continue;
-                context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE).edit()
-                        .putBoolean("paused_" + record.id, true).putString("stop_reason_" + record.id, reason).commit();
+                context.getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE).edit()
+                        .putBoolean("paused_" + record.id, true).putString("stop_reason_" + record.id, reason)
+                        .putLong("stop_at_" + record.id, System.currentTimeMillis()).commit();
+                ReplyWatchDiagnostics.stopped(context.getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE), record.id, reason);
                 Watch selected = active == null ? null : active.watches.get(record.id);
                 if (selected != null) active.removeWatch(selected, reason);
                 savedPreviewForget(context, record.id);
@@ -471,7 +488,7 @@ public final class ReplyWatchService extends Service {
     }
 
     private static void savedPreviewForget(Context context, String id) {
-        context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE).edit()
+        context.getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE).edit()
                 .remove("preview_id_" + id).remove("preview_text_" + id).remove("preview_at_" + id).apply();
     }
 
@@ -479,9 +496,11 @@ public final class ReplyWatchService extends Service {
         synchronized (ADMISSION) {
             ReplyWatchAccounts.Record record = ReplyWatchAccounts.find(context, id);
             if (record == null) return;
-            if (!context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE).edit()
-                    .putBoolean("paused_" + id, true).putString("stop_reason_" + id, reason).commit())
+            if (!context.getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE).edit()
+                    .putBoolean("paused_" + id, true).putString("stop_reason_" + id, reason)
+                    .putLong("stop_at_" + id, System.currentTimeMillis()).commit())
                 throw new IllegalStateException("watch_stop_not_saved");
+            ReplyWatchDiagnostics.stopped(context.getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE), id, reason);
             ReplyWatchService active = current;
             Watch selected = active == null ? null : active.watches.get(id);
             if (selected != null) active.removeWatch(selected, reason);
@@ -506,7 +525,7 @@ public final class ReplyWatchService extends Service {
     }
 
     private static void rememberStoppedAccount(Context context, ReplyWatchAccounts.Record record, String reason) {
-        SharedPreferences saved = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
+        SharedPreferences saved = context.getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE);
         forgetStoppedAccount(saved, record.id);
         JSONArray previous = stoppedAccounts(saved), kept = new JSONArray();
         try {
@@ -524,10 +543,14 @@ public final class ReplyWatchService extends Service {
     static void stop(Context context, String reason) {
         synchronized (ADMISSION) {
             admissionEpoch++; startPending = false;
-            SharedPreferences.Editor edit = context.getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE).edit()
-                    .putBoolean("enabled", false).putBoolean("accounts_migrated", true);
-            for (ReplyWatchAccounts.Record record : ReplyWatchAccounts.list(context))
-                edit.putBoolean("paused_" + record.id, true).putString("stop_reason_" + record.id, reason);
+            SharedPreferences.Editor edit = context.getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE).edit()
+                    .putBoolean("enabled", false).putBoolean("accounts_migrated", true)
+                    .putBoolean("resume_on_foreground_required", false);
+            for (ReplyWatchAccounts.Record record : ReplyWatchAccounts.list(context)) {
+                edit.putBoolean("paused_" + record.id, true).putString("stop_reason_" + record.id, reason)
+                        .putLong("stop_at_" + record.id, System.currentTimeMillis());
+                ReplyWatchDiagnostics.stopped(context.getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE), record.id, reason);
+            }
             edit.apply();
             ReplyWatchService active = current;
             if (active != null) active.finish(reason);
@@ -580,10 +603,43 @@ public final class ReplyWatchService extends Service {
         } catch (Exception unavailable) { throw new IllegalStateException("watch_identity_unavailable"); }
     }
 
+    private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
+        @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
+            synchronized (ADMISSION) {
+                boolean available = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+                if (!available) {
+                    if (network.equals(validatedNetwork)) validatedNetwork = null;
+                    return;
+                }
+                if (network.equals(validatedNetwork)) return;
+                validatedNetwork = network;
+                recoverAfterNetwork();
+            }
+        }
+        @Override public void onLost(Network network) {
+            synchronized (ADMISSION) { if (network.equals(validatedNetwork)) validatedNetwork = null; }
+        }
+    };
+
+    private void recoverAfterNetwork() {
+        synchronized (ADMISSION) {
+            if (current != this || !running || !metadata.getBoolean("enabled", false)
+                    || metadata.getBoolean("resume_on_foreground_required", false)) return;
+            for (Watch selected : watches.values()) {
+                if (!current(selected) || metadata.getBoolean("paused_" + selected.scope, false)
+                        || (selected.registration != null && !ReplyWatchAccounts.matches(this, selected.registration))) continue;
+                if (selected.polling.get()) selected.networkRecoveryPending = true;
+                else schedule(selected, nextAllowedDelay(selected));
+            }
+        }
+    }
+
     @Override public void onCreate() {
         super.onCreate();
+        ((ScheduledThreadPoolExecutor) executor).setRemoveOnCancelPolicy(true);
         current = this;
-        metadata = getSharedPreferences("asteria_chat_reply_watch", MODE_PRIVATE);
+        metadata = getSharedPreferences("texas_chat_reply_watch", MODE_PRIVATE);
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) {
             NotificationChannel ongoing = new NotificationChannel(WATCH_CHANNEL, "后台回复监控", NotificationManager.IMPORTANCE_LOW);
@@ -591,6 +647,13 @@ public final class ReplyWatchService extends Service {
             manager.createNotificationChannel(ongoing);
             NotificationChannels.ensure(manager);
         }
+        try {
+            ConnectivityManager network = getSystemService(ConnectivityManager.class);
+            if (network != null) {
+                network.registerDefaultNetworkCallback(networkCallback, main);
+                networkManager = network;
+            }
+        } catch (RuntimeException unavailable) { /* The original timed retries remain available. */ }
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -600,12 +663,19 @@ public final class ReplyWatchService extends Service {
             if (intent != null && intent.getLongExtra("admission_epoch", -1) != admissionEpoch)
                 return running ? START_STICKY : START_NOT_STICKY;
             startPending = false;
+            // The platform's dataSync time limit is a pause until a visible Activity
+            // starts the existing resume path; a sticky restart cannot bypass it.
+            if (metadata.getBoolean("resume_on_foreground_required", false) && !appForeground) {
+                stopSelf();
+                return START_NOT_STICKY;
+            }
             try {
                 Notification initial = ongoing(null);
                 if (Build.VERSION.SDK_INT >= 29) startForeground(WATCH_NOTIFICATION, initial, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
                 else startForeground(WATCH_NOTIFICATION, initial);
                 if (!notificationsAllowed()) { finish("notification_permission"); return START_NOT_STICKY; }
                 if (!metadata.getBoolean("enabled", false)) { finish("not_enabled"); return START_NOT_STICKY; }
+                metadata.edit().putBoolean("resume_on_foreground_required", false).apply();
                 migrateLegacyRegistration();
                 for (ReplyWatchAccounts.Record record : ReplyWatchAccounts.list(this)) {
                     if (metadata.getBoolean("paused_" + record.id, false)) continue;
@@ -613,6 +683,7 @@ public final class ReplyWatchService extends Service {
                     catch (RuntimeException unavailable) {
                         metadata.edit().putBoolean("paused_" + record.id, true)
                                 .putString("stop_reason_" + record.id, "watch_start_unavailable").apply();
+                        ReplyWatchDiagnostics.stopped(metadata, record.id, "watch_start_unavailable");
                     }
                 }
                 stopIfEmpty();
@@ -676,17 +747,35 @@ public final class ReplyWatchService extends Service {
     }
 
     private long nextAllowedDelay(Watch selected) {
-        synchronized (selected) { return Math.max(0, POLL_MS - (SystemClock.elapsedRealtime() - selected.lastNetworkStarted)); }
+        synchronized (ADMISSION) { return Math.max(0, POLL_MS - (SystemClock.elapsedRealtime() - selected.lastNetworkStarted)); }
     }
 
     private void schedule(Watch selected, long delay) {
-        if (!current(selected)) return;
-        selected.nextPollAt = SystemClock.elapsedRealtime() + Math.max(0, delay);
-        try { selected.pending = executor.schedule(() -> {
-            if (!current(selected) || !selected.polling.compareAndSet(false, true)) return;
-            try { poll(selected); } finally { selected.polling.set(false); }
-        }, Math.max(0, delay), TimeUnit.MILLISECONDS); }
-        catch (RuntimeException stopped) { finishWatch(selected, "watch_stopped"); }
+        synchronized (ADMISSION) {
+            if (!current(selected)) return;
+            long ticket = ++selected.scheduleEpoch;
+            ScheduledFuture<?> previous = selected.pending;
+            if (previous != null) previous.cancel(false);
+            selected.nextPollAt = SystemClock.elapsedRealtime() + Math.max(0, delay);
+            try { selected.pending = executor.schedule(() -> {
+                synchronized (ADMISSION) {
+                    if (!current(selected) || ticket != selected.scheduleEpoch) return;
+                    selected.pending = null;
+                    if (!selected.polling.compareAndSet(false, true)) return;
+                }
+                try { poll(selected); }
+                finally {
+                    synchronized (ADMISSION) {
+                        selected.polling.set(false);
+                        if (current(selected) && selected.networkRecoveryPending) {
+                            selected.networkRecoveryPending = false;
+                            schedule(selected, nextAllowedDelay(selected));
+                        }
+                    }
+                }
+            }, Math.max(0, delay), TimeUnit.MILLISECONDS); }
+            catch (RuntimeException stopped) { finishWatch(selected, "watch_stopped"); }
+        }
     }
 
     private boolean current(Watch selected) {
@@ -696,7 +785,7 @@ public final class ReplyWatchService extends Service {
     private void removeWatch(Watch selected, String reason) {
         if (!watches.remove(selected.scope, selected)) return;
         cancelRead(selected); rememberStop(selected, reason);
-        metadata.edit().putBoolean("paused_" + selected.scope, true).apply();
+        if (!"system_time_limit".equals(reason)) metadata.edit().putBoolean("paused_" + selected.scope, true).apply();
         if (privateStop(reason)) clearScopeNotices(this, selected.scope, authScope(selected.server, selected.token, selected.session), true);
         selected.state = "stopped"; selected.reason = reason;
         publish("stopped", reason, selected, false, 0);
@@ -737,7 +826,12 @@ public final class ReplyWatchService extends Service {
     }
 
     private void updateWatch(Watch selected, String state, String reason, long delay) {
-        synchronized (ADMISSION) { if (current(selected)) publish(state, reason, selected, true, delay); }
+        synchronized (ADMISSION) {
+            if (!current(selected)) return;
+            ReplyWatchDiagnostics.readReason(metadata, selected.scope, reason);
+            if ("reconnecting".equals(state)) ReplyWatchDiagnostics.error(metadata, selected.scope, reason);
+            publish(state, reason, selected, true, delay);
+        }
     }
 
     private void poll(Watch selected) {
@@ -756,11 +850,12 @@ public final class ReplyWatchService extends Service {
             schedule(selected, POLL_MS);
             return;
         }
-        synchronized (selected) {
+        synchronized (ADMISSION) {
             long delay = POLL_MS - (SystemClock.elapsedRealtime() - selected.lastNetworkStarted);
             if (delay > 0) { schedule(selected, delay); return; }
             if (!current(selected)) return;
             selected.lastNetworkStarted = SystemClock.elapsedRealtime();
+            ReplyWatchDiagnostics.attempt(metadata, selected.scope);
         }
         HttpsURLConnection request = null;
         long delay = POLL_MS;
@@ -805,6 +900,10 @@ public final class ReplyWatchService extends Service {
                 return;
             }
             String nextCursor = incremental ? syncNext(data, requestAfter, history) : "";
+            synchronized (ADMISSION) {
+                if (!current(selected)) return;
+                ReplyWatchDiagnostics.success(metadata, selected.scope);
+            }
             List<JSONObject> assistants = new ArrayList<>();
             for (int index = 0; index < history.length(); index++) {
                 JSONObject row = history.optJSONObject(index);
@@ -1323,6 +1422,7 @@ public final class ReplyWatchService extends Service {
             }
             if (!metadata.edit().putString("notice_dispositions_" + selected.scope, rows.toString()).commit())
                 throw new IllegalStateException("notice_disposition_not_saved");
+            ReplyWatchDiagnostics.notice(metadata, selected.scope, state);
             selected.uncertainNotices = uncertainNotices(selected);
         } catch (JSONException invalid) { throw new IllegalStateException("notice_disposition_unavailable", invalid); }
     }
@@ -1344,9 +1444,7 @@ public final class ReplyWatchService extends Service {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) return false;
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager == null || !manager.areNotificationsEnabled()) return false;
-        NotificationChannel watched = manager.getNotificationChannel(WATCH_CHANNEL);
-        return (watched == null || watched.getImportance() != NotificationManager.IMPORTANCE_NONE)
-                && NotificationChannels.anyEnabled(manager);
+        return NotificationChannels.anyEnabled(manager);
     }
 
     static String noticeKind(JSONObject row) {
@@ -1470,6 +1568,8 @@ public final class ReplyWatchService extends Service {
     }
 
     private void cancelRead(Watch selected) {
+        selected.scheduleEpoch++;
+        selected.networkRecoveryPending = false;
         ScheduledFuture<?> task = selected.pending;
         if (task != null) task.cancel(false);
         HttpsURLConnection active = selected.connection;
@@ -1480,9 +1580,15 @@ public final class ReplyWatchService extends Service {
         final long stoppingTicket;
         synchronized (ADMISSION) {
             stoppingTicket = ++admissionEpoch; startPending = false;
-            SharedPreferences.Editor edit = metadata.edit().putBoolean("enabled", false).putBoolean("accounts_migrated", true);
-            for (ReplyWatchAccounts.Record record : ReplyWatchAccounts.list(this))
-                edit.putBoolean("paused_" + record.id, true).putString("stop_reason_" + record.id, reason);
+            boolean systemPause = "system_time_limit".equals(reason);
+            SharedPreferences.Editor edit = metadata.edit().putBoolean("accounts_migrated", true)
+                    .putBoolean("resume_on_foreground_required", systemPause);
+            if (!systemPause) edit.putBoolean("enabled", false);
+            for (ReplyWatchAccounts.Record record : ReplyWatchAccounts.list(this)) {
+                if (!systemPause) edit.putBoolean("paused_" + record.id, true);
+                edit.putString("stop_reason_" + record.id, reason).putLong("stop_at_" + record.id, System.currentTimeMillis());
+                ReplyWatchDiagnostics.stopped(metadata, record.id, reason);
+            }
             edit.apply();
             for (Watch selected : new ArrayList<>(watches.values())) removeWatch(selected, reason);
             running = false;
@@ -1506,7 +1612,7 @@ public final class ReplyWatchService extends Service {
         cancelNotices(context, scope);
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager != null) cancelLegacyNotice(manager, oldAuthScope);
-        if (identity) context.getSharedPreferences("asteria_chat_notification_identity", MODE_PRIVATE).edit().remove(scope).apply();
+        if (identity) context.getSharedPreferences("texas_chat_notification_identity", MODE_PRIVATE).edit().remove(scope).apply();
         if (Build.VERSION.SDK_INT >= 29) try {
             ShortcutManager shortcuts = context.getSystemService(ShortcutManager.class);
             if (shortcuts != null) {
@@ -1527,6 +1633,11 @@ public final class ReplyWatchService extends Service {
     @Override public void onTimeout(int startId, int fgsType) { finish("system_time_limit"); }
     @Override public IBinder onBind(Intent intent) { return null; }
     @Override public void onDestroy() {
+        if (networkManager != null) {
+            try { networkManager.unregisterNetworkCallback(networkCallback); }
+            catch (RuntimeException unavailable) { /* Already unregistered by the platform. */ }
+            networkManager = null;
+        }
         synchronized (ADMISSION) {
             boolean interrupted = running;
             running = false;
@@ -1544,5 +1655,6 @@ public final class ReplyWatchService extends Service {
         if (selected == null || metadata == null) return;
         metadata.edit().putString("stop_reason_" + selected.scope, reason)
                 .putLong("stop_at_" + selected.scope, System.currentTimeMillis()).apply();
+        ReplyWatchDiagnostics.stopped(metadata, selected.scope, reason);
     }
 }

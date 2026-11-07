@@ -470,11 +470,18 @@ public final class MainActivity extends Activity {
 
         @JavascriptInterface public String openNotificationCategorySettings(String kind) {
             if (!trusted() || !foreground.get()) return json("ok", false, "error", "foreground_required").toString();
-            if (!NotificationChannels.validKind(kind)) return json("ok", false, "error", "invalid_category").toString();
+            boolean watch = "watch".equals(kind);
+            if (!watch && !NotificationChannels.validKind(kind)) return json("ok", false, "error", "invalid_category").toString();
+            String channelId = watch ? ReplyWatchService.WATCH_CHANNEL : NotificationChannels.id(kind);
+            if (watch) {
+                NotificationManager manager = getSystemService(NotificationManager.class);
+                if (manager == null || manager.getNotificationChannel(channelId) == null)
+                    return json("ok", false, "error", "watch_channel_not_created").toString();
+            }
             Intent settings = new Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
                     .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName())
-                    .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, NotificationChannels.id(kind));
-            if (settings.resolveActivity(getPackageManager()) == null) settings = new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, channelId);
+            if (!watch && settings.resolveActivity(getPackageManager()) == null) settings = new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                     .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName());
             if (settings.resolveActivity(getPackageManager()) == null) return json("ok", false, "error", "notification_settings_unavailable").toString();
             final Intent destination = settings;
