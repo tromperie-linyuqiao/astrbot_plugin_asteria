@@ -271,6 +271,7 @@ class ChatExpressions:
         self.journal, self.assets, self.current = journal, assets, current
         self.attachments_dir = Path(attachments_dir).resolve()
         self.touch_catalog = touch_catalog or (lambda: {'available': False, 'verbs': [], 'parts': []})
+        self._preference_sources = None
 
     def _check(self):
         if self.current() is not True or getattr(self.journal, '_closed', True) or not self.assets.active:
@@ -319,6 +320,10 @@ class ChatExpressions:
                     'enabled': row['enabled'], 'mime_type': row['media_type'], 'revision': row['revision'],
                     'width': row['width'], 'height': row['height'], 'resource_ref': identity,
                     '_scope': scope, '_asset_id': row['id']})
+                if extra.get('preference_source_id'):
+                    result[-1]['preference_source_id'] = extra['preference_source_id']
+            self._preference_sources = {row['id']: row['preference_source_id']
+                for row in result if row.get('preference_source_id')}
             self._check()
             return result
         finally:
@@ -332,8 +337,15 @@ class ChatExpressions:
             raise KeyError('表情不存在或已停用')
         return row
 
+    def _preference_identity(self, identity):
+        if getattr(self, '_preference_sources', None) is None:
+            rows = self._catalog(include_disabled=True)
+            self._preference_sources = {row['id']: row['preference_source_id']
+                for row in rows if row.get('preference_source_id')}
+        return self._preference_sources.get(identity, identity)
+
     def _preference(self, scope, identity, actor):
-        key = actor + ':' + identity
+        key = actor + ':' + self._preference_identity(identity)
         record = self.journal.fetch(PREFERENCES, key, scope)
         return dict(USER_DEFAULT if actor == 'user' else TEXAS_DEFAULT, **(record['data'] if record else {}))
 
@@ -393,7 +405,6 @@ class ChatExpressions:
                 'data_url': 'data:image/png;base64,' + base64.b64encode(output.getvalue()).decode('ascii')}
 
     def preference(self, scope, identity, actor, changes):
-        self.asset(identity, allow_disabled=True)
         if actor not in {'user', 'texas'} or not isinstance(changes, dict) or not changes:
             raise ChatExpressionError('偏好参数无效')
         allowed = {'favorite', 'liked', 'disliked', 'hidden', 'quick_send', 'quick_order'} if actor == 'user' else {'weight', 'contexts', 'cooldown_seconds'}
@@ -412,18 +423,43 @@ class ChatExpressions:
             if 'contexts' in changes:
                 changes = dict(changes, contexts=_list_text(changes['contexts'], '适用语境', maximum=16))
         with _LOCK:
+            self.asset(identity, allow_disabled=True)
             value = dict(self._preference(scope, identity, actor), **changes)
-            self.journal.put(PREFERENCES, actor + ':' + identity, scope, value, authorize=self.current)
+            self.journal.put(PREFERENCES, actor + ':' + self._preference_identity(identity), scope, value, authorize=self.current)
         return {'asset_id': identity, 'actor': actor, 'preference': value}
 
     def metadata(self, identity, changes):
+        with _LOCK:
+            return self._metadata(identity, changes)
+
+    def _metadata(self, identity, changes):
         row = self.asset(identity, allow_disabled=True)
-        if not isinstance(changes, dict) or not changes or set(changes) - {'name', 'meaning', 'tags', 'scenarios', 'pairing', 'enabled', 'aliases'}:
+        if not isinstance(changes, dict) or not changes or set(changes) - {'name', 'meaning', 'tags', 'scenarios', 'pairing', 'enabled', 'aliases', 'preference_source_id'}:
             raise ChatExpressionError('素材语义参数无效')
         current = self.journal.fetch(SEMANTICS, row['_asset_id'], row['_scope'])
         values = dict(current['data'] if current else {})
         shared_patch = {}
         for key, value in changes.items():
+            if key == 'preference_source_id':
+                source = self.asset(value, allow_disabled=True)
+                canonical = self._preference_identity(source['id'])
+                original = self.asset(canonical, allow_disabled=True)
+                if canonical == identity or original['_scope'] != row['_scope']:
+                    raise ChatExpressionError('替换图必须关联同一素材范围内的原图')
+                previous = values.get(key)
+                if previous and previous != canonical:
+                    raise ChatExpressionError('已建立的原图偏好关联不能改指向')
+                if not previous:
+                    if row['enabled'] or changes.get('enabled') is True or identity in self._preference_sources.values():
+                        raise ChatExpressionError('请先停用未使用的新图，再关联原图偏好')
+                    with self.journal._lock:
+                        self.journal._ensure_open()
+                        used = self.journal._db.execute('SELECT 1 FROM checkpoints WHERE namespace=? AND key IN (?,?) LIMIT 1',
+                            (PREFERENCES, 'user:' + identity, 'texas:' + identity)).fetchone()
+                    if used:
+                        raise ChatExpressionError('新图已有独立偏好或使用记录，不能覆盖')
+                values[key] = canonical
+                continue
             if key == 'enabled':
                 if type(value) is not bool:
                     raise ChatExpressionError('素材启用状态须为开关')
@@ -447,12 +483,14 @@ class ChatExpressions:
                 assets.stop()
         if values or current is not None:
             self.journal.put(SEMANTICS, row['_asset_id'], row['_scope'], values, authorize=self.current)
+            self._preference_sources = None
         return {'asset_id': identity, 'metadata': {**values, **{key: changes[key] for key in ('meaning', 'tags', 'enabled') if key in changes}}}
 
     def _used(self, scope, identity, actor):
-        value = self._preference(scope, identity, actor)
-        value.update(last_used=float(time.time()), use_count=value['use_count'] + 1)
-        self.journal.put(PREFERENCES, actor + ':' + identity, scope, value, authorize=self.current)
+        with _LOCK:
+            value = self._preference(scope, identity, actor)
+            value.update(last_used=float(time.time()), use_count=value['use_count'] + 1)
+            self.journal.put(PREFERENCES, actor + ':' + self._preference_identity(identity), scope, value, authorize=self.current)
 
     def actions(self, scope):
         record = self.journal.fetch(ACTIONS, 'definitions', scope)
