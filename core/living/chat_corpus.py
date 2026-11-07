@@ -70,6 +70,7 @@ _WITHDRAWN = re.compile(
     r"^\s*(?:[,：:]\s*)?(?:这(?:种|类|样)(?:回复|说法|表达|方式|安排)?|这件事|这次|的话)?\s*"
     r"(?:先|暂时|就)?\s*(?:别(?:再)?(?:用|做|提)(?:了)?|别了|不要了|不要再用(?:了)?|"
     r"不用了|不用再(?:用|提)(?:了)?|取消(?:了)?)(?=$|[\s,。.!?;；、])")
+_CURRENT_REVISION = re.compile(r"现在|此刻|这会儿|改口|改成|改为|算了|还是|\b(?:now|instead|actually)\b")
 
 
 def _trigger_text(query):
@@ -81,13 +82,20 @@ def _trigger_text(query):
 def _positive_keyword(literal, keyword):
     word = _literal(keyword)
     offset = literal.find(word)
+    accepted, previous_end = False, 0
     while offset >= 0:
         before = literal[max(0, offset - 40):offset]
         after = literal[offset + len(word):offset + len(word) + 40]
         if not _NEGATED.search(before) and not _WITHDRAWN.search(after):
-            return True
+            accepted = True
+        elif _CURRENT_REVISION.search(literal[previous_end:offset]):
+            # A later explicit present correction can revoke this same keyword.
+            # Keep other keywords independent; a future negative on its own
+            # does not cancel an earlier present request. Quotes are masked.
+            accepted = False
+        previous_end = offset + len(word)
         offset = literal.find(word, offset + len(word))
-    return False
+    return accepted
 
 
 def _library_definition(record):
