@@ -109,3 +109,27 @@
 .self-action-search{display:flex;align-items:center;gap:8px;margin:8px 0}
 .self-action-search .touch-part-search{flex:1;width:0}
 .self-action-search button{flex:none;min-height:40px}
+
+/* The tool tray follows the input like a keyboard panel. Low-frequency library
+   maintenance stays folded; expanding changes space, never selection or send. */
+#composer-drawer { margin:8px 0 0; min-height:0; }
+#composer-drawer .compose-tabs { gap:3px; padding:5px 6px; }
+#composer-drawer .compose-tabs button { min-height:36px; padding:5px 7px; }
+#composer-drawer .native-touch-picker { padding:0 0 6px; margin-bottom:5px; border-bottom:0; }
+#composer-drawer .native-touch-picker > .action-target-tabs { padding:1px 0 5px; margin-bottom:5px; }
+#composer-drawer .native-touch-picker > .action-target-tabs .touch-choice { min-height:40px; font-size:12px; padding:5px 3px; }
+#composer-drawer .touch-path { min-height:32px; gap:7px; margin-bottom:6px; }
+#composer-drawer .touch-choices { gap:6px; }
+#composer-drawer .touch-choice { min-height:38px; padding:6px 10px; font-size:12px; }
+#composer-drawer .compose-status { margin:5px 1px; }
+#composer-drawer .mutual-action-choices { margin-bottom:6px; }
+.action-library { margin-top:7px; border-top:1px solid var(--line); }
+.action-library > summary { min-height:40px; padding:11px 2px; cursor:pointer; color:var(--accent); font-size:12px; }
+.saved-draft-recovery { min-height:36px; margin-top:4px; font-size:12px; color:var(--accent); }
+.compose-utilities { display:flex; align-items:center; flex-wrap:wrap; gap:2px 10px; }
+.compose-utilities > .compose-summary { margin:0; }
+.compose-utilities > button { min-height:32px; margin:0; font-size:11px; }
+.composer-tools-open #compose-summary { display:none; }
+.composer-tools-open .pending-actions { flex-wrap:nowrap; max-height:42px; overflow-x:auto; overflow-y:hidden; padding-bottom:3px; }
+.composer-tools-open .composition-item { flex:none; width:240px; max-width:90%; }
+.composer-tools-open .composition-item[data-fragment-id="current-draft"] { display:none; }

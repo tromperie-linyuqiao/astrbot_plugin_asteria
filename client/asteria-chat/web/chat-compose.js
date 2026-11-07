@@ -4,7 +4,7 @@
    both preference sets live on TLS. Local catalog snapshots are read-only until refreshed. */
 window.ChatComposer = (() => {
   const model = { scope: '', serial: 0, epoch: 0, operation: null, actionEditorSerial: 0, preferenceEditorSerial: 0, loaded: false, loading: false, error: '',
-    assets: [], expressionAliases:false, showExpressionTags:false, actions: [], actionRevision: undefined, defaultActions: [], mutualActions: [], mutualId:'', groupSupported:false, selfActions: [], selfSupported: false, actionGroup:'character', actionFilter:'quick', selfVerb:'', selfPart:'', selfQuery:'', stickers: [], extras: [], order: [], panel: '', filter: 'all', query: '', touchCatalog:null, touchVerb:'', touchPart:'', touchQuery:'', touchUnknown:false,
+    assets: [], expressionAliases:false, showExpressionTags:false, actions: [], actionRevision: undefined, defaultActions: [], mutualActions: [], mutualId:'', groupSupported:false, selfActions: [], selfSupported: false, actionGroup:'character', actionFilter:'quick', selfVerb:'', selfPart:'', selfQuery:'', stickers: [], extras: [], order: [], panel: '', expandedPanel: false, filter: 'all', query: '', touchCatalog:null, touchVerb:'', touchPart:'', touchQuery:'', touchUnknown:false,
     pickMode: 'attach', category: '', selected: null, actionEditing: null, batch: null, batchSerial: 0, defaultsSerial: 0, busy: false,
     cachedAssets:false, previews: new Map(), nativeViewport: null, watch: null, watchTarget: '', pendingWatch: '', notificationId: null };
   const node = id => document.getElementById(id);
@@ -182,16 +182,20 @@ window.ChatComposer = (() => {
   function panelHeight() {
     const drawer = node('composer-drawer'); if (!drawer || drawer.hidden) return;
     const height = model.nativeViewport && model.nativeViewport.height || window.visualViewport && window.visualViewport.height || innerHeight;
-    const footer = document.querySelector('.composer-area');
-    const fixed = footer.getBoundingClientRect().height - drawer.getBoundingClientRect().height;
-    const header = document.querySelector('.chat-header').getBoundingClientRect().height;
-    const actionPanel = model.panel === 'actions';
-    const budget = Math.min(actionPanel ? 360 : 280, height * (actionPanel ? .48 : .38), height - fixed - header - 70);
-    const limit=Math.max(42,Math.round(budget))+'px';if(drawer.style.maxHeight!==limit)drawer.style.maxHeight=limit;
+    // Account for the actual notice/navigation/draft space rather than assuming
+    // the header and input are the only siblings above the transcript.
+    const room = drawer.getBoundingClientRect().height + node('messages').getBoundingClientRect().height;
+    const preferred = Math.min(model.expandedPanel ? 440 : 248, height * (model.expandedPanel ? .54 : .30));
+    const reserve = Math.min(model.expandedPanel ? 120 : Math.min(260, height * .28),
+      Math.max(Math.min(120, height * .20), room - Math.min(208, preferred)));
+    const budget = Math.min(preferred, room - reserve);
+    const limit=Math.max(42,Math.floor(budget))+'px';if(drawer.style.maxHeight!==limit)drawer.style.maxHeight=limit;
   }
   function setPanel(name = '') {
     withReading(() => {
       model.panel = model.panel === name && name ? '' : name;
+      model.expandedPanel = false; renderPanelSize();
+      document.querySelector('.composer-area').classList.toggle('composer-tools-open', !!model.panel);
       const drawer = node('composer-drawer'); drawer.hidden = !model.panel;
       for(const [id,pane] of [['sticker-button','expressions'],['touch-button','actions'],['attach-button','attachments']]){
         node(id).setAttribute('aria-expanded',String(model.panel===pane));
@@ -204,6 +208,17 @@ window.ChatComposer = (() => {
     });
     if (name === 'expressions') { sync(); renderAssets(); }
     if (name === 'actions') { sync(); renderActions(); }
+    if (model.panel) withReading(() => {
+      const pane = document.querySelector('[data-compose-pane="'+model.panel+'"]');
+      if (pane) pane.scrollTop = 0;
+      panelHeight(); syncComposerMetrics();
+    });
+  }
+  function renderPanelSize() {
+    const expand = node('compose-expand');
+    expand.textContent = model.expandedPanel ? '收紧' : '展开';
+    expand.setAttribute('aria-label', model.expandedPanel ? '收紧工具面板' : '展开工具面板');
+    expand.setAttribute('aria-expanded', String(model.expandedPanel));
   }
   function closePanel() { if (!model.panel) return false; setPanel(''); return true; }
   function onViewport(value) {
@@ -407,7 +422,7 @@ window.ChatComposer = (() => {
     const list = node('shared-action-list'); if (!list) return;
     list.replaceChildren();
     renderTouchBuilder();
-    setText('action-status', model.loading ? '正在读取动作…' : model.error || (model.actionGroup==='self'?'描述自己的动作，让角色理解和回应。':model.actionGroup==='mutual'?'由你发起接吻、相拥等互动，角色的回应随当前情境展开。':'选择对角色的动作和部位，确认后发送。'));
+    setText('action-status', model.loading ? '正在读取动作…' : model.error || (model.actionGroup==='self'?'描述自己的动作，再点发送。':model.actionGroup==='mutual'?'由你发起互动，角色的回应随情境展开。':'选动作和部位，再点发送。'));
     const filters=document.createElement('div');filters.className='action-target-tabs';
     for(const [id,label]of [['quick','常用与全部'],['recent','最近使用']]){const pick=button(label,()=>{model.actionFilter=id;renderActions();},'text-button');pick.setAttribute('aria-pressed',String(model.actionFilter===id));filters.append(pick);}list.append(filters);
     if(model.actionGroup==='character'&&model.defaultActions.some(value=>value.id==='end_contact'&&value.enabled!==false)){
@@ -1145,11 +1160,14 @@ window.ChatComposer = (() => {
     const preview=document.createElement('dialog');preview.id='composition-preview-dialog';preview.className='settings-dialog';
     preview.innerHTML='<div class="settings-form"><div class="dialog-heading"><h2>发送前预览</h2><button id="composition-preview-close" type="button" class="icon-button" aria-label="关闭预览">×</button></div><p class="appearance-help">按当前片段顺序预览。互动动作是你发起的角色互动；附件会随同一条消息发送。</p><div id="composition-preview-body"></div></div>';document.body.append(preview);
     node('composition-preview-close').onclick=()=>preview.close();
-    const previewButton=button('预览整条消息',previewComposition,'text-button');previewButton.id='compose-preview';previewButton.hidden=true;node('compose-summary').after(previewButton);
+    const previewButton=button('预览整条消息',previewComposition,'text-button');previewButton.id='compose-preview';previewButton.hidden=true;node('compose-utilities').append(previewButton);
     node('attach-button').setAttribute('aria-label', '打开附件工具');
     node('attach-button').setAttribute('aria-controls', 'composer-drawer');
     for (const tab of document.querySelectorAll('[data-compose-tab]')) tab.addEventListener('click', () => setPanel(tab.dataset.composeTab));
     node('compose-close').addEventListener('click', closePanel);
+    node('compose-expand').addEventListener('click', () => {
+      withReading(() => { model.expandedPanel = !model.expandedPanel; renderPanelSize(); panelHeight(); syncComposerMetrics(); });
+    });
     mountDiscovery();
     node('shared-expression-search').addEventListener('input', event => { model.query = event.target.value; renderAssets(); });
     for (const filter of document.querySelectorAll('[data-expression-filter]')) filter.addEventListener('click', () => {

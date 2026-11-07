@@ -960,6 +960,18 @@ function resizeDraft() {
 }
 function saveDraft() { storage.set(draftKey(state.activeId), $('draft').value); if (window.ChatComposer) window.ChatComposer.persist(); }
 function restoreDraft() { $('draft').value = storage.get(draftKey(state.activeId)); if (window.ChatComposer) window.ChatComposer.restore(); resizeDraft(); renderChrome(); }
+function appendStarterDraft(text) {
+  const draft = $('draft');
+  if (draft.disabled) return;
+  const separator = draft.value && !draft.value.endsWith('\n') ? '\n' : '';
+  if (draft.value.length + separator.length + text.length > draft.maxLength) {
+    showNotice('草稿空间不足，原内容已保留。');
+    return;
+  }
+  draft.value += separator + text;
+  saveDraft(); resizeDraft(); renderChrome(); draft.focus();
+  draft.setSelectionRange(draft.value.length, draft.value.length);
+}
 function sidebar(open) {
   $('sidebar').classList.toggle('open', open);
   $('sidebar-backdrop').hidden = !open;
@@ -1280,7 +1292,13 @@ function renderChrome() {
     ? (phases[phase]||'TLS正在处理这轮消息…') : (phases[phase]||'');
   $('empty-login').hidden = state.authenticated;
   $('empty-description').textContent = state.authenticated ? '持续连接当前 Bot，之前的聊天与日常都会留在这里。' : '连接你的服务器，继续与角色的对话。';
-  $('draft-status').textContent = attachmentQueue().length ? '文字草稿保存在本机 · 附件在当前页面待发送' : $('draft').value ? '草稿已保存在这台设备' : '草稿仅保存在这台设备';
+  const waitingReply = state.sending || state.remoteRunning;
+  $('draft').placeholder = waitingReply ? '可以先写下一条…' : state.loading ? '同步中，也可以先写草稿…' : '发消息…';
+  $('draft-status').textContent = waitingReply
+    ? ($('draft').value ? '下一条草稿保存在本机 · 上一条仍在处理' : '上一条仍在处理，可以先写下一条')
+    : attachmentQueue().length ? '文字草稿保存在本机 · 附件在当前页面待发送' : $('draft').value ? '草稿已保存在这台设备' : '草稿仅保存在这台设备';
+  const otherDraft = state.activeId ? storage.get(draftKey(null)) : '';
+  $('append-saved-draft').hidden = !otherDraft || otherDraft === $('draft').value;
   $('menu-delete').disabled = !state.activeId || state.activeId === primaryConnectionId() || state.sending || state.loading;
   $('menu-delete').hidden = !!state.activeId && state.activeId === primaryConnectionId();
   $('menu-export').disabled = !state.activeId;
@@ -2102,10 +2120,22 @@ async function connectLongTerm({ accept = () => true } = {}) {
   const existing=state.sessions.find(item=>item.session_id===session.session_id);
   if(existing)Object.assign(existing,session);else state.sessions.unshift(session);
   if(state.activeId!==session.session_id){
+    // Connecting may take long enough for the user to write an entire draft.
+    // Only the unassigned composer belongs to this pending connection; a draft
+    // from an explicitly opened older conversation stays with that record.
+    const connectingDraft = !state.activeId ? $('draft').value : '';
     saveDraft();
     state.activeId=session.session_id;state.sessionPersonaConfig=null;state.messages=[];state.remoteRunning=false;
     restoreCachedHistory(session.session_id);
     restoreDraft();
+    if (connectingDraft) {
+      const savedDraft = $('draft').value;
+      $('draft').value = connectingDraft;
+      saveDraft(); resizeDraft();
+      // A rare pre-existing destination draft remains separately recoverable;
+      // never silently merge it into the text the user is currently editing.
+      storage.set(draftKey(null), savedDraft === connectingDraft ? '' : savedDraft);
+    }
   }
   if(session.persona_id)state.sessionPersonas.set(session.session_id,session.persona_id);
   storage.set(pref('last-session.'+encodeURIComponent(owner)),session.session_id);
@@ -2444,6 +2474,13 @@ function init() {
     } else showNotice('已关闭新回复提醒。');
   });
   startNotifyWatch();
+  $('append-saved-draft').addEventListener('click', () => {
+    const other = state.activeId && storage.get(draftKey(null));
+    if (!other || $('draft').disabled) return;
+    const original = $('draft').value;
+    appendStarterDraft(other);
+    if ($('draft').value !== original) { storage.set(draftKey(null), ''); renderChrome(); }
+  });
   $('draft').addEventListener('input', () => { resizeDraft(); saveDraft(); renderChrome(); });
   $('draft').addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && (event.ctrlKey || event.metaKey || window.matchMedia('(pointer: fine) and (min-width: 800px)').matches)) { event.preventDefault(); $('composer').requestSubmit(); }
