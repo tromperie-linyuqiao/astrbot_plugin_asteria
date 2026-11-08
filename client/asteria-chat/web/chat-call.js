@@ -14,7 +14,7 @@ window.ChatCall = (() => {
   async function command(action,extra={}){
     const target=scope(),id=callId;
     const value=responseData(await nativeAsync('phoneCall',[state.activeId,JSON.stringify({action,call_id:id,...extra})],action==='start'?180000:20000));
-    if(target!==scope()||(action!=='status'&&id!==callId))throw Error('原通话已结束或当前角色已变化。');
+    if(target!==scope()||id!==callId)throw Error('原通话已结束或当前角色已变化。');
     if(value?.ok!==true)throw Error(value?.message||'通话操作未完成。');return value;
   }
   function setup(){if(dialog)return;
@@ -51,8 +51,8 @@ window.ChatCall = (() => {
     try{receive(await command('start',{silence_ms:Number(silence.value)}));}catch(e){if(owner===scope()&&callId===ticket){try{native().endPhoneCall?.();}catch(_){}active=false;say(errorText(e));}}finally{if(callId===ticket){busy=false;paint();}}
   }
   async function toggleMute(){if(!current()||!active||busy)return;busy=true;paint();try{const resume=muted||held;if(resume&&unknown()){say('上一条发送仍未确认，请先同步聊天记录。');return;}if(resume)blocked=false;receive(await command(resume?'resume':'mute'));}catch(e){say(errorText(e));}finally{busy=false;paint();stateChanged();}}
-  function end(){if(!callId&&!active)return;active=false;blocked=true;busy=false;for(const item of waiting)item.status=item.inflight?'通话已结束 · 已提交片段请到聊天核对':'通话已结束 · 未发送';waiting=[];try{native().endPhoneCall?.();}catch(_){}say('通话已结束 · 麦克风已关闭');if(level)level.value=0;paint();}
-  function scopeChanged(){if(callId&&owner!==scope()){end();callId='';owner='';waiting=[];history=[];lastSequence=0;modelReady=false;if(dialog?.open)dialog.close();paint();}}
+  function end(){if(!callId&&!active)return;callId='';active=false;blocked=true;busy=false;for(const item of waiting)item.status=item.inflight?'通话已结束 · 已提交片段请到聊天核对':'通话已结束 · 未发送';waiting=[];try{native().endPhoneCall?.();}catch(_){}say('通话已结束 · 麦克风已关闭');if(level)level.value=0;paint();}
+  function scopeChanged(){if(owner&&owner!==scope()){end();callId='';owner='';waiting=[];history=[];lastSequence=0;modelReady=false;if(dialog?.open)dialog.close();paint();}}
   function receive(value){if(!current()||value?.call_id!==callId||value.session_id!==state.activeId)return;
     active=value.active===true;muted=value.muted===true;held=value.held===true;output=value.output===true;if(value.model_ready===true)modelReady=true;if(level)level.value=Math.min(100,(value.level||0)*500);if(value.message)say(value.message);
     for(const item of value.turns||[]){if(!Number.isInteger(item.sequence)||item.sequence<=lastSequence||typeof item.text!=='string'||!item.text.trim()||item.text.length>16000)continue;lastSequence=item.sequence;const turn={sequence:item.sequence,text:item.text,status:'等待发送',inflight:false};waiting.push(turn);history.push(turn);}

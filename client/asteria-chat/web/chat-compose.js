@@ -186,10 +186,19 @@ window.ChatComposer = (() => {
     // the header and input are the only siblings above the transcript.
     const room = drawer.getBoundingClientRect().height + node('messages').getBoundingClientRect().height;
     const preferred = Math.min(model.expandedPanel ? 440 : 248, height * (model.expandedPanel ? .54 : .30));
+    const pane=[...drawer.children].find(child=>child.matches('[data-compose-pane]')&&!child.hidden);
+    const paneStyle=pane&&getComputedStyle(pane),drawerStyle=getComputedStyle(drawer);
+    const fixed=[...drawer.children].filter(child=>!child.hidden&&!child.matches('[data-compose-pane]'))
+      .reduce((sum,child)=>sum+child.getBoundingClientRect().height,0)
+      +(parseFloat(drawerStyle.borderTopWidth)||0)+(parseFloat(drawerStyle.borderBottomWidth)||0);
+    const padding=paneStyle?(parseFloat(paneStyle.paddingTop)||0)+(parseFloat(paneStyle.paddingBottom)||0):0;
+    // Keep the tabs, explicit action buttons and one touch row reachable when
+    // call status, a manual draft and the keyboard share the visible rectangle.
+    const minimum=Math.min(room,Math.ceil(fixed+padding+44));
     const reserve = Math.min(model.expandedPanel ? 120 : Math.min(260, height * .28),
-      Math.max(Math.min(120, height * .20), room - Math.min(208, preferred)));
+      Math.max(Math.min(120, height * .20), room - Math.min(208, preferred)),Math.max(0,room-minimum));
     const budget = Math.min(preferred, room - reserve);
-    const limit=Math.max(42,Math.floor(budget))+'px';if(drawer.style.maxHeight!==limit)drawer.style.maxHeight=limit;
+    const limit=Math.max(42,minimum,Math.floor(budget))+'px';if(drawer.style.maxHeight!==limit)drawer.style.maxHeight=limit;
   }
   function setPanel(name = '') {
     withReading(() => {

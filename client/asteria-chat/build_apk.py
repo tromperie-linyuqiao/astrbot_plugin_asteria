@@ -21,8 +21,8 @@ import zipfile
 
 APP = Path(__file__).resolve().parent
 ROOT = APP.parents[1]
-VERSION = "2.7.9"
-VERSION_CODE = 87
+VERSION = "2.7.10"
+VERSION_CODE = 88
 VERSION_SCHEMA = 2
 # Exact permissions for authenticated chat, reply monitoring and explicitly
 # enabled phone perception. Any additional permission fails the build.
@@ -118,6 +118,13 @@ SPEECH_ARTIFACTS = {
     "sherpa-onnx-static-link-onnxruntime-2.0.1.aar": (38577050, "07e042d97f3a6bd5b7fe74d4eef0513dc01a714b16c15a903250095aba43a575"),
 }
 
+SPEECH_NATIVE_ABIS = {
+    "arm64-v8a": frozenset({"lib/arm64-v8a/libsherpa-onnx-jni.so"}),
+    "armeabi-v7a": frozenset({"lib/armeabi-v7a/libsherpa-onnx-jni.so"}),
+    "x86": frozenset({"lib/x86/libsherpa-onnx-jni.so", "lib/x86/libonnxruntime.so"}),
+    "x86_64": frozenset({"lib/x86_64/libsherpa-onnx-jni.so"}),
+}
+
 
 def speech_inputs(directory: Path) -> dict[str, str]:
     result = {}
@@ -129,20 +136,34 @@ def speech_inputs(directory: Path) -> dict[str, str]:
     return result
 
 
-def native_speech_members(archive: Path) -> dict[str, bytes]:
+def native_speech_members(archive: Path, abi: str = "universal") -> dict[str, bytes]:
     # Pure Java API jar is used; Kotlin classes.jar inside the AAR is not included.
-    result = {}
+    wanted = frozenset().union(*SPEECH_NATIVE_ABIS.values())
+    if abi != "universal" and abi not in SPEECH_NATIVE_ABIS:
+        raise RuntimeError("Unsupported speech target ABI: " + abi)
+    selected = wanted if abi == "universal" else SPEECH_NATIVE_ABIS[abi]
     with zipfile.ZipFile(archive) as source:
+        members = {}
         for name in source.namelist():
             if name.startswith("jni/") and name.endswith(".so"):
                 if ".." in Path(name).parts or name.count("/") != 2:
                     raise RuntimeError("Unexpected native speech library path")
-                result["lib/" + name[4:]] = source.read(name)
-    wanted = {"lib/arm64-v8a/libsherpa-onnx-jni.so", "lib/armeabi-v7a/libsherpa-onnx-jni.so",
-              "lib/x86/libsherpa-onnx-jni.so", "lib/x86/libonnxruntime.so", "lib/x86_64/libsherpa-onnx-jni.so"}
-    if set(result) != wanted:
-        raise RuntimeError("Pinned speech package ABI set changed")
-    return result
+                target = "lib/" + name[4:]
+                if target in members:
+                    raise RuntimeError("Duplicate native speech library")
+                members[target] = name
+        # The complete pinned AAR contract still applies to single-ABI builds.
+        if set(members) != wanted:
+            raise RuntimeError("Pinned speech package ABI set changed")
+        return {name: source.read(members[name]) for name in sorted(selected)}
+
+
+def verify_native_abis(badging: str, native: dict[str, bytes]) -> list[str]:
+    expected = sorted({name.split("/")[1] for name in native})
+    lines = [line for line in badging.splitlines() if line.startswith("native-code:")]
+    if len(lines) != 1 or sorted(re.findall(r"'([^']+)'", lines[0])) != expected:
+        raise RuntimeError("APK declared ABIs differ from selected native libraries")
+    return expected
 
 
 def normalize_zip(source: Path, destination: Path, dex: Path, native: dict[str, bytes]) -> None:
@@ -196,6 +217,8 @@ def main() -> int:
                         default=Path(os.environ.get("JAVA_HOME", ".")))
     parser.add_argument("--speech-deps", type=Path, default=ROOT / ".runtime/speech-deps-2.0.1",
                         help="Previously downloaded official pinned JVM jar and Android AAR; this builder stays offline")
+    parser.add_argument("--abi", choices=("universal", *SPEECH_NATIVE_ABIS), default="universal",
+                        help="Native speech target; universal keeps all supported architectures")
     parser.add_argument("--expected-web-sha")
     parser.add_argument("--server", default=DEFAULT_SERVER, help="Optional HTTPS API prefix; blank asks on first login")
     parser.add_argument("--key-alias", default=os.environ.get("ASTERIA_CHAT_KEY_ALIAS", "asteria-chat"))
@@ -258,7 +281,7 @@ def main() -> int:
     for name, digest in dependency_hashes.items():
         freeze_file(args.speech_deps / name, dependencies / name, digest, resume=args.resume_inputs)
     speech_jar = dependencies / "sherpa-onnx-jvm-2.0.1.jar"
-    native_members = native_speech_members(dependencies / "sherpa-onnx-static-link-onnxruntime-2.0.1.aar")
+    native_members = native_speech_members(dependencies / "sherpa-onnx-static-link-onnxruntime-2.0.1.aar", args.abi)
     retained_inputs = []
     android = APP / "android"
     source = snapshot(android / "src")
@@ -332,7 +355,8 @@ def main() -> int:
     normalize_zip(resource_apk, unsigned, dex, native_members)
     aligned = work / "aligned.apk"
     run([executable(tools / "zipalign"), "-p", "4", unsigned, aligned], cwd=work)
-    signed = work / f"asteria-chat-{VERSION}.apk"
+    abi_suffix = "" if args.abi == "universal" else "-" + args.abi
+    signed = work / f"asteria-chat-{VERSION}{abi_suffix}.apk"
     run([java, "-jar", tools / "lib/apksigner.jar", "sign", "--ks", key,
          "--ks-key-alias", args.key_alias, "--ks-pass", f"file:{password}",
          "--out", signed, aligned], cwd=work)
@@ -340,6 +364,7 @@ def main() -> int:
     alignment = run([executable(tools / "zipalign"), "-c", "-v", "4", signed], cwd=work)
     resource_layout = verify_resource_layout(signed)
     badging = run([executable(tools / "aapt2"), "dump", "badging", signed], cwd=work)
+    packaged_abis = verify_native_abis(badging, native_members)
     if "package: name='com.asteria.chat'" not in badging or "minSdkVersion:'26'" not in badging \
             or "targetSdkVersion:'35'" not in badging \
             or f"versionCode='{VERSION_CODE}' versionName='{VERSION}'" not in badging:
@@ -376,6 +401,7 @@ def main() -> int:
         with package.open("xb") as output:
             output.write(signed.read_bytes())
     receipt = {"schema": "asteria_chat_offline_build_v1",
+               "native_abi_target": args.abi, "native_abis": packaged_abis, "native_abis_verified": True,
                "speech_dependencies": dependency_hashes,
                "native_speech_libraries": {name: {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()} for name,data in native_members.items()}, "run_id": args.run_id, "version": VERSION,
                "version_code": VERSION_CODE,
@@ -400,7 +426,7 @@ def main() -> int:
     receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     public_receipt = package.with_suffix(".build.safe.json")
     if public_receipt.exists():
-        public_receipt = package.with_name(f"asteria-chat-{VERSION}.{args.run_id}.build.safe.json")
+        public_receipt = package.with_name(f"{package.stem}.{args.run_id}.build.safe.json")
     with public_receipt.open("x", encoding="utf-8") as handle:
         json.dump(receipt, handle, ensure_ascii=False, indent=2)
         handle.write("\n")

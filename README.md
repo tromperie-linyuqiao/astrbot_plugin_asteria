@@ -1,4 +1,4 @@
-源码已更新到 Asteria 0.75.18 / Chat 2.7.9（code87）：预置 Fish Drama 3 与独立 CosyVoice v3 Flash 配置，完善动作选中与取消。Releases 中的公开 APK 保持原版本，服务 Key、音色和设备效果需自行配置及验收。
+源码已更新到 Asteria 0.75.18 / Chat 2.7.10（code88）：支持按处理器架构构建，修正通话结束后的迟到状态与窄屏动作托盘。Releases 中的公开 APK 仍为2.7.1；服务 Key、音色和设备效果需自行配置及验收。
 
 # 星栖 Asteria
 
