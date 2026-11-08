@@ -29,12 +29,12 @@ window.ChatVoice = (() => {
   }
   function setup(){if(dialog)return;
     dialog=node('dialog',undefined,'settings-dialog voice-dialog');dialog.id='voice-dialog';dialog.setAttribute('aria-labelledby','voice-title');
-    form=node('form',undefined,'settings-form');const head=node('div',undefined,'dialog-heading'),title=node('h2','Texas Voice');title.id='voice-title';head.append(title,button('×',closeActive,'icon-button'));form.append(head,node('p','可选设备音色或服务器已配置的云端音色。云端朗读会把所选话语发送给语音服务，音频按会话缓存。语音输入仍使用手机的系统识别。','appearance-help'));
+    form=node('form',undefined,'settings-form');const head=node('div',undefined,'dialog-heading'),title=node('h2','Texas Voice');title.id='voice-title';head.append(title,button('×',closeActive,'icon-button'));form.append(head,node('p','可选设备音色或服务器已配置的云端音色。云端朗读会把所选话语发送给语音服务，音频按会话缓存。电话模式在本机连续转写；单次语音输入可使用系统识别。','appearance-help'));
     const field=(key,label,kind='input')=>{const wrap=node('label',label),input=node(kind);input.name=key;input.id='voice-'+key;wrap.htmlFor=input.id;wrap.append(input);form.append(wrap);return input;};
     field('name','声音档案名称').maxLength=120;
     const language=field('language','语言','select');for(const [id,label] of [['zh-CN','普通话'],['zh-TW','中文（台湾）'],['en-US','英语'],['ja-JP','日语']]){const option=node('option',label);option.value=id;language.append(option);}
-    const engine=field('engine','朗读服务','select');for(const [id,label] of [['android_system','设备系统音色'],['fish_tts','云端音色']]){const option=node('option',label);option.value=id;engine.append(option);}engine.onchange=()=>{profile=readForm();paint();if(profile.binding.service==='android_system')void loadDeviceVoices();};
-    field('voice_id','本机实际音色','select');field('model','云端语音模型','select');
+    const engine=field('engine','朗读服务','select');for(const [id,label] of [['android_system','设备系统音色'],['fish_tts','Fish Audio · Drama 3 等'],['cosyvoice','CosyVoice v3 Flash']]){const option=node('option',label);option.value=id;engine.append(option);}engine.onchange=()=>{const next=engine.value,changed=profile.binding.service!==next;profile=readForm();if(changed&&isCloudService(next)){const cfg=serviceConfig(next);profile.binding={service:next,voice_id:cfg.default_voice_id||'',model:cfg.model||''};}paint();if(next==='android_system'){if(changed)profile.binding={service:'android_system',voice_id:''};paint();void loadDeviceVoices();}};
+    field('voice_id','本机实际音色','select');field('model','云端语音模型','select');const providerStatus=node('p','', 'appearance-help');providerStatus.id='voice-provider-status';form.append(providerStatus);
     field('reference_id','云端音色 ID（留空使用服务默认音色）').maxLength=200;
     for(const [key,label,min,max,step] of [['rate','语速',0.7,1.3,0.05],['pitch','音高',0.8,1.2,0.05]]){const input=field(key,label);input.type='number';input.min=min;input.max=max;input.step=step;}
     const direction=node('details'),summary=node('summary','声音方向与授权边界');direction.append(summary,node('p','以下描述作为可迁移的音色档案保存。设备引擎应用音色、语言、语速和音高；云端应用音色 ID 与语速。描述不会被拼成需要朗读的文字，当前不自动添加情绪标签。','appearance-help'));
@@ -50,24 +50,26 @@ window.ChatVoice = (() => {
     dialog.addEventListener('cancel',e=>{e.preventDefault();closeActive();});dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeActive();}});
     bar=node('section',undefined,'voice-playback');bar.id='voice-playback';bar.setAttribute('aria-label','当前消息朗读');bar.hidden=true;barText=node('span','');barText.setAttribute('role','status');pause=button('暂停',async()=>{try{receive(await command(playback==='paused'?'resume':'pause'));}catch(e){if(!e.voiceCancelled)say(errorText(e));}});progress=node('progress');progress.setAttribute('aria-label','朗读进度');bar.append(barText,progress,pause,button('停止',stop));document.querySelector('.chat-header').after(bar);
   }
+  const isCloudService=service=>['fish_tts','cosyvoice'].includes(service);
+  function serviceConfig(service){return cloud.services?.find(row=>row.service===service)||(service==='fish_tts'?cloud:{available:false,model:'cosyvoice-v3-flash',models:['cosyvoice-v3-flash'],reason:'这台服务器尚未配置 CosyVoice v3 Flash。'});}
   function paint(){for(const [key,value] of Object.entries(profile))if(form.elements.namedItem(key))form.elements.namedItem(key).value=value;
     form.elements.namedItem('engine').value=profile.binding.service;
-    const isCloud=profile.binding.service==='fish_tts';
+    const isCloud=isCloudService(profile.binding.service),cfg=serviceConfig(profile.binding.service);const hint=document.getElementById('voice-provider-status');if(hint)hint.textContent=!isCloud?'设备音色由当前手机提供。':cfg.available?'服务端已配置；真实可用性以合成结果为准。':(cfg.reason||'请在 AstrBot 的声音与语音配置中填入该服务的独立 Key。');
     for(const key of ['model','reference_id'])form.elements.namedItem(key).closest('label').hidden=!isCloud;
     form.elements.namedItem('voice_id').closest('label').hidden=isCloud;
     form.elements.namedItem('pitch').disabled=isCloud;
     if(isCloud)form.elements.namedItem('pitch').value=1;
     const models=form.elements.namedItem('model');models.replaceChildren();
-    for(const id of cloud.models||[]){const opt=node('option',id);opt.value=id;models.append(opt);}
-    if(profile.binding.model&&!cloud.models?.includes(profile.binding.model)){const opt=node('option',profile.binding.model+'（本服务器未启用）');opt.value=profile.binding.model;models.append(opt);}
-    models.value=profile.binding.model||cloud.model||'';
+    for(const id of cfg.models||[]){const opt=node('option',id==='drama-3'?'Fish Audio Drama 3':id);opt.value=id;models.append(opt);}
+    if(profile.binding.model&&!cfg.models?.includes(profile.binding.model)){const opt=node('option',profile.binding.model+'（本服务器未启用）');opt.value=profile.binding.model;models.append(opt);}
+    models.value=profile.binding.model||cfg.model||'';
     form.elements.namedItem('reference_id').value=isCloud?profile.binding.voice_id:'';
     const select=form.elements.namedItem('voice_id');select.replaceChildren();const fallback=node('option','跟随设备的所选语言音色');fallback.value='';select.append(fallback);
     for(const voice of voices){const option=node('option',voice.language+' · '+voice.id+(voice.network?' · 需联网':' · 离线音色'));option.value=voice.id;select.append(option);}
     if(profile.binding.voice_id&&!voices.some(x=>x.id===profile.binding.voice_id)){const missing=node('option',profile.binding.voice_id+'（本机不可用）');missing.value=profile.binding.voice_id;select.append(missing);}select.value=profile.binding.voice_id;
     form.querySelector('#voice-save').disabled=!saveable||busy;busySpeech(speechBusy);paintRecent();
   }
-  function readForm(){const value=structuredClone(profile);for(const key of Object.keys(defaults)){const input=form.elements.namedItem(key);if(input)value[key]=['rate','pitch'].includes(key)?Number(input.value):input.value.trim();}const service=form.elements.namedItem('engine').value;value.binding=service==='fish_tts'?{service,voice_id:form.elements.namedItem('reference_id').value.trim(),model:form.elements.namedItem('model').value||cloud.model||''}:{service:'android_system',voice_id:form.elements.namedItem('voice_id').value};value.rights=service==='fish_tts'?'provider_voice':'system_voice';if(service==='fish_tts')value.pitch=1;return value;}
+  function readForm(){const value=structuredClone(profile);for(const key of Object.keys(defaults)){const input=form.elements.namedItem(key);if(input)value[key]=['rate','pitch'].includes(key)?Number(input.value):input.value.trim();}const service=form.elements.namedItem('engine').value;const cfg=serviceConfig(service),model=form.elements.namedItem('model').value;value.binding=isCloudService(service)?{service,voice_id:form.elements.namedItem('reference_id').value.trim(),model:model||cfg.model||''}:{service:'android_system',voice_id:form.elements.namedItem('voice_id').value};value.rights=isCloudService(service)?'provider_voice':'system_voice';if(isCloudService(service))value.pitch=1;return value;}
   async function fetchProfile(target,accept=()=>true){const data=await apiClient.json('GET','/chat/voice?session_id='+encodeURIComponent(state.activeId));if(target!==scope()||!accept())return false;if(data.session_id!==state.activeId||!data.profile||!Number.isInteger(data.revision))throw Error('声音档案返回不完整');profile=data.profile;cloud=data.cloud||{available:false,models:[]};recent=Array.isArray(data.recent_audio)?data.recent_audio:[];revision=data.revision;profileOwner=target;saveable=true;return true;}
   function paintRecent(){
     if(!recentBox)return;recentBox.replaceChildren(node('h3','最近云端语音'));
@@ -110,9 +112,9 @@ window.ChatVoice = (() => {
     try{if(!settings&&profileOwner!==target){try{await fetchProfile(target,()=>speechTicket===speechSerial);}catch(_){if(target!==scope()||speechTicket!==speechSerial)return;profile=structuredClone(defaults);profileOwner=target;saveable=false;}}if(target!==scope()||speechTicket!==speechSerial)return;
       const chosen=settings||profile;if(!text.trim())throw Error('这条消息没有可朗读的话语。动作和图片不会当成话语朗读。');if(text.length>3500)throw Error('这条消息超过单次 3500 字朗读上限，原文保持完整。');
       bar.hidden=false;pause.hidden=true;progress.hidden=true;
-      if(chosen.binding.service==='fish_tts'){
-        if(!cloud.available)throw Error(cloud.reason||'当前服务器没有启用云端语音。');
-        if(text.length>(cloud.max_characters||1500))throw Error('云端单次支持 1500 字朗读；原消息不会被截断。');
+      if(isCloudService(chosen.binding.service)){
+        const cfg=serviceConfig(chosen.binding.service);if(!cfg.available)throw Error(cfg.reason||'当前服务器没有启用云端语音。');if(!cfg.models?.includes(chosen.binding.model||cfg.model))throw Error('所选模型未在当前服务器启用；请明确重新选择，原档案不会自动更换。');if(chosen.binding.service==='cosyvoice'&&!chosen.binding.voice_id&&!cfg.default_voice_id)throw Error('请先填写 CosyVoice 的真实音色 ID。');
+        if(text.length>(cfg.max_characters||1500))throw Error('云端单次支持 1500 字朗读；原消息不会被截断。');
         speechStatus('正在生成云端语音…稍后会直接播放，请不要连续点击。');
         const body=id==='preview'?{session_id:state.activeId,preview_text:text,profile:chosen}:{session_id:state.activeId,message_id:String(id)};
         if(retryFailed)body.retry_failed=true;
@@ -124,7 +126,7 @@ window.ChatVoice = (() => {
         if(result?.ok!==true)throw Error(result?.message||'音频暂时无法播放。');
       }else{speechStatus('准备朗读…');receive(await command('speak',{text,message_id:String(id),language:chosen.language,voice_id:chosen.binding.voice_id,rate:chosen.rate,pitch:chosen.pitch}));}
     }catch(e){if(target===scope()&&speechTicket===speechSerial){speechStatus(errorText(e));pause.hidden=true;progress.hidden=true;}}
-    finally{if(target===scope()&&speechTicket===speechSerial){busySpeech(false);if(chosenService(settings)==='fish_tts')void refreshReceipts(target);}}
+    finally{if(target===scope()&&speechTicket===speechSerial){busySpeech(false);if(isCloudService(chosenService(settings)))void refreshReceipts(target);}}
   }
   function chosenService(settings){return (settings||profile).binding.service;}
   async function refreshReceipts(target){try{const data=await apiClient.json('GET','/chat/voice?session_id='+encodeURIComponent(state.activeId));if(target===scope()){recent=Array.isArray(data.recent_audio)?data.recent_audio:[];paintRecent();}}catch(_){} }

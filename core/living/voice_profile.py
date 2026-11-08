@@ -30,12 +30,12 @@ def validate(value):
             raise ValueError('语速或音高超出支持范围')
     binding = value['binding']
     if (type(binding) is not dict or set(binding) not in ({'service','voice_id'}, {'service','voice_id','model'})
-            or binding.get('service') not in {'android_system','fish_tts'} or type(binding.get('voice_id')) is not str
+            or binding.get('service') not in {'android_system','fish_tts','cosyvoice'} or type(binding.get('voice_id')) is not str
             or len(binding['voice_id']) > 200 or type(binding.get('model','')) is not str or len(binding.get('model','')) > 120):
         raise ValueError('音色绑定无效')
     if value['rights'] != ('system_voice' if binding['service'] == 'android_system' else 'provider_voice'):
         raise ValueError('音色来源与授权标记不一致')
-    if binding['service'] == 'fish_tts' and value['pitch'] != 1:
+    if binding['service'] != 'android_system' and value['pitch'] != 1:
         raise ValueError('云端音色暂不支持音高设置')
     return value
 

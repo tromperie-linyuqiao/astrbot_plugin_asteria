@@ -9,6 +9,7 @@ import json
 import os
 import re
 import time
+import uuid
 from urllib.parse import urlsplit
 import aiohttp
 from .models import canonical, scope_key
@@ -23,25 +24,80 @@ class VoiceError(ValueError):
         super().__init__(message)
         self.status = status
 
-def settings(plugin):
+def settings(plugin, service='fish_tts'):
     value = getattr(plugin, 'config', {}).get('voice_cloud', {})
     value = value if isinstance(value, dict) else {}
+    if service == 'cosyvoice':
+        value = value.get('cosyvoice', {})
+        value = value if isinstance(value, dict) else {}
+    elif service != 'fish_tts':
+        value = {}
     base = str(value.get('base_url', '')).rstrip('/')
     parsed = urlsplit(base)
-    valid = parsed.scheme == 'https' and bool(parsed.hostname) and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
+    valid = parsed.scheme == ('wss' if service == 'cosyvoice' else 'https') and bool(parsed.hostname) and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
     models = [v for v in value.get('models', []) if isinstance(v, str) and re.fullmatch(r'[A-Za-z0-9_.:/-]{1,120}', v)] if isinstance(value.get('models'), list) else []
-    model = str(value.get('model', ''))
+    if service == 'cosyvoice':
+        models = ['cosyvoice-v3-flash']
+    model = str(value.get('model', 'cosyvoice-v3-flash' if service == 'cosyvoice' else ''))
     key = str(value.get('api_key', '')).strip()
     return dict(enabled=value.get('enabled') is True, base_url=base, api_key=key,
                 configured=bool(valid and key and model in models), model=model, models=models,
-                label=str(value.get('label', '云端语音'))[:80])
+                label=str(value.get('label', 'CosyVoice v3 Flash' if service == 'cosyvoice' else 'Fish Audio'))[:80],
+                service=service, default_voice_id=str(value.get('voice_id', ''))[:200])
 
-def availability(plugin):
-    cfg = settings(plugin)
+def availability(plugin, service='fish_tts'):
+    cfg = settings(plugin, service)
     return dict(available=cfg['enabled'] and cfg['configured'], configured=cfg['configured'], reachability='not_probed', label=cfg['label'],
                 model=cfg['model'], models=cfg['models'], max_characters=MAX_TEXT,
                 asr=False, format='mp3', pitch=False, speed=True, credentials_on_server=True,
-                reason='' if cfg['enabled'] and cfg['configured'] else '服务端尚未启用或配置云端语音')
+                service=service, default_voice_id=cfg['default_voice_id'], requires_voice_id=service=='cosyvoice',
+                reason='' if cfg['enabled'] and cfg['configured'] else '服务端尚未启用或配置这类语音（需要独立语音 Key）')
+
+
+def services(plugin):
+    return [availability(plugin, name) for name in ('fish_tts', 'cosyvoice')]
+
+
+def presets(plugin):
+    return [dict(service=service, model=model, label=label,
+                 configured=model in settings(plugin, service)['models'] and availability(plugin, service)['available'])
+            for service, model, label in [('fish_tts','drama-3','Fish Audio Drama 3'),
+                ('cosyvoice','cosyvoice-v3-flash','CosyVoice v3 Flash')]]
+
+
+async def cosy_audio(client, cfg, body, current):
+    """Official DashScope task protocol. Collect one MP3; no URL fetch or retry."""
+    task_id = uuid.uuid4().hex
+    envelope = lambda action, payload: dict(header=dict(action=action, task_id=task_id, streaming='duplex'), payload=payload)
+    async with client.ws_connect(cfg['base_url'], headers={'Authorization':'Bearer '+cfg['api_key']},
+                                 max_msg_size=MAX_AUDIO, autoping=True) as ws:
+        await ws.send_json(envelope('run-task', dict(task_group='audio', task='tts',
+            function='SpeechSynthesizer', model=cfg['model'], parameters=body['parameters'], input={})))
+        started=False; chunks=[]; size=0
+        async for message in ws:
+            current()
+            if message.type == aiohttp.WSMsgType.BINARY:
+                if not started: raise RuntimeError('voice protocol outcome unconfirmed')
+                size += len(message.data)
+                if size > MAX_AUDIO: raise RuntimeError('voice accepted output limit reached')
+                chunks.append(message.data)
+            elif message.type == aiohttp.WSMsgType.TEXT:
+                frame=json.loads(message.data); header=frame.get('header', {})
+                if header.get('task_id') != task_id: raise RuntimeError('voice protocol outcome unconfirmed')
+                event=header.get('event')
+                if event == 'task-started':
+                    if started: raise RuntimeError('voice protocol outcome unconfirmed')
+                    started=True
+                    await ws.send_json(envelope('continue-task', dict(input=dict(text=body['text']))))
+                    await ws.send_json(envelope('finish-task', dict(input={})))
+                elif event == 'task-failed':
+                    raise VoiceError('CosyVoice 合成失败，没有自动重试。', 502)
+                elif event == 'task-finished':
+                    if not started: raise RuntimeError('voice protocol outcome unconfirmed')
+                    return b''.join(chunks)
+            elif message.type in {aiohttp.WSMsgType.ERROR,aiohttp.WSMsgType.CLOSE,aiohttp.WSMsgType.CLOSED}:
+                break
+        raise RuntimeError('voice task disconnected before completion')
 
 def mp3(data):
     return data.startswith(b'ID3') or (len(data) > 2 and data[0] == 255 and data[1] & 224 == 224)
@@ -129,12 +185,13 @@ class CloudVoice:
         return path
 
     async def synthesize(self, text, message_id, chosen=None, *, retry_failed=False):
-        cfg = settings(self.plugin)
-        if not cfg['enabled'] or not cfg['configured']:
-            raise VoiceError('当前服务器未配置可用的云端语音', 503)
         profile = chosen or self.profile.get()['profile']
         binding = profile['binding']
-        if binding['service'] != 'fish_tts': raise VoiceError('请先选择云端音色', 400)
+        service = binding['service']
+        cfg = settings(self.plugin, service)
+        if not cfg['enabled'] or not cfg['configured']:
+            raise VoiceError('当前服务器未配置可用的云端语音', 503)
+        if service not in {'fish_tts','cosyvoice'}: raise VoiceError('请先选择云端音色', 400)
         model = binding.get('model') or cfg['model']
         if model not in cfg['models']: raise VoiceError('这个语音模型未在当前服务器启用', 400)
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT:
@@ -142,26 +199,23 @@ class CloudVoice:
         body = dict(text=text, format='mp3', normalize=True, latency='normal',
                     prosody=dict(speed=profile['rate']))
         if binding['voice_id']: body['reference_id'] = binding['voice_id']
+        if service == 'cosyvoice':
+            voice = binding['voice_id'] or cfg['default_voice_id']
+            if not voice: raise VoiceError('请先填写 CosyVoice v3 Flash 的真实音色 ID', 400)
+            body = dict(text=text, parameters=dict(text_type='PlainText', voice=voice,
+                format='mp3', sample_rate=24000, volume=50, rate=profile['rate'], pitch=1.0))
         identity = hashlib.sha256(canonical([scope_key(self.scope), cfg['base_url'], model, message_id, body]).encode()).hexdigest()
-        data = dict(message_id=str(message_id), model=model, source='fish_tts', mime_type='audio/mpeg',
+        data = dict(message_id=str(message_id), model=model, source=service, mime_type='audio/mpeg',
                     text_sha256=hashlib.sha256(text.encode()).hexdigest(), characters=len(text), created_at=time.time())
         cached, row = await asyncio.to_thread(self._reserve, identity, data, retry_failed)
         if cached: return cached
         try:
             self.profile.current()
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=80)) as client:
-                async with client.post(cfg['base_url']+'/tts', json=body,
-                        headers={'Authorization':'Bearer '+cfg['api_key'], 'model':model}, allow_redirects=False) as response:
-                    if response.status != 200:
-                        # Provider errors may echo secrets; never forward their body.
-                        reason = {401:'语音凭据未通过验证',402:'语音服务额度不足',403:'语音服务拒绝请求',429:'语音服务暂时限流'}.get(response.status,'语音服务暂不可用')
-                        raise VoiceError(reason+'（HTTP '+str(response.status)+'），没有自动重试。', 502)
-                    chunks=[]; size=0
-                    async for chunk in response.content.iter_chunked(65536):
-                        size+=len(chunk)
-                        if size>MAX_AUDIO: raise VoiceError('语音结果超过可用大小，未保存', 502)
-                        chunks.append(chunk)
-            raw=b''.join(chunks)
+                if service == 'cosyvoice':
+                    raw = await asyncio.wait_for(cosy_audio(client, dict(cfg,model=model), body, self.profile.current), timeout=80)
+                else:
+                    raw = await self._fish_audio(client, cfg, model, body)
             if not raw or not mp3(raw): raise VoiceError('语音服务没有返回有效 MP3', 502)
             self.profile.current()
             await asyncio.to_thread(self._store, identity, raw)
@@ -176,3 +230,17 @@ class CloudVoice:
             except Exception: pass
             if isinstance(exc, (VoiceError, asyncio.CancelledError, PermissionError)): raise
             raise VoiceError('云端语音未完成，结果不明；没有自动重试或改用其他模型。') from None
+
+    async def _fish_audio(self, client, cfg, model, body):
+        async with client.post(cfg['base_url']+'/tts', json=body,
+                headers={'Authorization':'Bearer '+cfg['api_key'], 'model':model}, allow_redirects=False) as response:
+            if response.status != 200:
+                # Provider bodies can contain credentials; do not expose them.
+                reason = {401:'语音凭据未通过验证',402:'语音服务额度不足',403:'语音服务拒绝请求',429:'语音服务暂时限流'}.get(response.status,'语音服务暂不可用')
+                raise VoiceError(reason+'（HTTP '+str(response.status)+'），没有自动重试。', 502)
+            chunks=[]; size=0
+            async for chunk in response.content.iter_chunked(65536):
+                size+=len(chunk)
+                if size>MAX_AUDIO: raise VoiceError('语音结果超过可用大小，未保存', 502)
+                chunks.append(chunk)
+        return b''.join(chunks)

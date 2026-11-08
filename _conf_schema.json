@@ -13808,7 +13808,7 @@
     "type": "object",
     "items": {
       "enabled": {
-        "description": "启用云端朗读（仅用户主动点击）",
+        "description": "启用 Fish 云端朗读（点击朗读或显式双向语音）",
         "type": "bool",
         "default": false
       },
@@ -13831,15 +13831,52 @@
       "model": {
         "description": "默认 TTS 模型",
         "type": "string",
-        "default": "s2.1-pro"
+        "default": "s2.1-pro",
+        "hint": "Drama 3 的模型 ID 为 drama-3；切换不验证 Key，不自动替换已保存声音档案。"
       },
       "models": {
         "description": "允许选择的 TTS 模型",
         "type": "list",
         "default": [
-          "s2.1-pro"
+          "s2.1-pro",
+          "drama-3"
         ],
         "hint": "填写当前语音 Key 实际可用的模型 ID；不自动切换分组或重试。"
+      },
+      "cosyvoice": {
+        "description": "CosyVoice v3 Flash · 独立配置",
+        "type": "object",
+        "items": {
+          "enabled": {
+            "description": "启用 CosyVoice",
+            "type": "bool",
+            "default": false
+          },
+          "base_url": {
+            "description": "百炼 WSS 地址",
+            "type": "string",
+            "default": "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+            "hint": "可填业务空间专属 wss://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference。"
+          },
+          "api_key": {
+            "description": "百炼语音 Key（独立填写，不继承聊天 Key）",
+            "type": "string",
+            "default": ""
+          },
+          "voice_id": {
+            "description": "真实音色 ID（需支持 cosyvoice-v3-flash）",
+            "type": "string",
+            "default": ""
+          },
+          "model": {
+            "description": "合成模型",
+            "type": "string",
+            "default": "cosyvoice-v3-flash",
+            "options": [
+              "cosyvoice-v3-flash"
+            ]
+          }
+        }
       }
     }
   }

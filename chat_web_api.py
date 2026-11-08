@@ -1143,17 +1143,23 @@ class NativeChatWebApi:
             lambda: self._same_app_memory_resources(username, session, resources))
 
     def _voice_view(self, profile):
-        from .core.living.voice_cloud import availability, CloudVoice
+        from .core.living.voice_cloud import availability, services, presets, CloudVoice
         value = profile.get()
         value['recent_audio'] = CloudVoice(self.plugin, profile).recent()
-        value['cloud'] = availability(self.plugin)
-        if not value['persisted'] and value['cloud']['available']:
-            value['profile']['binding'] = dict(service='fish_tts', voice_id='', model=value['cloud']['model'])
-            value['profile']['rights'] = 'provider_voice'
-            value['profile']['pitch'] = 1.0
-        value['capabilities']['tts'] = value['profile']['binding']['service']
+        engines = services(self.plugin)
+        if not value['persisted']:
+            ready = next((item for item in engines if item['available']), None)
+            if ready is not None:
+                value['profile']['binding'] = dict(service=ready['service'], voice_id=ready['default_voice_id'], model=ready['model'])
+                value['profile']['rights'] = 'provider_voice'
+                value['profile']['pitch'] = 1.0
+        selected = value['profile']['binding']['service']
+        value['cloud'] = availability(self.plugin, selected if selected != 'android_system' else 'fish_tts')
+        value['cloud']['services'] = engines
+        value['cloud']['presets'] = presets(self.plugin)
+        value['capabilities']['tts'] = selected
         value['capabilities']['cloud_asr'] = False
-        value['audio_stored_on_server'] = value['profile']['binding']['service'] == 'fish_tts'
+        value['audio_stored_on_server'] = selected != 'android_system'
         return value
 
     async def voice_synthesize(self):
