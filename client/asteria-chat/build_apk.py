@@ -21,8 +21,8 @@ import zipfile
 
 APP = Path(__file__).resolve().parent
 ROOT = APP.parents[1]
-VERSION = "2.7.7"
-VERSION_CODE = 85
+VERSION = "2.7.8"
+VERSION_CODE = 86
 VERSION_SCHEMA = 2
 # Exact permissions for authenticated chat, reply monitoring and explicitly
 # enabled phone perception. Any additional permission fails the build.
@@ -34,6 +34,9 @@ EXPECTED_PERMISSIONS = [
     "uses-permission: name='android.permission.ACCESS_NETWORK_STATE'",
     "uses-permission: name='android.permission.PACKAGE_USAGE_STATS'",
     "uses-permission: name='android.permission.FOREGROUND_SERVICE_SPECIAL_USE'",
+    "uses-permission: name='android.permission.RECORD_AUDIO'",
+    "uses-permission: name='android.permission.FOREGROUND_SERVICE_MICROPHONE'",
+    "uses-permission: name='android.permission.WAKE_LOCK'",
 ]
 DEFAULT_SERVER = ""
 DEFAULT_CERT_SHA256 = ""
@@ -110,7 +113,39 @@ def freeze_file(source: Path, destination: Path, digest: str, *, resume: bool) -
     return False
 
 
-def normalize_zip(source: Path, destination: Path, dex: Path) -> None:
+SPEECH_ARTIFACTS = {
+    "sherpa-onnx-jvm-2.0.1.jar": (192880, "8320e2457b6e38dd624fb619d3552e11ef78ffeb394622056126b16f2fd99d12"),
+    "sherpa-onnx-static-link-onnxruntime-2.0.1.aar": (38577050, "07e042d97f3a6bd5b7fe74d4eef0513dc01a714b16c15a903250095aba43a575"),
+}
+
+
+def speech_inputs(directory: Path) -> dict[str, str]:
+    result = {}
+    for name, (size, digest) in SPEECH_ARTIFACTS.items():
+        path = directory / name
+        if path.is_symlink() or not path.is_file() or path.stat().st_size != size or sha(path) != digest:
+            raise RuntimeError("Missing or changed pinned offline speech dependency: " + name)
+        result[name] = digest
+    return result
+
+
+def native_speech_members(archive: Path) -> dict[str, bytes]:
+    # Pure Java API jar is used; Kotlin classes.jar inside the AAR is not included.
+    result = {}
+    with zipfile.ZipFile(archive) as source:
+        for name in source.namelist():
+            if name.startswith("jni/") and name.endswith(".so"):
+                if ".." in Path(name).parts or name.count("/") != 2:
+                    raise RuntimeError("Unexpected native speech library path")
+                result["lib/" + name[4:]] = source.read(name)
+    wanted = {"lib/arm64-v8a/libsherpa-onnx-jni.so", "lib/armeabi-v7a/libsherpa-onnx-jni.so",
+              "lib/x86/libsherpa-onnx-jni.so", "lib/x86/libonnxruntime.so", "lib/x86_64/libsherpa-onnx-jni.so"}
+    if set(result) != wanted:
+        raise RuntimeError("Pinned speech package ABI set changed")
+    return result
+
+
+def normalize_zip(source: Path, destination: Path, dex: Path, native: dict[str, bytes]) -> None:
     with zipfile.ZipFile(source) as original, zipfile.ZipFile(destination, "x") as target:
         names = original.namelist()
         if len(names) != len(set(names)) or any(name.startswith("/") or ".." in Path(name).parts for name in names):
@@ -127,6 +162,13 @@ def normalize_zip(source: Path, destination: Path, dex: Path) -> None:
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
             target.writestr(info, path.read_bytes())
+
+        for name, data in sorted(native.items()):
+            info = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
+            # Explicit extractNativeLibs=true: installer expands these libraries.
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            target.writestr(info, data)
 
 
 def verify_resource_layout(apk: Path) -> dict[str, int | bool]:
@@ -152,6 +194,8 @@ def main() -> int:
     parser.add_argument("--sdk", type=Path, default=Path(os.environ.get("ANDROID_HOME", str(Path.home() / ("AppData/Local/Android/Sdk" if os.name == "nt" else "Android/Sdk")))))
     parser.add_argument("--jdk", type=Path,
                         default=Path(os.environ.get("JAVA_HOME", ".")))
+    parser.add_argument("--speech-deps", type=Path, default=ROOT / ".runtime/speech-deps-2.0.1",
+                        help="Previously downloaded official pinned JVM jar and Android AAR; this builder stays offline")
     parser.add_argument("--expected-web-sha")
     parser.add_argument("--server", default=DEFAULT_SERVER, help="Optional HTTPS API prefix; blank asks on first login")
     parser.add_argument("--key-alias", default=os.environ.get("ASTERIA_CHAT_KEY_ALIAS", "asteria-chat"))
@@ -208,6 +252,13 @@ def main() -> int:
             raise RuntimeError("Resume requires restored original inputs before native compilation")
     else:
         work.mkdir(parents=True, exist_ok=False)
+    dependency_hashes = speech_inputs(args.speech_deps)
+    dependencies = work / "speech-deps"
+    dependencies.mkdir(exist_ok=args.resume_inputs)
+    for name, digest in dependency_hashes.items():
+        freeze_file(args.speech_deps / name, dependencies / name, digest, resume=args.resume_inputs)
+    speech_jar = dependencies / "sherpa-onnx-jvm-2.0.1.jar"
+    native_members = native_speech_members(dependencies / "sherpa-onnx-static-link-onnxruntime-2.0.1.aar")
     retained_inputs = []
     android = APP / "android"
     source = snapshot(android / "src")
@@ -274,11 +325,11 @@ def main() -> int:
          "-o", resource_apk], cwd=work)
     java_sources = sorted((frozen_android / "src").rglob("*.java")) + sorted(generated.rglob("*.java"))
     run([javac, "-encoding", "UTF-8", "-g:none", "--release", "8",
-         "-classpath", platform, "-d", classes, *java_sources], cwd=work)
+         "-classpath", str(platform) + os.pathsep + str(speech_jar), "-d", classes, *java_sources], cwd=work)
     run([java, "-Xmx512m", "-cp", tools / "lib/d8.jar", "com.android.tools.r8.D8",
-         "--lib", platform, "--min-api", "26", "--output", dex, *sorted(classes.rglob("*.class"))], cwd=work)
+         "--lib", platform, "--min-api", "26", "--output", dex, speech_jar, *sorted(classes.rglob("*.class"))], cwd=work)
     unsigned = work / "unsigned.apk"
-    normalize_zip(resource_apk, unsigned, dex)
+    normalize_zip(resource_apk, unsigned, dex, native_members)
     aligned = work / "aligned.apk"
     run([executable(tools / "zipalign"), "-p", "4", unsigned, aligned], cwd=work)
     signed = work / f"asteria-chat-{VERSION}.apk"
@@ -299,11 +350,18 @@ def main() -> int:
     if not (work / "dex/classes.dex").is_file():
         raise RuntimeError("APK contains no application dex")
     with zipfile.ZipFile(signed) as archive:
+        if {name for name in archive.namelist() if name.startswith("lib/")} != set(native_members):
+            raise RuntimeError("APK native speech ABI set differs from reviewed dependencies")
+        for name, data in native_members.items():
+            if hashlib.sha256(archive.read(name)).hexdigest() != hashlib.sha256(data).hexdigest():
+                raise RuntimeError("APK native speech library changed: " + name)
         for relative, digest in web_files.items():
             if hashlib.sha256(archive.read("assets/" + relative)).hexdigest() != digest:
                 raise RuntimeError("APK asset does not match the frozen web source")
         if any(".p12" in name or "storepass" in name or "private" in name.lower() for name in archive.namelist()):
             raise RuntimeError("Private material entered the APK")
+    if speech_inputs(args.speech_deps) != dependency_hashes or speech_inputs(dependencies) != dependency_hashes:
+        raise RuntimeError("Speech dependencies changed during the build")
     if source != snapshot(android / "src") or resources != snapshot(android / "res") \
             or manifest_sha != sha(android / "AndroidManifest.xml") or web_files != snapshot(APP / "web", web=True) \
             or build_script_sha != sha(Path(__file__)):
@@ -317,7 +375,9 @@ def main() -> int:
     else:
         with package.open("xb") as output:
             output.write(signed.read_bytes())
-    receipt = {"schema": "asteria_chat_offline_build_v1", "run_id": args.run_id, "version": VERSION,
+    receipt = {"schema": "asteria_chat_offline_build_v1",
+               "speech_dependencies": dependency_hashes,
+               "native_speech_libraries": {name: {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()} for name,data in native_members.items()}, "run_id": args.run_id, "version": VERSION,
                "version_code": VERSION_CODE,
                "package": "com.asteria.chat", "apk": str(package.relative_to(ROOT)).replace("\\", "/"),
                "apk_sha256": digest, "apk_bytes": package.stat().st_size,

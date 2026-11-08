@@ -48,6 +48,7 @@ public final class MainActivity extends Activity {
     private static final int MAX_RESPONSE = 8 * 1024 * 1024;
     private static final int ATTACHMENT_PICKER = 6401;
     private static final int SPEECH_RECOGNIZER = 6403;
+    private static final int CALL_MICROPHONE_PERMISSION = 6404, CALL_MODEL_PICKER = 6405;
     private static final String CHANNEL_ID = "texas-chat-replies";
     private static final int NOTIFICATION_PERMISSION = 6402;
     private static final AttachmentCacheRecovery ATTACHMENT_RECOVERY = new AttachmentCacheRecovery();
@@ -121,7 +122,8 @@ public final class MainActivity extends Activity {
         settings.setSafeBrowsingEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(true);
         bridge = new NativeBridge();
-        voice = new TexasVoice(this, value -> {if(trusted() && web!=null) web.evaluateJavascript("window.ChatVoice&&window.ChatVoice.receive("+value.toString()+")",null);});
+        PhoneCallService.observe(value -> runOnUiThread(() -> {if(trusted()&&web!=null)web.evaluateJavascript("window.ChatCall&&window.ChatCall.receive("+value.toString()+")",null);}));
+        voice = new TexasVoice(this, value -> {PhoneCallService.outputCurrent("playing".equals(value.optString("phase"))||"preparing".equals(value.optString("phase")));if(trusted() && web!=null) web.evaluateJavascript("window.ChatVoice&&window.ChatVoice.receive("+value.toString()+")",null);});
         if (bridge.token == null) {
             PhonePerceptionService.stop(this, "login_required");
             // Explicit saved background accounts remain independent of the visible login.
@@ -222,7 +224,7 @@ public final class MainActivity extends Activity {
         foreground.set(false);
         ReplyWatchService.setAppForeground(false);
         notifyForegroundChanged();
-        if (web != null && !destroyed.get()) web.onPause();
+        if (web != null && !destroyed.get() && !PhoneCallService.running()) web.onPause();
         super.onPause();
     }
 
@@ -289,6 +291,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        PhoneCallService.end(); PhoneCallService.observe(null);
         foreground.set(false);
         ReplyWatchService.setAppForeground(false);
         destroyed.set(true);
@@ -311,12 +314,14 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == CALL_MODEL_PICKER && bridge != null) bridge.callModelResult(resultCode,data);
         if (requestCode == SPEECH_RECOGNIZER && bridge != null) bridge.recognitionResult(resultCode,data);
         if (requestCode == ATTACHMENT_PICKER && bridge != null) bridge.selectionResult(resultCode, data);
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if(requestCode==CALL_MICROPHONE_PERMISSION){if(bridge!=null)bridge.callPermissionResult(grantResults);return;}
         if (requestCode != NOTIFICATION_PERMISSION || !trusted() || web == null) return;
         boolean granted = grantResults.length > 0 && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
         web.evaluateJavascript("if(window.AsteriaChatUI&&typeof window.AsteriaChatUI.notificationPermissionChanged==='function'){window.AsteriaChatUI.notificationPermissionChanged("
@@ -341,6 +346,7 @@ public final class MainActivity extends Activity {
         private final java.util.Set<java.io.Closeable> activeSources = new java.util.HashSet<>();
         private PickerRequest picker;
         private String visibleSession = "";
+        private PickerRequest callPermission; private JSONObject callStartOptions;
 
         @JavascriptInterface public String getViewportMetrics() {
             ChatViewportController value = viewport;
@@ -371,7 +377,7 @@ public final class MainActivity extends Activity {
                 vault.save(selected.server, selected.token);
                 PhonePerceptionService.stop(MainActivity.this, "server_changed");
                 epoch++;
-                runOnUiThread(() -> {if(voice!=null)voice.stop();}); server = selected.server; token = selected.token; visibleSession = selected.session;
+                runOnUiThread(() -> {if(voice!=null)voice.stop();PhoneCallService.end();}); server = selected.server; token = selected.token; visibleSession = selected.session;
             }
             ReplyWatchService.setVisibleAccount(selected.server, selected.token, selected.session);
             return json("ok", true, "config", decode(getConfig(), "application/json"));
@@ -766,7 +772,7 @@ public final class MainActivity extends Activity {
                         PhonePerceptionService.stop(MainActivity.this, "server_changed");
                         // Keep explicitly enabled accounts listening while the visible server changes.
                         epoch++;
-                runOnUiThread(() -> {if(voice!=null)voice.stop();});
+                runOnUiThread(() -> {if(voice!=null)voice.stop();PhoneCallService.end();});
                         token = null;
                         vault.clear();
                         vault.server(next);
@@ -792,7 +798,7 @@ public final class MainActivity extends Activity {
                             "error", "notification_logout_failed").toString();
                 }
                 epoch++;
-                runOnUiThread(() -> {if(voice!=null)voice.stop();});
+                runOnUiThread(() -> {if(voice!=null)voice.stop();PhoneCallService.end();});
                 token = null; visibleSession = "";
                 ReplyWatchService.setVisibleAccount(server, null);
                 boolean saved;
@@ -852,7 +858,7 @@ public final class MainActivity extends Activity {
                 final long generation;
                 synchronized (lock) {
                     if (login) { PhonePerceptionService.stop(MainActivity.this, "authentication_changed"); /* Other saved accounts keep listening during explicit login. */ epoch++;
-                runOnUiThread(() -> {if(voice!=null)voice.stop();}); token = null; vault.clear(); }
+                runOnUiThread(() -> {if(voice!=null)voice.stop();PhoneCallService.end();}); token = null; vault.clear(); }
                     target = server;
                     bearer = token;
                     generation = epoch;
@@ -906,9 +912,66 @@ public final class MainActivity extends Activity {
                 }catch(Exception failure){deliver(requestId,0,error("voice_unavailable","语音播放暂不可用。"));}});
             }catch(Exception failure){deliver(requestId,0,error("voice_unavailable","语音参数无效，请打开当前会话。"));}
         }
+
+        @JavascriptInterface public void endPhoneCall(){if(trusted())runOnUiThread(()->{PickerRequest pending=callPermission;callPermission=null;callStartOptions=null;if(pending!=null)deliver(pending.requestId,0,error("phone_call_ended","通话已结束，未开始收音"));PhoneCallService.end();});}
+        private String callScope(AuthState auth,String session){return AttachmentCache.key(auth.server,auth.token,"/local-call/"+auth.epoch+"/"+session);}
+        private boolean callCurrent(PickerRequest selected){synchronized(lock){return trusted()&&selected.auth.epoch==epoch&&selected.auth.server.equals(server)&&selected.auth.token.equals(token)&&selected.sessionId.equals(visibleSession);}}
+        @JavascriptInterface public void phoneCall(String requestId,String sessionId,String payload){
+            try{
+                requireId(requestId);AttachmentPolicy.session(sessionId);if(payload==null||payload.length()>4096)throw new IllegalArgumentException("通话操作无效");
+                final JSONObject options=new JSONObject(payload);final AuthState auth=attachmentAuth();final PickerRequest selected=new PickerRequest(requestId,sessionId,auth,"call");
+                runOnUiThread(()->{try{
+                    requireCurrent(auth);String action=options.getString("action"),scope=callScope(auth,sessionId);
+                    if(action.equals("status")){deliver(requestId,200,PhoneCallService.status(MainActivity.this,scope));return;}
+                    if(action.equals("start")){
+                        if(!foreground.get())throw new IllegalStateException("请在应用前台明确开始通话");
+                        if(!CallModelStore.ready(CallModelStore.directory(MainActivity.this)))throw new IllegalStateException("请先导入离线语音模型");
+                        if(PhoneCallService.running()||callPermission!=null)throw new IllegalStateException("请先结束当前通话或授权窗口");
+                        int silence=options.optInt("silence_ms",1200);if(silence<400||silence>2500)throw new IllegalArgumentException("分句停顿设置无效");
+                        if(checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)!=android.content.pm.PackageManager.PERMISSION_GRANTED){
+                            callPermission=selected;callStartOptions=options;requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO},CALL_MICROPHONE_PERMISSION);return;
+                        }
+                        beginCall(selected,options);return;
+                    }
+                    if(action.equals("resume")&&!foreground.get())throw new IllegalStateException("请返回应用后明确继续");
+                    PhoneCallService.command(options.optString("call_id"),scope,action,options.optInt("sequence"),options.optBoolean("output"));
+                    deliver(requestId,200,PhoneCallService.status(MainActivity.this,scope));
+                }catch(Exception e){deliver(requestId,0,error("phone_call_unavailable",e.getMessage()==null?"通话操作未完成，请检查权限和模型":e.getMessage()));}});
+            }catch(Exception e){deliver(requestId,0,error("phone_call_unavailable","请登录并打开当前角色聊天后使用电话模式"));}
+        }
+        private void beginCall(PickerRequest selected,JSONObject options)throws Exception {
+            requireCurrent(selected.auth);if(!foreground.get()||!selected.auth.token.equals(token))throw new IllegalStateException("请返回当前聊天后再次开始通话");
+            synchronized(lock){visibleSession=selected.sessionId;}
+            if(voice!=null)voice.stop();
+            PhoneCallService.begin(MainActivity.this,options.getString("call_id"),callScope(selected.auth,selected.sessionId),selected.sessionId,()->callCurrent(selected),options.optInt("silence_ms",1200),.009f);
+            deliver(selected.requestId,200,PhoneCallService.status(MainActivity.this,callScope(selected.auth,selected.sessionId)));
+        }
+        private void callPermissionResult(int[] grants){
+            PickerRequest selected=callPermission;JSONObject options=callStartOptions;callPermission=null;callStartOptions=null;if(selected==null)return;
+            try{if(grants.length==0||grants[0]!=android.content.pm.PackageManager.PERMISSION_GRANTED)throw new IllegalStateException("麦克风未授权，电话模式未开始");beginCall(selected,options);}
+            catch(Exception e){deliver(selected.requestId,0,error("phone_call_permission",e.getMessage()==null?"请返回应用后重新开始通话":e.getMessage()));}
+        }
+        @JavascriptInterface public void importCallModel(String requestId,String sessionId){
+            try{
+                requireId(requestId);AttachmentPolicy.session(sessionId);final PickerRequest selected;
+                synchronized(lock){if(!foreground.get()||picker!=null||PhoneCallService.running())throw new IllegalStateException("请先结束通话并关闭其他文件窗口");selected=new PickerRequest(requestId,sessionId,attachmentAuth(),"call-model");picker=selected;}
+                runOnUiThread(()->{try{requireCurrent(selected.auth);startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/zip").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),CALL_MODEL_PICKER);}
+                    catch(Exception e){synchronized(lock){if(picker==selected)picker=null;}deliver(requestId,0,error("call_model_picker","无法打开模型选择窗口"));}});
+            }catch(Exception e){deliver(requestId,0,error("call_model_unavailable","请先结束通话，并在当前聊天导入模型"));}
+        }
+        private void callModelResult(int code,Intent data){
+            final PickerRequest selected;synchronized(lock){selected=picker;if(selected==null||!"call-model".equals(selected.kind))return;picker=null;}
+            if(code!=RESULT_OK||data==null||data.getData()==null){deliver(selected.requestId,200,json("ok",true,"cancelled",true));return;}
+            final Uri uri=data.getData();if(!"content".equals(uri.getScheme())){deliver(selected.requestId,0,error("call_model_uri","请选择系统文件窗口中的模型 ZIP"));return;}
+            try{executor.execute(()->{try{requireCurrent(selected.auth);if(PhoneCallService.running())throw new IllegalStateException("请先结束当前通话");try(InputStream input=getContentResolver().openInputStream(uri)){if(input==null)throw new java.io.IOException("模型不可读取");CallModelStore.install(CallModelStore.directory(MainActivity.this),input);}requireCurrent(selected.auth);deliver(selected.requestId,200,json("ok",true,"model_ready",true));}
+                catch(Exception e){deliver(selected.requestId,0,error("call_model_import_failed","离线模型导入未完成，请选择提供的完整模型 ZIP；原聊天和录音不会发送"));}});}
+            catch(RejectedExecutionException e){deliver(selected.requestId,0,error("call_model_busy","当前操作较多，请稍后重新导入"));}
+        }
+
         @JavascriptInterface public void recognizeSpeech(String requestId,String sessionId,String language) {
             try {
                 requireId(requestId);AttachmentPolicy.session(sessionId);
+                if(PhoneCallService.running())throw new IllegalStateException("请先结束电话模式");
                 if(!java.util.Arrays.asList("zh-CN","zh-TW","en-US","ja-JP").contains(language))throw new IllegalArgumentException("language");
                 final PickerRequest selected;
                 synchronized(lock){if(picker!=null)throw new IllegalStateException("picker_busy");selected=new PickerRequest(requestId,sessionId,attachmentAuth(),"recognition");picker=selected;}
@@ -1265,7 +1328,7 @@ public final class MainActivity extends Activity {
             synchronized (lock) {
                 requireCurrent(auth);
                 if (status == 401) { PhonePerceptionService.stop(MainActivity.this, "login_expired"); ReplyWatchService.stopAccount(MainActivity.this, server, token, "login_expired"); epoch++;
-                runOnUiThread(() -> {if(voice!=null)voice.stop();}); token = null; vault.clear(); }
+                runOnUiThread(() -> {if(voice!=null)voice.stop();PhoneCallService.end();}); token = null; vault.clear(); }
             }
         }
 
@@ -1504,7 +1567,7 @@ public final class MainActivity extends Activity {
                         PhonePerceptionService.stop(MainActivity.this, "login_expired");
                         ReplyWatchService.stopAccount(MainActivity.this, server, token, "login_expired");
                         epoch++;
-                runOnUiThread(() -> {if(voice!=null)voice.stop();});
+                runOnUiThread(() -> {if(voice!=null)voice.stop();PhoneCallService.end();});
                         token = null;
                         vault.clear();
                     }
@@ -1539,7 +1602,7 @@ public final class MainActivity extends Activity {
         private void close() {
             synchronized (lock) {
                 epoch++;
-                runOnUiThread(() -> {if(voice!=null)voice.stop();});
+                runOnUiThread(() -> {if(voice!=null)voice.stop();PhoneCallService.end();});
                 token = null;
                 picker = null;
                 for (java.io.Closeable source : activeSources) {

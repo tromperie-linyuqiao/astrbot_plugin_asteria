@@ -37,7 +37,7 @@ window.ChatSettingsHub = (() => {
     if(map[button.id])return map[button.id];
     const label=button.textContent.trim();
     if(/我的头像|聊天外观|主题|深色模式|纯黑/.test(label))return 'appearance';
-    if(/语音|声音|朗读/.test(label))return 'voice';
+    if(/语音|声音|朗读|电话/.test(label))return 'voice';
     if(/日程|课程|重要日期|生日|纪念日/.test(label))return 'agenda';
     if(/手机感知|感知上报|PPB/.test(label))return 'perception';
     if(/模型|路由/.test(label))return 'models';

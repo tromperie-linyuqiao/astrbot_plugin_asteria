@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <queries>
         <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
         <intent><action android:name="android.speech.action.RECOGNIZE_SPEECH" /></intent>
@@ -15,7 +19,7 @@
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:allowBackup="false" android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
-        android:usesCleartextTraffic="false" android:hardwareAccelerated="true"
+        android:usesCleartextTraffic="false" android:hardwareAccelerated="true" android:extractNativeLibs="true"
         android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true" android:enableOnBackInvokedCallback="false"
             android:launchMode="singleTop"
@@ -27,6 +31,8 @@
         </activity>
         <service android:name=".ReplyWatchService" android:exported="false"
             android:foregroundServiceType="dataSync" android:stopWithTask="false" />
+        <service android:name=".PhoneCallService" android:exported="false"
+            android:foregroundServiceType="microphone" android:stopWithTask="true" />
         <service android:name=".PhonePerceptionService" android:exported="false"
             android:foregroundServiceType="specialUse" android:stopWithTask="false">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"

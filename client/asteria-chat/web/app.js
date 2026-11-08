@@ -1311,6 +1311,7 @@ function renderChrome() {
   renderInteractions();
   renderConversationExport();
   foregroundRecovery.stateChanged();
+  window.ChatCall?.stateChanged();
 }
 function dateLabel(value, full = false) {
   if (!value) return '';
@@ -2217,10 +2218,11 @@ function parseStream(body) {
 }
 async function sendMessage(event, prepared = null) {
   event.preventDefault();
-  if(primaryConnectionId()&&state.activeId&&state.activeId!==primaryConnectionId()){showNotice('这里是以前的记录，请回到当前 Bot继续长期聊天。');return;}
+  const sendReceipt = {started:false,confirmed:false,failed:false,clientMessageId:null};
+  if(primaryConnectionId()&&state.activeId&&state.activeId!==primaryConnectionId()){showNotice('这里是以前的记录，请回到当前 Bot继续长期聊天。');return sendReceipt;}
   const legacySticker = prepared && prepared.kind === 'sticker';
   const direct = prepared && prepared.kind === 'composition';
-  if (prepared && !legacySticker && !direct) return;
+  if (prepared && !legacySticker && !direct) return sendReceipt;
   const consume = !prepared || prepared.consume !== false && !legacySticker;
   const draftText = $('draft').value;
   const text = prepared ? prepared.text || '' : draftText.trim();
@@ -2228,21 +2230,22 @@ async function sendMessage(event, prepared = null) {
   let composition;
   try { composition = prepared ? { parts: prepared.parts || null, actions: [], stickers: [] }
       : window.ChatComposer ? window.ChatComposer.snapshot(text) : { parts: null, actions: [], stickers: [] }; }
-  catch (failure) { showNotice(errorText(failure), null, true); return; }
+  catch (failure) { showNotice(errorText(failure), null, true); return sendReceipt; }
   if ((!text && !files.length && !(composition.parts && composition.parts.length)) || (!legacySticker && state.sending)
-      || state.loading || state.attaching || state.remoteRunning || (!prepared && invalidAttachments())) return;
-  if (!state.authenticated) { openSettings(); return; }
+      || state.loading || state.attaching || state.remoteRunning || (!prepared && invalidAttachments())) return sendReceipt;
+  if (!state.authenticated) { openSettings(); return sendReceipt; }
   const scope = prepared ? prepared.scope : { server: state.server, username: state.username, sessionId: state.activeId };
   const current = () => messageSendCurrent(scope);
-  if (legacySticker && (!state.sending || !state.stickerBusy || !current())) return;
-  if (direct && !current()) return;
+  if (legacySticker && (!state.sending || !state.stickerBusy || !current())) return sendReceipt;
+  if (direct && !current()) return sendReceipt;
   state.sending = true; state.replyPhase='submitting'; renderChrome();
   const clientMessageId = 'tc-' + (window.crypto && typeof window.crypto.randomUUID === 'function'
     ? window.crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
+  sendReceipt.clientMessageId = clientMessageId;
   let sentSession = scope.sessionId; let userMessage;
   try {
     if (!sentSession) { sentSession = await connectLongTerm({ accept: current }); scope.sessionId = sentSession; }
-    if (!sentSession || !current()) return;
+    if (!sentSession || !current()) return sendReceipt;
     if (consume) storage.set(draftKey(sentSession), draftText);
     state.liveFollowScope=messageSearchScope();
     for (const file of files) file.status = 'sending';
@@ -2258,26 +2261,43 @@ async function sendMessage(event, prepared = null) {
     }
     renderMessages({forceLatest:true});
     jumpToLatest();
+    sendReceipt.started = true;
     const stream = parseStream(await apiClient.send(sentSession, text, files, composition.parts, clientMessageId));
-    if (!current()) return;
+    if (!current()) return sendReceipt;
     for(const job of stream.imageJobs||[])window.ChatImageJobs?.streamEvent(job);
-    state.replyPhase=stream.error?'failed':'completed';
-    userMessage.delivery = stream.userId != null ? 'confirmed' : 'unknown';
+    const userSaved = stream.userId != null;
+    sendReceipt.confirmed = userSaved;
+    const replySaved = stream.messageId != null;
+    state.replyPhase = stream.error ? 'failed' : replySaved ? 'completed' : 'unknown';
+    userMessage.delivery = userSaved ? 'confirmed' : 'unknown';
+    if (userSaved) userMessage.serverId = stream.userId;
     if (stream.userParts) userMessage.parts = stream.userParts;
-    if (stream.userId != null) {
+    if (userSaved) {
       const sentIds = new Set(files.map(file => file.attachment_id));
       state.attachmentQueues.set(sentSession, attachmentQueue(sentSession).filter(file => !sentIds.has(file.attachment_id)));
     } else for (const file of files) file.status = 'send-unknown';
-    if (stream.parts.length) state.messages.push({ id: stream.messageId || 'reply-' + Date.now(), role: 'assistant', text: stream.text, parts: stream.parts, delivery: stream.messageId != null ? 'confirmed' : 'unconfirmed' });
+    if (stream.parts.length) state.messages.push({ id: stream.messageId ?? 'reply-' + Date.now(), serverId: stream.messageId,
+      role: 'assistant', text: stream.text, parts: stream.parts, delivery: replySaved ? 'confirmed' : 'unconfirmed' });
     renderMessages();
     if (stream.error) {const failure=new Error(stream.error);failure.generationFailed=true;throw failure;}
-    if (!stream.ended || stream.messageId == null) showNotice('回复已返回，正在核对服务器保存记录。');
-    await loadHistory(sentSession, { accept: current, preserveReading: true });
-    if (!current()) return;
-    if (consume && !$('draft').value) storage.set(draftKey(sentSession), '');
-    await loadSessions({ select: false, accept: current });
+    if (!replySaved) showNotice('已收到部分结果，正在核对服务器保存记录。');
+    try {
+      const applied = await loadHistory(sentSession, { accept: current, preserveReading: true, preserveUnconfirmed: true });
+      if (!current()) return sendReceipt;
+      const confirmed = applied && state.messages.some(message => message.role === 'user'
+        && message.clientMessageId === clientMessageId && message.delivery === 'confirmed');
+      sendReceipt.confirmed = sendReceipt.confirmed || !!confirmed;
+      if (consume && (userSaved || confirmed) && !$('draft').value) storage.set(draftKey(sentSession), '');
+      await loadSessions({ select: false, accept: current });
+    } catch (error) {
+      if (!current()) return sendReceipt;
+      if (consume && userSaved && !$('draft').value) storage.set(draftKey(sentSession), '');
+      showNotice(replySaved ? '回复已保存，暂时无法同步记录。' : '暂时无法同步记录，回复结果待确认。',
+        { label: '同步记录', run: refreshCurrent }, true);
+    }
   } catch (error) {
-    if (!current()) return;
+    sendReceipt.failed = true;
+    if (!current()) return sendReceipt;
     state.replyPhase=error&&(error.generationFailed||Number.isInteger(error.status)&&error.status>=400)?'failed':'unknown';
     for (const file of files) if (attachmentQueue(sentSession).includes(file)) file.status = 'send-unknown';
     if (userMessage && userMessage.delivery !== 'confirmed') userMessage.delivery = 'unknown';
@@ -2289,6 +2309,7 @@ async function sendMessage(event, prepared = null) {
     renderMessages();
     showNotice(errorText(error) + (userMessage && userMessage.delivery === 'confirmed' ? ' 消息已保存，可同步记录查看回复。' : ' 先同步记录核对结果，应用不会自动重发。'), { label: '同步记录', run: refreshCurrent }, true);
   } finally { if (!legacySticker) state.sending = false; renderMessages(); renderSessions(); renderChrome(); }
+  return sendReceipt;
 }
 async function refreshSessions() {
   if (!state.authenticated) { openSettings(); return; }
