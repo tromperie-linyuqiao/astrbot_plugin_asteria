@@ -1165,7 +1165,7 @@ class NativeChatWebApi:
     async def voice_synthesize(self):
         from .core.living.voice_cloud import CloudVoice, VoiceError
         from .core.living.voice_profile import validate
-        from .core.living.structured_reply import visible_parts
+        from .core.living.structured_reply import spoken_reply_text
         try:
             body = await self._body()
             retry_failed = body.pop('retry_failed', False)
@@ -1191,10 +1191,11 @@ class NativeChatWebApi:
                 expressions = self._expressions(service)
                 parts = await asyncio.to_thread(expressions.saved_parts, expressions.message_scope(username, session_id), 'assistant', identity)
                 if parts is None: parts = record.content.get('message', [])
-                text = '\n\n'.join(part['text'] for part in visible_parts(parts) if isinstance(part, dict)
-                    and part.get('type') in {'plain','text','speech'} and isinstance(part.get('text'), str)
-                    and part.get('chain_type') not in {'reasoning','tool_call','tool_call_result'})
-                if not text.strip(): raise _RequestError('这条回复没有可朗读的话语；动作和思考草稿不会朗读')
+                text = spoken_reply_text(parts)
+                if not text:
+                    await self._recheck_owned_session(username, service, session_id)
+                    return self._ok(dict(state='skipped', reason='no_spoken_text',
+                        session_id=session_id, message_id=identity))
                 chosen = (await asyncio.to_thread(self._voice_view, profile))['profile']
             result = await CloudVoice(self.plugin, profile).synthesize(text, identity, chosen, retry_failed=retry_failed)
             await self._recheck_owned_session(username, service, session_id)

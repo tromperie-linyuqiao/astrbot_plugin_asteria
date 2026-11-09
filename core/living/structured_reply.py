@@ -70,6 +70,33 @@ def visible_parts(parts):
     return result
 
 
+def spoken_reply_text(parts):
+    """Project saved reply parts for TTS; parentheses are the inline action notation."""
+    text = '\n\n'.join(part['text'] for part in visible_parts(parts) if isinstance(part, dict)
+        and part.get('type') in {'plain', 'speech', 'text'} and isinstance(part.get('text'), str)
+        and part.get('chain_type') not in {'reasoning', 'tool_call', 'tool_call_result'})
+    openings = {'(': ')', '（': '）'}
+    stack, spans = [], []
+    for index, char in enumerate(text):
+        if char in openings:
+            stack.append((index, openings[char]))
+        elif stack and char == stack[-1][1]:
+            start, _ = stack.pop()
+            while spans and spans[-1][0] >= start:
+                spans.pop()
+            spans.append((start, index + 1))
+    if not spans:
+        return text.strip()
+    # Keep an unfinished parenthesis as text rather than losing the rest of a reply.
+    chunks, end = [], 0
+    for start, stop in spans:
+        chunks.append(text[end:start])
+        end = stop
+    chunks.append(text[end:])
+    spoken = re.sub(r'^[\s，。；、：,.;:]+', '', ''.join(chunks)).strip()
+    return spoken if any(char.isalnum() for char in spoken) else ''
+
+
 def visible_content(content):
     if not isinstance(content, dict) or content.get('type') != 'bot':
         return content

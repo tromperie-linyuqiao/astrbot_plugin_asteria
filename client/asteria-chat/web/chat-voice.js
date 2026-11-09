@@ -120,7 +120,11 @@ window.ChatVoice = (() => {
         if(retryFailed)body.retry_failed=true;
         const audio=await apiClient.json('POST','/chat/voice/synthesize',body);
         if(target!==scope()||speechTicket!==speechSerial)return;
-        if(audio.session_id!==state.activeId||!/^[a-f0-9]{64}$/.test(audio.audio_id||''))throw Error('语音结果与当前会话不一致。');
+        if(audio.session_id!==state.activeId)throw Error('语音结果与当前会话不一致。');
+        if(id!=='preview'&&audio.state==='skipped'&&audio.reason==='no_spoken_text'&&audio.message_id===String(id)){
+          speechStatus('这条回复只有动作，没有台词。');return;
+        }
+        if(!/^[a-f0-9]{64}$/.test(audio.audio_id||''))throw Error('语音结果与当前会话不一致。');
         speechStatus(audio.cached?'正在播放缓存语音…':'正在下载语音…');
         const result=responseData(await nativeAsync('playCloudVoice',[state.activeId,audio.audio_id,String(id)],120000,request=>{activeRequestId=request;}));
         if(result?.ok!==true)throw Error(result?.message||'音频暂时无法播放。');
@@ -130,8 +134,32 @@ window.ChatVoice = (() => {
   }
   function chosenService(settings){return (settings||profile).binding.service;}
   async function refreshReceipts(target){try{const data=await apiClient.json('GET','/chat/voice?session_id='+encodeURIComponent(state.activeId));if(target===scope()){recent=Array.isArray(data.recent_audio)?data.recent_audio:[];paintRecent();}}catch(_){} }
-  function speechText(message){return messageParts(message).filter(part=>['plain','text','speech'].includes(part.type)&&typeof part.text==='string'&&!['reasoning','tool_call','tool_call_result'].includes(part.chain_type)).map(part=>part.text).join('\n\n');}
-  function speak(message){if(message?.role!=='assistant'||message.delivery!=='confirmed'||message.serverId==null)return;void speakText(speechText(message),message.serverId);}
+  function speechText(message){
+    const text=messageParts(message).filter(part=>['plain','text','speech'].includes(part.type)&&typeof part.text==='string'&&!['reasoning','tool_call','tool_call_result'].includes(part.chain_type)).map(part=>part.text).join('\n\n');
+    // Same stage notation as the saved-reply endpoint, also needed by system TTS.
+    const stack=[],spans=[],openings={'(':')','（':'）'};
+    for(let i=0;i<text.length;i++){
+      const char=text[i];
+      if(openings[char])stack.push([i,openings[char]]);
+      else if(stack.length&&char===stack.at(-1)[1]){
+        const [start]=stack.pop();
+        while(spans.length&&spans.at(-1)[0]>=start)spans.pop();
+        spans.push([start,i+1]);
+      }
+    }
+    if(!spans.length)return text.trim();
+    const chunks=[];let end=0;
+    for(const [start,stop] of spans){chunks.push(text.slice(end,start));end=stop;}
+    chunks.push(text.slice(end));
+    const spoken=chunks.join('').replace(/^[\s，。；、：,.;:]+/u,'').trim();
+    return /[\p{L}\p{N}]/u.test(spoken)?spoken:'';
+  }
+  function speak(message){
+    if(message?.role!=='assistant'||message.delivery!=='confirmed'||message.serverId==null)return;
+    const text=speechText(message);
+    if(!text){showNotice('这条回复没有可朗读的话语。');return;}
+    void speakText(text,message.serverId);
+  }
   async function recognize(){setup();scopeChanged();if(!available()||recognizing){showNotice('请先打开当前聊天，或结束正在进行的识别。');return;}const target=scope();recognizing=true;recognitionOwner=target;
     try{if(profileOwner!==target){try{await fetchProfile(target);}catch(_){if(target===scope()){profile=structuredClone(defaults);profileOwner=target;saveable=false;}}}if(target!==scope())return;
       const data=responseData(await nativeAsync('recognizeSpeech',[state.activeId,profile.language||'zh-CN'],180000));if(target!==scope()||data.cancelled)return;
