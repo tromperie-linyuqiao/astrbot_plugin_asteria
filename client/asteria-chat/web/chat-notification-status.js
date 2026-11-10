@@ -6,6 +6,14 @@ window.ChatNotificationStatus=(()=>{
   let operation='',accountList,accountNote,copying=false;
   const yes=value=>value===true?'已允许':value===false?'未允许':'未提供';
   const importance={none:'已关闭',min:'最低',low:'低',default:'普通',high:'高',unspecified:'未指定'};
+  // Android NotificationManager.getCurrentInterruptionFilter() values.
+  const interruptionModes=new Map([[1,'all'],[2,'priority'],[3,'none'],[4,'alarms']]);
+  const interruptionLabels={all:'允许打扰',priority:'仅优先提醒',none:'禁止打扰',alarms:'仅闹钟'};
+  const interruptionMode=status=>status?.ok===true?(interruptionModes.get(status.interruption_filter)??null):null;
+  const activeMessageCount=status=>{
+    const value=status?.active_message_notifications;
+    return status?.ok===true&&Number.isSafeInteger(value)&&value>=0?value:null;
+  };
   const watchStates={starting:'正在核对会话',running:'运行中',reconnecting:'正在重连',stopped:'已停止'};
   const watchReasons={notifications_not_enabled:'登录已保存，尚未开启此 Bot 的后台收件',service_not_running:'登录已保存，后台收件当前未运行',system_time_limit:'Android 已达到后台同步时限；需要回到应用后自行开启',service_destroyed:'后台服务已结束；系统不保证重新启动',foreground_start_not_allowed:'系统暂不允许启动后台检查',watch_start_unavailable:'后台检查未能启动',notification_permission:'系统通知权限或渠道未开启',notification_channel_blocked:'聊天回复渠道已关闭，请在系统设置中处理',login_expired:'登录已失效，请重新登录此服务器后开启收件',authentication_changed:'登录状态已改变',session_unavailable:'当前会话暂不可用',user_stopped:'已由你停止',notifications_disabled:'消息通知已关闭',cursor_unavailable_open_chat:'历史同步位置已不可用，请打开聊天核对，系统不会重弹旧消息',foreground_ui_owns_reads:'当前由聊天页面同步',network_or_history_unavailable:'网络或记录暂不可读取，将按退避节奏重试',local_delivery_state_unavailable:'本机通知或同步记录暂不可用，已暂停并退避',account_unavailable:'已保存的登录不可用，请重新登录此服务器',credential_unavailable:'已保存的登录不可用，请重新登录此服务器'};
   const syncStates={not_checked:'尚未读取',catching_up:'正在按服务器顺序补齐，每次最多32条',synced:'已补齐至本次服务器读取位置',baseline_saved:'初次位置已保存，不补弹旧消息',foreground_reconciled:'已由前台记录校准',cursor_unavailable:'旧同步位置已不可用，等待打开聊天核对',legacy_history_window:'服务器仅提供最近记录窗口',legacy_cursor_outside_window:'旧位置已超出服务器近期窗口，无法证明遗漏均已补齐'};
@@ -32,7 +40,7 @@ window.ChatNotificationStatus=(()=>{
   function safeDiagnosis(value){
     if(!value||typeof value!=='object'||Array.isArray(value))return null;
     const result={};
-    for(const key of ['last_attempt_at','last_success_at','last_notice_posted_at','stopped_at'])if(own(value,key))result[key]=stamp(value[key]);
+    for(const key of ['last_attempt_at','last_success_at','last_background_received_at','last_notice_posted_at','stopped_at'])if(own(value,key))result[key]=stamp(value[key]);
     for(const [key,allowed]of [['last_notice_outcome',noticeOutcomes],['last_error',diagnosticErrors],['stop_reason',stopReasons],['read_reason',readReasons]])if(own(value,key))result[key]=value[key]===null||value[key]===''?null:code(value[key],allowed);
     return result;
   }
@@ -50,9 +58,10 @@ window.ChatNotificationStatus=(()=>{
     const list=node('dl',''),add=(label,value)=>list.append(node('dt',label),node('dd',value)),data=row.diagnosis;
     const detailCode=(key,labels)=>!own(data,key)?'未提供':data[key]===null?'尚无记录':labels[data[key]]||'状态未提供';
     add('最近尝试读取',diagnosticTime(data,'last_attempt_at'));add('最近成功读取',own(data,'last_success_at')?diagnosticTime(data,'last_success_at'):stamp(row.last_sync_at)?timeText(row.last_sync_at)+'（既有记录）':'未提供');
+    add('最近后台读到新消息',diagnosticTime(data,'last_background_received_at'));
     add('最近请求发布通知',diagnosticTime(data,'last_notice_posted_at'));add('最近发布结果',detailCode('last_notice_outcome',noticeOutcomes));
     add('读取说明',detailCode('read_reason',readReasons));add('最近读取错误',detailCode('last_error',diagnosticErrors));add('最近停止',diagnosticTime(data,'stopped_at'));add('停止原因',own(data,'stop_reason')?detailCode('stop_reason',stopReasons):stopReasons[row.reason]||watchReasons[row.reason]||'未提供');
-    details.append(list,node('p','“最近已同步”仅指五分钟内已有读取。'+(data?'读取成功只表示核对过服务器记录；请求发布不证明横幅、响铃或屏幕显示成功。':'此客户端未提供新增诊断项；已有读取时间和状态仍可参考，不能据此认定后台收件正常。')));
+    details.append(list,node('p','“最近已同步”仅指五分钟内已有读取。'+(data?'后台新消息只统计从已保存位置继续读到的 Bot 消息。是否弹出横幅或响铃，以手机实际表现为准。':'此客户端未提供新增诊断项；已有读取时间和状态仍可参考，不能据此认定后台收件正常。')));
     return details;
   }
   function diagnosticSnapshot(){
@@ -65,7 +74,14 @@ window.ChatNotificationStatus=(()=>{
       const channel=system?.[key];channels[key]={exists:bool(channel?.exists),blocked:bool(channel?.blocked),importance:code(channel?.importance_name,importance),sound:bool(channel?.sound),vibration:bool(channel?.vibration)};
     }
     return {schema:1,app_version:version,device:{manufacturer:metadata(system?.device_manufacturer),model:metadata(system?.device_model),android:metadata(system?.android_release)},
-      system:{available:system?.ok===true,permission:bool(system?.runtime_permission_granted),app_notifications_enabled:bool(system?.app_notifications_enabled),channels,battery_saver:bool(system?.battery_saver),battery_optimization_ignored:bool(system?.battery_optimization_ignored),background_restricted:bool(system?.background_restricted),background_data_restricted:bool(system?.background_data_restricted),heads_up_possible:bool(system?.heads_up_possible)},
+      system:{
+        available:system?.ok===true,permission:bool(system?.runtime_permission_granted),
+        app_notifications_enabled:bool(system?.app_notifications_enabled),channels,
+        active_message_notifications:activeMessageCount(system),
+        interruption_mode:interruptionMode(system),heads_up_possible:bool(system?.heads_up_possible),
+        battery_saver:bool(system?.battery_saver),battery_optimization_ignored:bool(system?.battery_optimization_ignored),
+        background_restricted:bool(system?.background_restricted),background_data_restricted:bool(system?.background_data_restricted)
+      },
       watch:{available:!!watch&&watch.ok!==false,state:code(watch?.state,watchStates),reason:code(watch?.reason,{...watchReasons,...stopReasons}),resume_on_foreground_required:bool(watch?.resume_on_foreground_required),diagnosis_provided:watch?.diagnosis?.schema===1,last_exit:exit?{reason:code(exit.reason,exitReasons),timestamp:stamp(exit.timestamp)}:null,targets_provided:list!==null,targets:list===null?[]:list.slice(0,64).map((row,index)=>({target:index+1,state:code(row.state,watchStates),summary:accountSummary(row),running:row.running,enabled:row.enabled,reason:code(row.reason,{...watchReasons,...stopReasons}),message_sync:code(row.message_sync,syncStates),last_sync_at:stamp(row.last_sync_at),diagnosis:row.diagnosis})),targets_truncated:list!==null&&list.length>64},
       limits:'本机匿名状态快照；未测试真实收件、横幅或声音；未接入系统推送。null或unknown表示未提供或未确认。'};
   }
@@ -76,6 +92,7 @@ window.ChatNotificationStatus=(()=>{
       add('本机 App 版本',data.app_version||'未提供');add('手机与系统',[data.device.manufacturer,data.device.model,data.device.android?'Android '+data.device.android:''].filter(Boolean).join(' · ')||'未提供');
       add('系统通知权限',yes(data.system.permission));add('应用通知总开关',yes(data.system.app_notifications_enabled));
       const replies=data.system.channels.reply_channel;add('聊天回复渠道',replies.exists===false?'尚未建立':replies.blocked===true?'系统已关闭':importance[replies.importance]||'未提供');
+      add('系统勿扰',interruptionLabels[data.system.interruption_mode]||'系统未报告');
       add('后台运行',flag(data.system.background_restricted,'系统已限制','系统未报告限制'));add('省电模式',flag(data.system.battery_saver,'已开启','未开启'));add('电池优化',flag(data.system.battery_optimization_ignored,'已豁免','仍受系统优化管理'));add('后台联网',flag(data.system.background_data_restricted,'省流量模式已限制','系统未报告省流量限制'));
       add('最近进程退出原因',data.watch.last_exit?exitReasons[data.watch.last_exit.reason]||'未提供':'未提供');add('最近进程退出时间',data.watch.last_exit?timeText(data.watch.last_exit.timestamp):'未提供');
       if(data.watch.resume_on_foreground_required===true)add('恢复条件','已达到系统后台时限；原收件开关保留，需回到应用前台恢复。');
@@ -137,7 +154,7 @@ window.ChatNotificationStatus=(()=>{
       const card=node('article','');card.className='reply-account-card';card.dataset.accountId=row.account_id;
       const heading=node('div','');heading.className='reply-account-heading';const title=node('strong',row.title||'聊天 Bot'),badge=node('span',accountSummary(row));badge.className='reply-account-state';badge.dataset.running=String(row.running);heading.append(title,badge);
       const address=node('p',new URL(row.server).host+' · '+row.username);address.className='reply-account-address';card.append(heading,address);
-      if(row.last_message_preview){const preview=node('div','');preview.className='reply-account-preview';preview.append(node('small','最近收到的消息'),node('span',row.last_message_preview));card.append(preview);}
+      if(row.last_message_preview){const preview=node('div','');preview.className='reply-account-preview';preview.append(node('small','最近消息预览'),node('span',row.last_message_preview));card.append(preview);}
       if(row.reason)card.append(node('p',stopReasons[row.reason]||watchReasons[row.reason]||'状态已变化，可打开聊天或刷新核对。'));
       if(!row.can_activate)card.append(node('p','已保存的登录不可用，请在连接设置中选择此服务器并输入密码重新登录。'));
       if(Number.isFinite(row.last_sync_at)&&row.last_sync_at>0)card.append(node('p','最近读取：'+new Date(row.last_sync_at).toLocaleString('zh-CN',{hour12:false})));
@@ -216,8 +233,13 @@ window.ChatNotificationStatus=(()=>{
       if(preferences?.ok===true)line('消息通知偏好',preferences.enabled?'已开启；按分类和免打扰时段处理':'已关闭');
       line('系统推送','尚未接入；进程被系统结束后无法保证收到消息');
       if(/vivo|iqoo/i.test(String(data.device_manufacturer)))line('vivo 系统推送','尚未接入；后台设置不能替代厂商推送');
-      line('横幅条件',data.heads_up_possible===true?'应用权限与回复渠道满足基础条件':data.heads_up_possible===false?'尚未满足全部基础条件':'未确认');
-      box.append(node('p','系统勿扰、会话通知和手机厂商策略仍会影响横幅。读取状态不申请权限、不启动检查，也不保证每条消息弹出。'));
+      const activeCount=activeMessageCount(data);
+      line('系统当前保留的 Bot 消息通知',activeCount===null?'未提供':activeCount+' 条');
+      line('聊天回复横幅基础条件',data.heads_up_possible===true?'应用权限与回复渠道满足基础条件':data.heads_up_possible===false?'尚未满足全部基础条件':'未确认');
+      const mode=interruptionMode(data);
+      line('系统勿扰',interruptionLabels[mode]||'系统未报告');
+      if(mode&&mode!=='all')box.append(node('p','当前模式下，横幅还取决于通知例外和视觉设置。'));
+      box.append(node('p','会话通知和手机厂商策略也会影响横幅。可用本机显示检查观察实际结果。'));
       box.append(node('p','当前仍是你主动开启的后台检查，按目标轮流同步，网络失败会降低检查频率。Android 的后台运行限制仍然适用，不能保证整夜运行、进程被结束或强制停止后的送达。消息已接收、通知已发布和用户打开是不同状态；打开不代表已读证明。'));
       const background=node('button','打开后台运行设置');background.type='button';background.className='secondary-button';
       background.disabled=typeof window.AsteriaChat?.requestPhonePerceptionPermission!=='function'||typeof nativeAsync!=='function';

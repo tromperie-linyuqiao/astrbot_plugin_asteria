@@ -42,6 +42,7 @@ from .core.living.chat_important_dates import important_dates_view, important_da
 from .core.living.chat_model_route import ChatModelRoute
 from .core.living.chat_identity import QQ_PLATFORMS, identity_service, linked_memory
 from .core.living.chat_notifications import drain_inbox
+from .core.living.chat_devices import ChatDevices
 from .core.living.chat_receipts import ChatReceipts
 from .core.living.chat_sync import saved_after, cursor as sync_cursor
 from .core.living.chat_workspace import ChatWorkspace, actual_app_scope, calendar_view
@@ -90,6 +91,7 @@ class NativeChatWebApi:
                 ('history', self.history, 'GET'), ('sync', self.sync, 'GET'), ('send', self.send, 'POST'),
                 ('run-stream', self.run_stream, 'GET'),
                 ('receipts', self.receipts_get, 'GET'), ('receipts', self.receipts_save, 'POST'),
+                ('devices', self.devices_get, 'GET'), ('devices', self.devices_save, 'POST'),
                 ('rename', self.rename, 'POST'),
                 ('remove', self.remove, 'POST'),
                 ('session-state', self.session_state_get, 'GET'),
@@ -435,6 +437,10 @@ class NativeChatWebApi:
                 receipt_transport=ChatReceipts.capability())
             from .core.living.structured_reply import visible_snapshot
             payload = visible_snapshot(payload)
+            try:
+                device_context = await self._devices_view(username, service, session_id)
+            except (RuntimeError, OSError, ValueError):
+                device_context = {'schema': 0}
             # A transport revision covers the complete final owned snapshot.
             # Matching it never skips SDK ownership, inbox or typed-state reads.
             revision = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
@@ -443,8 +449,8 @@ class NativeChatWebApi:
             if (isinstance(known, str) and re.fullmatch(r'[0-9a-f]{64}', known) and known == revision
                     and payload.get('is_running') is not True and not payload.get('active_runs')):
                 return self._ok(dict(not_modified=True, history_revision=revision,
-                    receipt_transport=payload['receipt_transport']))
-            return self._ok(dict(payload, history_revision=revision))
+                    receipt_transport=payload['receipt_transport'], device_context=device_context))
+            return self._ok(dict(payload, history_revision=revision, device_context=device_context))
         except (_RequestError, ChatServiceError) as exc:
             return self._error(exc)
 
@@ -616,6 +622,12 @@ class NativeChatWebApi:
                      else getattr(raw_response, 'model', None)) or runner.provider.get_model()
             await asyncio.to_thread(route.record_response, provider_id(runner.provider), model,
                 plan['provider_id'], time.time(), checkpoint)
+            from .core.living.chat_context_observer import captured, ContextReceipts
+            receipt = captured(event)
+            if receipt is not None:
+                await asyncio.to_thread(ContextReceipts(expressions.journal,
+                    current=expressions.current).record, username, session_id, checkpoint,
+                    receipt, provider_id(runner.provider), model)
 
     async def sync(self):
         """Append catch-up for the existing watcher, not a push connection."""
@@ -648,8 +660,12 @@ class NativeChatWebApi:
                     result = dict(result, expression_state='unavailable')
             # An owner removed/changed while reading cannot receive the result.
             await self._recheck_owned_session(username, service, session_id)
+            try:
+                device_context = await self._devices_view(username, service, session_id)
+            except (RuntimeError, OSError, ValueError):
+                device_context = {'schema': 0}
             return self._ok(dict(result, session_id=session_id, proactive_inbox=inbox_state,
-                receipt_transport=ChatReceipts.capability()))
+                receipt_transport=ChatReceipts.capability(), device_context=device_context))
         except (_RequestError, ChatServiceError, PermissionError, RuntimeError, OSError,
                 ValueError, KeyError, sqlite3.Error, SQLAlchemyError) as exc:
             return self._expression_error(exc)
@@ -679,6 +695,37 @@ class NativeChatWebApi:
             return self._ok(result)
         except (_RequestError, ChatServiceError, ChatExpressionError, JournalConflict,
                 ValueError, RuntimeError, OSError) as exc:
+            return self._expression_error(exc)
+
+    async def _devices_view(self, username, service, session_id):
+        expressions = self._expressions(service)
+        devices = ChatDevices(expressions.journal, current=expressions.current)
+        from . import CONFIG
+        result = await asyncio.to_thread(devices.view, username, session_id)
+        return dict(result, backend_version=CONFIG.VERSION)
+
+    async def devices_get(self):
+        try:
+            session_id = _session_id(request.query.get('session_id'))
+            username, service, _, _ = await self._owned_chat(session_id)
+            result = await self._devices_view(username, service, session_id)
+            await self._recheck_owned_session(username, service, session_id)
+            return self._ok(result)
+        except (_RequestError, ChatServiceError, PermissionError, RuntimeError, OSError, ValueError, JournalConflict) as exc:
+            return self._expression_error(exc)
+
+    async def devices_save(self):
+        try:
+            body = await self._body(limit=6000)
+            session_id = _session_id(body.get('session_id'))
+            username, service, snapshot, _ = await self._owned_chat(session_id)
+            expressions = self._expressions(service)
+            devices = ChatDevices(expressions.journal, current=expressions.current)
+            await self._recheck_owned_session(username, service, session_id)
+            result = await asyncio.to_thread(devices.apply, username, session_id, snapshot, body)
+            await self._recheck_owned_session(username, service, session_id)
+            return self._ok(result)
+        except (_RequestError, ChatServiceError, PermissionError, RuntimeError, OSError, ValueError, JournalConflict) as exc:
             return self._expression_error(exc)
 
     async def receipts_get(self):
@@ -1253,7 +1300,7 @@ class NativeChatWebApi:
     async def life_get(self):
         try:
             query = dict(request.query or {})
-            if set(query)-{'session_id','event_id','person_id','thread_id','query','kind','limit','offset','view','id','status','category','sort'} or 'session_id' not in query:
+            if set(query)-{'session_id','event_id','person_id','thread_id','query','kind','limit','offset','view','id','status','category','sort','date_from','date_to','shared'} or 'session_id' not in query:
                 raise _RequestError('生活档案读取参数无效')
             session_id = _session_id(query['session_id'])
             username, service, _, session = await self._owned_chat(session_id)
@@ -1261,7 +1308,7 @@ class NativeChatWebApi:
             from .core.living.chat_workspace import linked_source_scope
             access = resources(self, username, session)
             material_source = linked_source_scope(self.plugin, access[4], permission='materials')
-            value = get(self, username, session, query)
+            value = await asyncio.to_thread(get, self, username, session, query)
             await self._recheck_owned_session(username, service, session_id)
             # Ownership survives a revoked sharing grant. Recheck both the
             # archive and any linked collection source after the final await.
@@ -1276,13 +1323,25 @@ class NativeChatWebApi:
     async def life_post(self):
         try:
             body = await self._body()
-            if (set(body)-{'session_id','action','event_id','person_id','thread_id','expected_revision','changes','request_id'}
-                    or body.get('action') not in {'follow_up','correct'}):
+            if (set(body)-{'session_id','action','event_id','person_id','thread_id','expected_revision','changes','request_id','message_id','relation','note','link_id','record_kind','record_id'}
+                    or body.get('action') not in {'follow_up','correct','link_message','forget_link'}):
                 raise _RequestError('生活档案操作参数无效')
             session_id = _session_id(body.get('session_id'))
-            username, _, _, session = await self._owned_chat(session_id)
+            username, service, _, session = await self._owned_chat(session_id)
             from .core.living.chat_life import post
-            return self._ok(post(self, username, session, body))
+            saved=None
+            if body['action']=='link_message':
+                identity=str(body.get('message_id',''))
+                if not identity.isascii() or not identity.isdigit() or len(identity)>20: raise ValueError('saved message required')
+                record=await service.db.get_platform_message_history_by_id(int(identity))
+                if (record is None or record.platform_id!='webchat' or record.user_id!=session_id
+                        or not isinstance(record.content,dict) or record.content.get('type') not in {'user','bot'}):
+                    raise PermissionError('current owned message required')
+                saved=dict(id=identity,role='user' if record.content['type']=='user' else 'assistant',text=self._record_text(record.content))
+            await self._recheck_owned_session(username,service,session_id)
+            value=await asyncio.to_thread(post,self,username,session,body,saved_message=saved)
+            await self._recheck_owned_session(username,service,session_id)
+            return self._ok(value)
         except (ChatServiceError, _RequestError, PermissionError, JournalConflict, KeyError,
                 RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
             return self._life_error(exc)
@@ -1881,6 +1940,20 @@ class NativeChatWebApi:
         try:
             session_id = _session_id(request.query.get('session_id'))
             username, service, _, session = await self._owned_chat(session_id)
+            if 'message_id' in request.query:
+                identity = request.query.get('message_id')
+                if not isinstance(identity, str) or not re.fullmatch(r'[1-9][0-9]{0,18}', identity):
+                    raise _RequestError('需要当前会话的助手消息编号')
+                record = await service.db.get_platform_message_history_by_id(int(identity))
+                if (record is None or record.platform_id != 'webchat' or record.user_id != session_id
+                        or not isinstance(record.content, dict) or record.content.get('type') != 'bot'):
+                    raise _RequestError('只能查看当前会话的真实助手回复', 403)
+                from .core.living.chat_context_observer import ContextReceipts
+                expressions = self._expressions(service)
+                observer = await asyncio.to_thread(ContextReceipts(expressions.journal,
+                    current=expressions.current).read, username, session_id,
+                    record.llm_checkpoint_id, identity)
+                return self._ok(dict(session_id=session_id, observer=observer))
             persona = await self._configured_persona(service, username, session_id)
             expressions = self._expressions(service)
             state = await asyncio.to_thread(ChatSessionState(expressions.journal,
@@ -2195,8 +2268,11 @@ class NativeChatWebApi:
                             'filename': owner['display_name'] if owner else Path(attachment.path).name}
                 if len(attached) + len(files) > MAX_ATTACHMENTS:
                     raise _RequestError('每条组合消息最多 4 个附件')
+                from .core.living.chat_life import resolve_references
+                life_references=await asyncio.to_thread(resolve_references,self,username,session,body.get('parts'))
                 typed_parts, projected = await asyncio.to_thread(expressions.user_parts,
-                    preference_scope, body.get('parts'), message, references=references, attachments=attached)
+                    preference_scope, body.get('parts'), message, references=references, attachments=attached,
+                    life_references=life_references)
                 if not typed_parts and not files:
                     raise _RequestError('请添加文字、动作、表情或附件')
                 payload['message'] = projected
@@ -2223,6 +2299,8 @@ class NativeChatWebApi:
                         elif kind == 'sticker':
                             asset = expressions.asset(part['asset_id'])
                             text = '【用户用聊天表情表达情绪，不是上传照片：' + asset['name'] + '】' + asset['meaning']
+                        elif kind == 'life_reference':
+                            text='【用户明确追问的角色资料，按编号读取；虚构经历不是用户现实经历】'+part['label']+'（资料编号：'+part.get('record_id',part.get('event_id',''))+'）'
                         elif kind == 'reference':
                             text = '【引用当前会话' + ('你的回复' if part.get('role') == 'assistant' else '我的消息') + '】\n' + part.get('text', '')
                         if text:
@@ -2281,6 +2359,8 @@ class NativeChatWebApi:
                 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
         except (_RequestError, ChatServiceError) as exc:
             return self._error(exc)
+        except JournalConflict as exc:
+            return self._life_error(exc)
         except (ChatExpressionError, KeyError, RuntimeError, OSError, ValueError) as exc:
             return self._expression_error(exc)
 

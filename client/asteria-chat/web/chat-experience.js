@@ -8,6 +8,8 @@ window.ChatExperience = (() => {
   const memoryDrafts=new Map(),memoryPending=new Map();
   let memoryEditor=null,memoryEpoch=0,memoryReadSerial=0;
   let bookmarkScope='',bookmarkRows=[],readRestorePending='',readFrame=0;
+  let openMessageMenu = null;
+  let messageContext = null, messageContextEpoch = 0;
   const readBoundaries=new Map();
   const key = () => JSON.stringify([state.server,state.username,state.activeId]);
   const route = name => '/chat/'+name+'?session_id='+encodeURIComponent(state.activeId||'');
@@ -50,6 +52,8 @@ window.ChatExperience = (() => {
     const valid=state.authenticated&&state.activeId;
     window.ChatLife?.scopeChanged?.();
     for(const [id,entry]of live)if(!valid||entry.owner!==key()){cancelStreamPaint(entry);live.delete(id);}
+    if (openMessageMenu && (!valid || openMessageMenu.scope !== key())) closeMessageTools();
+    if(messageContext&&(!valid||messageContext.owner!==key()||messageContext.auth!==contextAuth()))closeMessageContext();
     if(panelScope&&(!valid||panelScope!==key()))close();
     if(bookmarkScope&&(!valid||bookmarkScope!==key())){bookmarkScope='';bookmarkRows=[];closeBookmarkReading();}
   }
@@ -87,6 +91,85 @@ window.ChatExperience = (() => {
       else narrative.append(text('p','没有额外的已授权 TLS 剧情。上方会话简介是你的明确设定，不会当作现实记忆。'));
       $('experience-save-scene').disabled=false;status('已读取服务器状态。');
     }catch(error){if(panelCurrent(ticket))status(errorText(error),true);}
+  }
+  const contextAuth=()=>typeof chatAuthEpoch==='undefined'?null:chatAuthEpoch;
+  function closeMessageContext(){
+    messageContextEpoch++;messageContext=null;
+    const dialog=$('message-context-dialog');if(dialog?.open)dialog.close();
+    for(const id of ['message-context-state','message-context-summary','message-context-note'])if($(id))$(id).textContent='';
+    $('message-context-sections')?.replaceChildren();
+  }
+  const messageContextCurrent=t=>!!t&&messageContext===t&&t.epoch===messageContextEpoch
+    &&state.authenticated&&t.owner===key()&&t.auth===contextAuth()&&$('message-context-dialog')?.open;
+  function messageContextStatus(value,error=false){
+    $('message-context-state').textContent=value;$('message-context-state').classList.toggle('error',error);
+  }
+  function renderMessageContext(observer){
+    const list=$('message-context-sections');list.replaceChildren();
+    if(observer.state==='not_recorded'){
+      messageContextStatus('这条回复没有可用的上下文记录。');
+      $('message-context-summary').textContent='旧消息或尚未采集的回复路径可能没有记录；这里不会用当前资料推测当时使用的内容。';
+      $('message-context-note').textContent=typeof observer.note==='string'?observer.note:'';return;
+    }
+    const sections=Array.isArray(observer.sections)?observer.sections:[];
+    messageContextStatus('已读取这条回复保存的上下文记录。');
+    const captured=observer.captured_at?memoryTime(observer.captured_at):'时间未记录';
+    $('message-context-summary').textContent='记录于 '+captured+' · '+sections.length+' 项来源';
+    for(const item of sections){
+      if(!item||typeof item!=='object')continue;
+      const section=text('details',undefined,'message-context-section'),summary=text('summary',item.name||'上下文片段');
+      section.append(summary);
+      const meta=[typeof item.source==='string'?item.source:'',Number.isFinite(item.chars)?item.chars+' 字':''].filter(Boolean);
+      if(meta.length)section.append(text('p',meta.join(' · '),'experience-caption'));
+      if(typeof item.excerpt==='string'&&item.excerpt)section.append(text('p',item.excerpt,'message-context-excerpt'));
+      if(item.truncated===true)section.append(text('p','此片段较长，仅显示保存的摘录。','experience-caption'));
+      if(Array.isArray(item.items)&&item.items.length){
+        const rows=text('ul',undefined,'message-context-items');
+        for(const value of item.items){
+          const content=typeof value==='string'?value:value&&(value.name||value.title||value.excerpt||value.id);
+          if(typeof content==='string'||typeof content==='number'){
+            const row=text('li',String(content)),reasons={explicit_user_reference:'你明确引用了这段经历',explicit_archive_link:'你明确引用了这份生活资料',event_character:'它是该经历记录的人物',previous_event:'它是明确记录的前序经历',explicit_chat_association:'你明确关联过这条聊天'};
+            if(Array.isArray(value?.matched_by)){const why=value.matched_by.map(k=>reasons[k]).filter(Boolean);if(why.length)row.append(text('p',why.join('；'),'experience-caption'));}
+            if(typeof value?.id==='string'){const kind=value.record_kind||(/^life\.e\./.test(value.id)?'event':'');if(['event','character','thread','interest','exploration','collection','space','item'].includes(kind))row.append(button('查看生活来源',()=>{closeMessageContext();window.ChatLife?.openRecord(kind,value.id);}));}
+            rows.append(row);
+          }
+        }
+        if(rows.children.length)section.append(rows);
+      }
+      list.append(section);
+    }
+    if(!list.children.length)list.append(text('p','这条回复未记录额外的上下文片段。','experience-caption'));
+    const model=observer.model;
+    if(model&&typeof model==='object'){
+      const names=[model.provider_id,model.model].filter(v=>typeof v==='string'&&v);
+      const labels={response_received:'实际返回模型',recorded:'实际模型',observed:'实际模型',configured:'当时配置（未确认实际执行）',not_recorded:'模型未记录',unknown:'模型未记录'};
+      list.append(text('p',(labels[model.state]||'模型记录')+(names.length?'：'+names.join(' · '):''),'experience-caption'));
+    }
+    const limit=observer.limits||{},notes=[];
+    if(limit.truncated===true)notes.push('较长内容已截取，未显示的部分不代表没有使用。');
+    if(typeof observer.note==='string'&&observer.note)notes.push(observer.note);
+    $('message-context-note').textContent=notes.join('\n');
+  }
+  async function readMessageContext(){
+    const ticket=messageContext;if(!messageContextCurrent(ticket)||ticket.busy)return;
+    ticket.busy=true;$('message-context-refresh').disabled=true;
+    $('message-context-sections').replaceChildren();$('message-context-summary').textContent='';$('message-context-note').textContent='';
+    messageContextStatus('正在读取这条回复当时的上下文…');
+    try{
+      const data=await call('GET','/chat/context?session_id='+encodeURIComponent(ticket.sessionId)+'&message_id='+encodeURIComponent(ticket.messageId));
+      if(!messageContextCurrent(ticket))return;
+      if(data?.session_id!==ticket.sessionId)throw Error('返回的会话与当前查看的消息不一致。');
+      if(!data.observer){messageContextStatus('当前服务器尚未提供逐条回复的上下文记录。');$('message-context-note').textContent='当前角色资料仍可在“角色与剧情”中查看，但不能用来还原这条回复。';return;}
+      const observer=data.observer;
+      if(String(observer.message_id)!==ticket.messageId||!['recorded','not_recorded'].includes(observer.state))throw Error('返回的上下文记录未对应这条回复。');
+      renderMessageContext(observer);
+    }catch(error){if(messageContextCurrent(ticket))messageContextStatus(errorText(error)+' 可手动重新读取。',true);}
+    finally{if(messageContextCurrent(ticket)){ticket.busy=false;$('message-context-refresh').disabled=false;}}
+  }
+  function openMessageContext(message){
+    if(!scopeReady()||message?.role!=='assistant'||message.delivery!=='confirmed'||!/^\d+$/.test(String(message.serverId)))return;
+    closeMessageContext();messageContext={owner:key(),auth:contextAuth(),sessionId:state.activeId,messageId:String(message.serverId),epoch:messageContextEpoch,busy:false};
+    $('message-context-dialog').showModal();readMessageContext();
   }
   async function saveContext(event) {
     event.preventDefault();const ticket=panelTicket();if(!panelCurrent(ticket)||!contextSnapshot||$('experience-save-scene').disabled)return;
@@ -295,30 +378,44 @@ window.ChatExperience = (() => {
     if(!cursor||cursor.message_id==null)return [];
     const records=state.messages.filter(value=>value.delivery==='confirmed'&&value.serverId!=null);
     const index=records.findIndex(value=>String(value.serverId)===String(cursor.message_id));
-    return (index>=0?records.slice(index+1):records.filter(value=>Number(value.serverId)>Number(cursor.message_id))).filter(value=>value.role==='assistant');
+    if(index>=0)return records.slice(index+1).filter(value=>value.role==='assistant');
+    const baseline=savedMessageIdOrder(cursor.message_id);
+    if(baseline===null)return [];
+    return records.filter(value=>{
+      const id=savedMessageIdOrder(value.serverId);
+      return value.role==='assistant'&&id!==null&&id>baseline;
+    });
   }
   function decorateUnread() {
     const banner=$('continue-reading');if(!banner)return;
-    const unseen=afterCursor(readCursor());banner.hidden=!unseen.length;
+    const cursor=readCursor(), unseen=afterCursor(cursor);
+    if(!unseen.length&&savedMessageIdOrder(cursor?.message_id)!==null)newReplyHintScope='';
+    banner.hidden=!unseen.length;
     banner.textContent=unseen.length?'继续阅读 · 当前记录中 '+unseen.length+' 条新回复':'';
     for(const node of $('messages').querySelectorAll('.unread-divider'))node.remove();
     const boundary=readBoundaries.get(key());
     if(boundary){const row=[...$('messages').querySelectorAll('.message-row')].find(node=>{
       const message=state.messages.find(value=>String(value.id)===node.dataset.messageKey);return message&&String(message.serverId)===boundary;
     });if(row)row.before(text('div','上次读到这里','unread-divider'));}
+    updateJumpLatest();
   }
   function markVisibleRead() {
     if(!state.authenticated||!state.activeId||readRestorePending===key()||document.hidden||nativeConfig().foreground===false)return;
-    const area=$('messages').getBoundingClientRect();let last=null;
+    const area=$('messages').getBoundingClientRect();let last=null,visible=[];
     const rows=[...$('messages').querySelectorAll('.message-row')];let low=0,high=rows.length;
     while(low<high){const middle=(low+high)>>>1;if(rows[middle].getBoundingClientRect().bottom<=area.top)low=middle+1;else high=middle;}
     for(let index=low;index<rows.length;index++){
       const row=rows[index],box=row.getBoundingClientRect();if(box.top>=area.bottom)break;if(box.bottom>area.bottom+4)continue;
       const message=row.messageRecord||state.messages.find(value=>String(value.id)===row.dataset.messageKey);
-      if(message&&message.delivery==='confirmed'&&message.serverId!=null)last=message;
+      if(message&&message.delivery==='confirmed'&&message.serverId!=null){last=message;visible.push(String(message.serverId));}
     }
-    const cursor=readCursor();
-    if(last&&(!cursor||Number(last.serverId)>Number(cursor.message_id))){storage.set(cursorKey(),JSON.stringify({message_id:String(last.serverId),seen_at:Date.now()}));decorateUnread();}
+    if(!last)return;
+    window.ChatDevices?.visible(visible,String(last.serverId));
+    const visibleId=savedMessageIdOrder(last.serverId), cursorId=savedMessageIdOrder(readCursor()?.message_id);
+    if(visibleId!==null&&(cursorId===null||visibleId>cursorId)){
+      storage.set(cursorKey(),JSON.stringify({message_id:String(last.serverId),seen_at:Date.now()}));
+      decorateUnread();
+    }
   }
   function queueRead() {if(readFrame)return;readFrame=requestAnimationFrame(()=>{readFrame=0;markVisibleRead();});}
   function continueReading() {
@@ -370,6 +467,9 @@ window.ChatExperience = (() => {
       const saved=bookmarkScope===key()&&bookmarkRows.some(value=>String(value.message_id)===String(message.serverId));
       const star=action(saved?'★ 取消收藏':'☆ 收藏到重要消息',()=>toggleBookmark(message.serverId,!saved));star.setAttribute('aria-label',saved?'取消收藏这条消息':'收藏这条消息');actions.append(star);
       if(message.role==='assistant'&&window.ChatVoice)actions.append(action('朗读这条消息',()=>window.ChatVoice.speak(message)));
+      if(message.role==='assistant')actions.append(action('这条回复的上下文',()=>openMessageContext(message)));
+      actions.append(action('消息信息',()=>window.ChatFeedback?.open(message,true)),action('这条有问题',()=>window.ChatFeedback?.open(message)));
+      if(window.ChatLife)actions.append(action('关联生活经历',()=>window.ChatLife.linkMessage(message)));
       if(window.ChatMessageMemory)actions.append(action('查看或保存相关记忆',()=>window.ChatMessageMemory.open(message)));
       if(saved){toggle.textContent='★ ···';toggle.setAttribute('aria-label','已收藏，打开这条消息的操作');}
       bar.append(toggle,actions);
@@ -485,6 +585,11 @@ window.ChatExperience = (() => {
     const dialog=document.createElement('dialog');dialog.id='experience-dialog';dialog.className='experience-dialog';
     dialog.innerHTML='<div class="experience-heading"><div><span class="eyebrow">ASTERIA CHAT</span><h2>会话与表达</h2></div><button id="experience-close" type="button" class="icon-button" aria-label="关闭">×</button></div><nav class="experience-tabs"><button data-experience-tab="context">角色与剧情</button><button data-experience-tab="expression">表达偏好</button><button data-experience-tab="search">历史搜索</button></nav><div class="experience-body"><section data-experience-pane="context"><div class="experience-role"><img src="logo.svg" alt=""><div><small>当前配置角色</small><strong id="experience-persona"></strong></div></div><form id="experience-context-form"><div id="experience-context-fields"></div><button id="experience-save-scene" class="primary-button">保存会话设置</button></form><details class="experience-details"><summary>相关记忆与 TLS 剧情</summary><p id="experience-memory-note"></p><ul id="experience-memories"></ul><div id="experience-narrative"></div></details><button id="experience-refresh-context" class="text-button">重新读取状态</button></section><section data-experience-pane="expression" hidden><form id="experience-expression-form"><div id="experience-expression-fields"></div><p id="experience-inheritance" class="experience-caption"></p><p class="experience-caption">图片文件只维护一份。没有合适素材时只发文字；全局冷却与单张图片冷却取较大值。</p><div class="experience-actions"><button id="experience-reset-expression" class="secondary-button" type="button">恢复继承</button><button id="experience-save-expression" class="primary-button">保存到 TLS</button></div></form><button id="experience-refresh-expression" class="text-button">重新读取偏好</button></section><section data-experience-pane="search" hidden><form id="experience-search-form" class="experience-search"><input id="experience-search-input" type="search" maxlength="200" placeholder="搜索这段对话的历史…"><button class="primary-button">搜索</button></form><p class="experience-caption">搜索当前会话服务器可读的最近 1000 条记录，最多显示 200 个命中。</p><div id="experience-search-results"></div></section><p id="experience-status" role="status"></p></div>';
     document.body.append(dialog);
+    const messageContextDialog=document.createElement('dialog');messageContextDialog.id='message-context-dialog';messageContextDialog.className='experience-dialog message-context-dialog';
+    messageContextDialog.setAttribute('aria-labelledby','message-context-title');
+    messageContextDialog.innerHTML='<div class="experience-heading"><div><span class="eyebrow">回复来源</span><h2 id="message-context-title">这条回复的上下文</h2></div><button id="message-context-close" type="button" class="icon-button" aria-label="关闭回复上下文">×</button></div><div class="experience-body"><p id="message-context-state" role="status" aria-live="polite"></p><p id="message-context-summary" class="experience-caption"></p><div id="message-context-sections"></div><p id="message-context-note" class="experience-caption"></p><p class="experience-caption">这里展示保存的来源与片段，不展示模型的内部思考过程。记录不代表模型逐字采纳了每项资料。</p><button id="message-context-refresh" type="button" class="text-button">重新读取这条记录</button></div>';
+    document.body.append(messageContextDialog);$('message-context-close').onclick=closeMessageContext;$('message-context-refresh').onclick=readMessageContext;
+    messageContextDialog.addEventListener('close',()=>{if(messageContext&&!messageContextDialog.open)closeMessageContext();});
     const memoryDialog=document.createElement('dialog');memoryDialog.id='memory-detail-dialog';memoryDialog.className='settings-dialog memory-detail-dialog';
     memoryDialog.innerHTML='<form id="memory-correct-form" class="settings-form"><div class="dialog-heading"><h2>资料来源与修正</h2><button id="memory-detail-close" class="icon-button" type="button" aria-label="关闭资料详情">×</button></div><p id="memory-detail-source" class="experience-caption"></p><h3>服务器当前保存的原文</h3><div id="memory-detail-original" class="memory-detail-original"></div><p class="appearance-help">显示这项资料的来源和版本，不代表已展开全部历史。QQ共享资料保留只读；修正不会删除历史或改写角色人格。</p><label class="experience-field">修正后的内容<textarea id="memory-correction" rows="5" maxlength="6000"></textarea></label><label class="switch-label"><input id="memory-correct-confirm" type="checkbox"> 已比较原文，确认保存这项修正</label><div class="appearance-actions"><button id="memory-detail-refresh" type="button" class="text-button">重新读取</button><button id="memory-correct-save" type="submit" class="primary-button">明确保存修正</button></div><p id="memory-detail-status" role="status" class="appearance-help"></p><button id="memory-pending-clear" type="button" class="text-button" hidden>已核对，结束等待</button></form>';
     document.body.append(memoryDialog);

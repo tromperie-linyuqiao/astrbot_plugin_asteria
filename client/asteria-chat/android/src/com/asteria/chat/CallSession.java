@@ -71,6 +71,12 @@ final class CallSession implements AutoCloseable {
             finally{Arrays.fill(clip.samples,0);}
         }}finally{recognizer.close();}
     }
+    void finishTurn(){
+        synchronized(lock){
+            if(!active||!capturing||muted||held||output||clips.size()>=4)return;
+            float[] clip=segmenter.finish();if(clip!=null){clips.add(new Clip(epoch,clip));lock.notifyAll();message="正在整理这一句";}
+        }emit();
+    }
     void ack(int sequence){synchronized(lock){turns.remove(sequence);lock.notifyAll();}emit();}
     void mute(){synchronized(lock){if(!active)return;epoch++;muted=true;clearClips();message="已静音 · 麦克风已关闭";}stopCapture();emit();}
     void pause(String why){mute();synchronized(lock){message=why;}emit();}

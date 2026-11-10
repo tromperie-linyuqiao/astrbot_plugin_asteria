@@ -4,7 +4,7 @@
 window.ChatDeliveryCenter = (() => {
   const LIMIT = 32;
   const phaseLabels = { created: '已生成', queued: '已进入原队列', sent: '原发送端已确认',
-    client_received: '客户端已收取', system_notification_posted: '已向系统发布通知', user_opened: '通知点击后打开' };
+    client_received: '客户端已收取', system_notification_posted: '已向系统发布通知', user_opened: '客户端打开记录' };
   const stateLabels = { candidate: '待批准', approved: '待入队', queued: '待发送', claimed: '处理端已领取', sending: '发送中',
     retry_wait: '原队列等待', paused: '已暂停', confirmed: '原发送端已确认', failed: '发送失败', unknown: '发送结果未知',
     cancelled: '已取消', expired: '已过期', quarantined: '已隔离' };
@@ -55,7 +55,9 @@ window.ChatDeliveryCenter = (() => {
         const pending = ['client_received', 'system_notification_posted', 'user_opened'].filter(name => value[name] === true).length;
         if (pending) messages++; reports += pending;
       }
-      return { available: true, messages, reports, opened: typeof data.$opened === 'string' && !!data.$opened };
+      const opened = data.$opened;
+      const pendingOpen = Array.isArray(opened) ? opened.some(id => typeof id === 'string' && !!id) : typeof opened === 'string' && !!opened;
+      return { available: true, messages, reports, opened: pendingOpen };
     } catch (_) { return { available: false, messages: 0, reports: 0, opened: false }; }
   }
   function localStatus() {
@@ -153,7 +155,7 @@ window.ChatDeliveryCenter = (() => {
       }
       saved.append(row);
     }
-    saved.append(node('p', '服务器保存、原队列发送确认、客户端收取、系统通知发布、通知点击后打开分别记录。客户端报告不证明用户已读，也不保证系统显示横幅。普通聊天回复可能没有独立队列阶段。', 'appearance-help'));
+    saved.append(node('p', '服务器保存、原队列发送确认、客户端收取、系统通知发布和客户端打开分别记录。打开记录可能来自通知点击或应用内跳转，包含仅进入会话的情况。回执无法确认是否定位到某条消息、是否已读或是否显示了横幅。普通聊天回复可能没有独立队列阶段。', 'appearance-help'));
   }
   function renderConnection() {
     const box = get('delivery-center-connection'); box.replaceChildren(); const local = localStatus();

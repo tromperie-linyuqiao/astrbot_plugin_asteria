@@ -29,7 +29,8 @@ _ID = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.:-]{0,95}\Z')
 _SOURCE_KINDS = {'operator','model_generated','scoped_plan','pc_artifact','user_correction'}
 POLICY_DEFAULTS = dict(enabled=False,interval_minutes=180,min_interval_minutes=60,
     max_model_calls_per_day=4,max_events_per_day=4,share_enabled=False,
-    max_shares_per_day=1,quiet_day_allowed=True,muted_topics=[])
+    max_shares_per_day=1,quiet_day_allowed=True,muted_topics=[],
+    model_provider_id='',model_fallback_provider_id='')
 
 
 def _text(value,maximum,*,empty=False):
@@ -228,7 +229,9 @@ class AutonomousLife:
         data.update(revision=row['revision'],updated_at=row['updated_at'],valid=not data['archived'] and not invalid,
             invalid_dependencies=invalid,memory_refs=refs,fictional=True)
         if data['kind']=='event':
-            receipt=self.journal.fetch(_SHARED,data['id'],scope) or self.journal.fetch(_SHARE_LATEST,data['id'],scope)
+            sharing_key=('sharing',data['id'])
+            receipt=(cache[sharing_key] if cache is not None and sharing_key in cache else
+                self.journal.fetch(_SHARED,data['id'],scope) or self.journal.fetch(_SHARE_LATEST,data['id'],scope))
             value=receipt['data'] if receipt else {}
             data['sharing']=dict(state=value.get('state','unshared'),event_version=value.get('event_version'),
                 task_id=value.get('task_id'),at=value.get('at'),ever_shared=value.get('state')=='confirmed',
@@ -386,7 +389,7 @@ class AutonomousLife:
                             version=data['version']+1,correction_count=data['correction_count']+1)
                     else:data=self._new_data('thread',scope,request_id+'.thread.'+str(index),thread_fields,source,refs)
                     pending.append(('thread',data,old))
-                changed_people=set()
+                changed_people=set();growth_deferred=[]
                 for relation in relationships:
                     if type(relation) is not dict or set(relation)!={'id','relationship'}:
                         raise ValueError('generated relationship may change relationship text only')
@@ -403,8 +406,21 @@ class AutonomousLife:
                     elif old and not old['data']['archived'] and not self._invalid(scope,old['data']):
                         data=deepcopy(old['data']);data.update(version=data['version']+1,correction_count=data['correction_count']+1)
                     else:raise ValueError('current existing character required for generated relationship')
-                    data['fields']=self._fields('character',{**data['fields'],'relationship':relation['relationship'],
+                    from .life_growth import constrain
+                    proposed=self._fields('character',{**data['fields'],'relationship':relation['relationship'],
                         'event_ids':[event_id]})
+                    if old and old['data']['fields']['kind']=='canonical':
+                        if proposed['relationship']!=old['data']['fields']['relationship']:
+                            growth_deferred.append(dict(kind='character',id=char_id,fields=['relationship'],
+                                reason='canonical_relationship_preserved'))
+                        continue
+                    marks,held=constrain(old['data'] if old else None,proposed,('relationship',),
+                        now=now,event_id=event_id)
+                    if held:
+                        growth_deferred.append(dict(kind='character',id=char_id,fields=['relationship'],reasons=held))
+                        continue
+                    data['fields']=proposed
+                    data['growth_updates']=marks
                     data['dependencies']=[dict(kind='event',id=event_id,version=1)]
                     if index is not None:pending[index]=('character',data,None)
                     else:pending.append(('character',data,old))
@@ -436,7 +452,8 @@ class AutonomousLife:
                         (_NS[kind],data['id'],normalized,1,now,encoded))
                 result=dict(schema=1,state='complete',created=True,fingerprint=fingerprint,request_id=request_id,
                     event_id=event_id,character_ids=[data['id'] for kind,data,_ in pending if kind=='character'],
-                    thread_ids=[data['id'] for kind,data,_ in pending if kind=='thread'],evidence_kind=EVIDENCE,at=now)
+                    thread_ids=[data['id'] for kind,data,_ in pending if kind=='thread'],
+                    growth_deferred=growth_deferred,evidence_kind=EVIDENCE,at=now)
                 db.execute('INSERT INTO checkpoints(namespace,key,scope,revision,updated,data) VALUES(?,?,?,?,?,?)',
                     (_BATCH,batch_key,normalized,1,now,canonical(result)))
             if not self._allowed(scope,'write'):raise PermissionError('life batch authority changed')
@@ -517,17 +534,22 @@ class AutonomousLife:
     def archive_character(self,scope,identity,**edit):return self._archive('character',scope,identity,**edit)
     def archive_thread(self,scope,identity,**edit):return self._archive('thread',scope,identity,**edit)
 
-    def history(self,scope,kind,identity,*,limit=20):
+    def history(self,scope,kind,identity,*,limit=20,offset=0,expected_revision=None):
         scope=self._scope(scope)
-        if kind not in _LIMIT or type(limit) is not int or not 1<=limit<=100:raise ValueError('bounded life history required')
-        current=self._row(kind,scope,identity)
-        if current is None:return dict(records=[],total=0)
-        records=[]
-        for revision in range(current['revision']-1,max(0,current['revision']-1-limit),-1):
-            row=self.journal.fetch(_NS['history'],kind+'.'+identity+'.'+str(revision),scope)
-            if row:records.append(deepcopy(row['data']))
-        self._scope(scope)
-        return dict(records=records,total=current['revision']-1)
+        if (kind not in _LIMIT or type(limit) is not int or not 1<=limit<=100
+                or type(offset) is not int or not 0<=offset<=50000):raise ValueError('bounded life history required')
+        if expected_revision is not None:_revision(expected_revision,zero=True)
+        with self.journal._lock:
+            current=self._row(kind,scope,identity)
+            current_revision=current['revision'] if current else 0
+            if expected_revision is not None and expected_revision!=current_revision:
+                raise JournalConflict('life history revision changed')
+            total=max(0,current_revision-1);records=[]
+            for revision in range(total-offset,max(0,total-offset-limit),-1):
+                row=self.journal.fetch(_NS['history'],kind+'.'+identity+'.'+str(revision),scope)
+                if row:records.append(deepcopy(row['data']))
+            self._scope(scope)
+        return dict(records=records,total=total,offset=offset,limit=limit,current_revision=current_revision)
 
     def settings(self,scope):
         scope=self._scope(scope);row=self.journal.fetch(_NS['policy'],'settings',scope)
@@ -548,6 +570,14 @@ class AutonomousLife:
                 ('max_model_calls_per_day',0,24),('max_events_per_day',0,24),('max_shares_per_day',0,8)):
             if type(value[key]) is not int or not low<=value[key]<=high:raise ValueError('bounded life policy required')
         if value['interval_minutes']<value['min_interval_minutes']:raise ValueError('life interval below minimum')
+        for key in ('model_provider_id','model_fallback_provider_id'):
+            identity=value[key]
+            if (not isinstance(identity,str) or len(identity)>160 or identity!=identity.strip()
+                    or any(ord(char)<32 for char in identity)):
+                raise ValueError('valid configured life provider identifier required')
+        primary,fallback=value['model_provider_id'],value['model_fallback_provider_id']
+        if fallback and (not primary or primary==fallback):
+            raise ValueError('life fallback requires a different explicit primary')
         return dict(value,muted_topics=topics)
 
     def configure(self,scope,*,expected_revision,changes,actor='operator'):
@@ -655,6 +685,10 @@ class AutonomousLife:
     def proactive_candidates(self,scope,*,include_ineligible=False):
         return self.share_candidates(scope,limit=3,include_ineligible=include_ineligible)
 
+    def correction_impact(self,scope,event_id):
+        from .life_correction_impact import project
+        return project(self,scope,event_id)
+
     def context_generation(self,scope):
         """Current scoped revision metadata only; never return life text."""
         scope=self._scope(scope);names=[_NS[kind] for kind in ('event','character','thread','policy')]
@@ -666,7 +700,7 @@ class AutonomousLife:
         from .personal_space import PersonalSpace
         return _digest([result,PersonalSpace(self).generation(scope)])
 
-    def _retrieval_snapshot(self,scope):
+    def _retrieval_snapshot(self,scope,*,cache=None):
         """One bounded private-scope scan and one shared dependency cache.
 
         No historical versions, observations, MC contents or foreign scopes are
@@ -674,7 +708,7 @@ class AutonomousLife:
         """
         scope=self._scope(scope)
         with self.journal._lock:
-            generation=self.context_generation(scope);raw={};cache={}
+            generation=self.context_generation(scope);raw={};cache={} if cache is None else cache
             for kind,maximum in _LIMIT.items():
                 rows=self.journal.list(_NS[kind],scope,limit=maximum+1)
                 if len(rows)>maximum:raise RuntimeError('life scope exceeds supported retrieval capacity')
@@ -683,6 +717,20 @@ class AutonomousLife:
                     checked=self._checked_row(kind,scope,row['key'],row)
                     raw[kind][row['key']]=checked
                     cache[('row',kind,row['key'])]=checked
+            # Share state belongs to these exact current events. Fetch both
+            # receipt kinds once while holding the same Journal lock; the
+            # confirmed marker keeps its original precedence over latest.
+            event_ids=tuple(raw['event'])
+            if event_ids:
+                marks={}
+                placeholders=','.join('?' for _ in event_ids)
+                for row in self.journal._db.execute(
+                        'SELECT namespace,key,revision,updated,data FROM checkpoints WHERE scope=? '
+                        'AND namespace IN (?,?) AND key IN ('+placeholders+')',
+                        (scope_key(scope),_SHARED,_SHARE_LATEST,*event_ids)):
+                    marks[(row['namespace'],row['key'])]=self.journal._record(row)
+                for identity in event_ids:
+                    cache[('sharing',identity)]=marks.get((_SHARED,identity)) or marks.get((_SHARE_LATEST,identity))
             projected={kind:{identity:self._project(scope,row,cache,verify_memory=False)
                 for identity,row in rows.items()} for kind,rows in raw.items()}
             valid={kind:{identity:record for identity,record in rows.items() if record['valid']}
@@ -878,10 +926,13 @@ class AutonomousLife:
     def detail(self,scope,identity):
         event=self.get_event(scope,identity)
         if event is None:return None
-        records=self.list_events(scope,include_invalid=True,include_archived=True,limit=200)['records']
+        # A detail view follows exact links across the retained scope, not just
+        # the first display page. Old continuations must remain reachable.
+        snapshot=self._retrieval_snapshot(scope)
+        records=snapshot['all_records']['event'].values()
         return dict(event=event,history=self.history(scope,'event',identity)['records'],
             related=dict(previous=[self.get_event(scope,ref) for ref in event['fields']['previous_event_ids']],
-                following=[row for row in records if identity in row['fields']['previous_event_ids']],
+                following=[self.get_event(scope,row['id']) for row in records if identity in row['fields']['previous_event_ids']],
                 people=[self.get_character(scope,ref) for ref in event['fields']['character_ids']]),
             threads=[row for row in self.list_threads(scope,include_invalid=True,include_archived=True,limit=128)['records']
                 if identity in row['fields']['event_ids']],shares=self.shares(scope,event_id=identity)['records'])

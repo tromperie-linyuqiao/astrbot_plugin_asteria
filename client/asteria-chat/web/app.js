@@ -13,7 +13,7 @@ const STICKERS = Object.freeze([]); // The single shared library now lives on TL
 const THEME_KEY = 'theme';
 const THEME_ORDER = ['system', 'dark', 'light'];
 const THEME_LABEL = { system: '跟随系统', dark: '深色', light: '浅色' };
-const DEFAULT_APPEARANCE = Object.freeze({ version: 1, displayName: '', avatar: null, background: 'default', backgroundImage: null });
+const DEFAULT_APPEARANCE = Object.freeze({ version: 1, displayName: '', avatar: null, background: 'default', backgroundImage: null, stickerSize: 'standard' });
 const MAX_EXPORT_BYTES = 2 * 1024 * 1024;
 const DEFAULT_INTERACTIONS = Object.freeze({ version: 1, slots: Object.freeze([
   Object.freeze({ label: '摸摸头', action: '我想轻轻摸摸你的头，可以吗？', enabled: true }),
@@ -100,19 +100,29 @@ function discardCachedSession(id) {
   if (state.primaryId === id) state.primaryId = null;
   renderSessions();
 }
+function notificationAccountCurrent(target) {
+  return target.account === chatAccountKey()
+    && (target.authEpoch === undefined || target.authEpoch === chatAuthEpoch);
+}
 function locateNotificationMessage() {
   const target = notificationTarget;
-  if (!target || target.account !== chatAccountKey() || target.sessionId !== state.activeId) return;
-  if (target.clickTarget === 'conversation') { notificationTarget = null; return; }
+  if (!target) return;
+  if (!notificationAccountCurrent(target)) { notificationTarget = null; return; }
+  if (target.sessionId !== state.activeId) return;
   const message = state.messages.find(row => String(row.serverId) === target.messageId);
-  const row = message && [...$('messages').querySelectorAll('.message-row')].find(node => node.dataset.messageKey === String(message.id));
-  if (!row) return; // The following authoritative history may contain it.
-  requestAnimationFrame(() => {
-    if (notificationTarget !== target || target.account !== chatAccountKey() || state.activeId !== target.sessionId) return;
-    if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center', behavior: 'auto' });
-    row.classList.add('notification-target');
-    if (!state.cacheDisplay) notificationTarget = null;
-  });
+  if (target.clickTarget === 'conversation') {
+    notificationTarget = null;
+  } else {
+    const row = message && [...$('messages').querySelectorAll('.message-row')].find(node => node.dataset.messageKey === String(message.id));
+    if (!row) return; // The following authoritative history may contain it.
+    requestAnimationFrame(() => {
+      if (notificationTarget !== target || !notificationAccountCurrent(target) || state.activeId !== target.sessionId) return;
+      if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center', behavior: 'auto' });
+      row.classList.add('notification-target');
+      if (!state.cacheDisplay) notificationTarget = null;
+    });
+  }
+  if (message?.role === 'assistant' && message.delivery === 'confirmed') return target;
 }
 
 function native() {
@@ -225,11 +235,12 @@ function appearanceImage(value) {
 }
 function validateAppearance(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || value.version !== 1
-      || Object.keys(value).sort().join('|') !== 'avatar|background|backgroundImage|displayName|version'
+      || Object.keys(value).filter(key=>key!=='stickerSize').sort().join('|') !== 'avatar|background|backgroundImage|displayName|version'
+      || (value.stickerSize!==undefined&&!['compact','standard','large'].includes(value.stickerSize))
       || typeof value.displayName !== 'string' || value.displayName.length > 40 || /[\u0000-\u001f\u007f]/.test(value.displayName)
       || !['default', 'mint', 'sand', 'night', 'image'].includes(value.background)) throw new Error('外观设置格式无效，请恢复默认后重新保存。');
   const result = { ...DEFAULT_APPEARANCE, displayName: value.displayName.trim(), avatar: appearanceImage(value.avatar),
-    background: value.background, backgroundImage: appearanceImage(value.backgroundImage) };
+    background: value.background, backgroundImage: appearanceImage(value.backgroundImage), stickerSize:value.stickerSize||'standard' };
   if (result.background === 'image' && !result.backgroundImage) throw new Error('请先选择背景图片。');
   if (result.background !== 'image') result.backgroundImage = null;
   return result;
@@ -261,6 +272,7 @@ function currentRoleName() {
    instead of only the middle column. */
 function paintAppearance(element, appearance) {
   const surface = element || $('app');
+  surface.style.setProperty('--sticker-size',({compact:112,standard:152,large:208}[appearance.stickerSize]||152)+'px');
   for (const name of ['default', 'mint', 'sand', 'night', 'image']) surface.classList.toggle('appearance-' + name, appearance.background === name);
   const picture = appearance.background === 'image' && appearance.backgroundImage;
   // A preview owns its wallpaper locally; only a saved appearance paints the app.
@@ -359,6 +371,7 @@ function openAppearance() {
   state.appearanceEditing = { scope, draft: { ...value }, epoch: ++state.appearanceSerial };
   $('appearance-scope').textContent = scope.title + ' · 仅此对话 · 仅此设备';
   $('appearance-name').value = value.displayName;
+  $('appearance-sticker-size').value=value.stickerSize||'standard';
   $('appearance-name').placeholder = '默认：' + appearanceBaseName();
   appearanceError(error); previewAppearance();
   if (!$('appearance-dialog').open) $('appearance-dialog').showModal();
@@ -400,7 +413,7 @@ async function chooseAppearanceImage(kind) {
 }
 function persistAppearance(scope, value) {
   const previous = localStorage.getItem(scope.key);
-  const defaults = !value.displayName && !value.avatar && value.background === 'default';
+  const defaults = !value.displayName && !value.avatar && value.background === 'default' && value.stickerSize === 'standard';
   const expected = defaults ? null : JSON.stringify(value);
   let wrote = false;
   try {
@@ -425,7 +438,7 @@ function saveAppearance(event) {
   try {
     const scope = appearanceScope();
     if (!scope || scope.key !== editing.scope.key) throw new Error('当前对话已经变化，本次修改未保存。');
-    const value = validateAppearance({ ...editing.draft, displayName: $('appearance-name').value });
+    const value = validateAppearance({ ...editing.draft, displayName: $('appearance-name').value, stickerSize:$('appearance-sticker-size').value });
     const saved = persistAppearance(scope, value);
     state.appearanceCache = { key: scope.key, value: saved, error: '' };
     cancelAppearance(); renderSessions(); renderMessages(); renderChrome();
@@ -1548,15 +1561,31 @@ function updateJumpLatest() {
   const box = $('messages'), button = $('jump-latest');
   if (!box || !button) return;
   const height = Number(box.scrollHeight), top = Number(box.scrollTop), view = Number(box.clientHeight);
+  const gap = height - top - view;
+  const hasHistory = state.messages.length > 0 && [height, top, view].every(Number.isFinite);
+  if (newReplyHintScope && (!hasHistory || gap <= 64 || newReplyHintScope !== messageSearchScope())) {
+    newReplyHintScope = '';
+  }
+  const hasNewReply = !!newReplyHintScope;
+  const continuation = $('continue-reading');
+  const showAtTop = hasNewReply && !!continuation && !continuation.hidden;
+  const showAtBottom = hasNewReply && !showAtTop;
+  if (continuation && continuation.hasAttribute('data-new-reply') !== showAtTop) {
+    continuation.toggleAttribute('data-new-reply', showAtTop);
+  }
+  if (button.hasAttribute('data-new-reply') !== showAtBottom) {
+    button.toggleAttribute('data-new-reply', showAtBottom);
+    button.textContent = showAtBottom ? '有新回复 · 回到最新' : '回到最新';
+  }
   // Only touch the DOM when the answer changes: a redundant hidden toggle
   // forces a layout pass (and in the synthetic browser, a scroll clamp).
-  const hide = !(state.messages.length > 0 && Number.isFinite(height)
-    && Number.isFinite(top) && Number.isFinite(view) && height - top - view > 240);
+  const hide = !hasHistory || (!showAtBottom && gap <= 240);
   if (button.hidden !== hide) button.hidden = hide;
 }
 function jumpToLatest() {
   const box = $('messages');
   if (!box) return;
+  newReplyHintScope = '';
   state.readingScope = messageSearchScope();
   state.liveFollowScope = messageSearchScope();
   setMessageScroll(box, box.scrollHeight);
@@ -1596,11 +1625,9 @@ function moveMessageSearch(delta) {
 }
 function messageRowId(message) { return 'chat-message-' + encodeURIComponent(String(message.id)); }
 function renderMessageRow(message, previous, appearance, existing) {
-    const continued = !!previous && previous.role === message.role
-      && (previous.notice?.kind || 'chat') === (message.notice?.kind || 'chat')
-      && (previous.notice?.source || '') === (message.notice?.source || '')
-      && messageStamp(message) - messageStamp(previous) < 5 * 60 * 1000
-      && messageStamp(message) >= messageStamp(previous);
+    // The stored message already owns ordered text/action/sticker fragments.
+    // Independent historical messages are never grouped by time proximity.
+    const continued = false;
     const parts = messageParts(message), search = state.messageSearch;
     const searchKey = search.open && search.query ? JSON.stringify([search.query, search.index, search.hits.filter(hit => hit.key === String(message.id))]) : '';
     const className = 'message-row ' + message.role + (continued ? ' continued' : '') + (message.delivery === 'unknown' ? ' failed' : '');
@@ -1644,7 +1671,7 @@ function renderMessageRow(message, previous, appearance, existing) {
         bubble=null;const expression=document.createElement('div');expression.className='message-expression '+(part.type==='sticker'?'expression-sticker':'expression-action '+(part.source==='assistant_narrative'?'expression-narrative-action':'expression-user-action'));expression.append(window.ChatComposer.renderPart(part));body.append(expression);continue;
       }
       if(!bubble){bubble=document.createElement('div');bubble.className='message-bubble';body.append(bubble);}
-      if (part.type==='reference' && window.ChatComposer) { bubble.classList.add('has-reference');bubble.append(window.ChatComposer.renderPart(part)); continue; }
+      if (['reference','life_reference'].includes(part.type) && window.ChatComposer) { bubble.classList.add('has-reference');bubble.append(window.ChatComposer.renderPart(part)); continue; }
       if (part.type !== 'plain') { bubble.classList.add('has-media');bubble.append(renderMediaPart(part, message, state.activeId)); continue; }
       bubble.classList.add('has-text');
       const text = document.createElement('span'); text.className = 'message-text';
@@ -1685,7 +1712,8 @@ function placeMessageNode(container, node, previous) {
   } else if (node.previousElementSibling !== previous) container.insertBefore(node, previous ? previous.nextSibling : container.firstChild);
 }
 let pendingMessageReading = null;
-function renderMessages({ jumpToSearch = false, forceLatest = false, streamMessage = null } = {}) {
+let newReplyHintScope = '';
+function renderMessages({ jumpToSearch = false, forceLatest = false, streamMessage = null, newReply = false } = {}) {
   const container = $('messages');
   const scope = syncMessageSearchScope(), ticket = ++state.messageRenderSerial;
   // Several patches can finish before the first restore frame. Added message
@@ -1699,6 +1727,9 @@ function renderMessages({ jumpToSearch = false, forceLatest = false, streamMessa
   if (sameReading && pending.forceLatest) forceLatest = true;
   if(forceLatest)state.liveFollowScope=scope;
   const sameScope = container.dataset.renderScope === scope;
+  if (newReply && scope && sameScope && !forceLatest && position?.follow === false && recoveryForeground()) {
+    newReplyHintScope = scope;
+  }
   state.readingScope = scope;
   const appearance = currentAppearance(), changedRows = [];
   const tail = state.messages[state.messages.length - 1], previous = state.messages[state.messages.length - 2];
@@ -1971,6 +2002,20 @@ function normalizeHistory(rows) {
   }
   return result;
 }
+function savedMessageIdOrder(value) {
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) return null;
+  const id = String(value ?? '');
+  return /^[1-9]\d{0,23}$/.test(id) ? BigInt(id) : null;
+}
+function latestSavedMessageId(messages, role) {
+  let latest = 0n;
+  for (const message of messages) {
+    if (message.delivery !== 'confirmed' || (role && message.role !== role)) continue;
+    const id = savedMessageIdOrder(message.serverId);
+    if (id !== null && id > latest) latest = id;
+  }
+  return latest;
+}
 async function loadSessions({ select = true, accept = () => true, onNativeComplete } = {}) {
   const account = chatAccountKey(), cacheEpoch = chatCacheEpoch;
   const rows = await apiClient.sessions({ onNativeComplete });
@@ -2025,6 +2070,7 @@ async function loadHistory(id, { accept = () => true, reconcileAttachments = tru
   try {
     result = await apiClient.history(id, { onNativeComplete, knownRevision: cached?.revision });
     if (!current()) return false;
+    window.ChatDevices?.observe(result?.device_context);
     if (result?.not_modified === true) {
       if (cacheEpoch === chatCacheEpoch && cached?.complete && cached.revision && cached.revision === result.history_revision) {
         result = { ...cached.snapshot, history_revision: cached.revision };
@@ -2040,7 +2086,10 @@ async function loadHistory(id, { accept = () => true, reconcileAttachments = tru
   const sessionItem=state.sessions.find(value=>value.session_id===id);if(sessionItem&&result.tls_state)sessionItem.tls_state=result.tls_state;
   const previousReplies=new Set(state.messages.filter(value=>value.role==='assistant'&&value.serverId!=null).map(value=>String(value.serverId)));
   const hadHistory=state.messages.length>0;
+  const savedBefore = preserveUnconfirmed && preserveReading && !state.cacheDisplay
+    ? latestSavedMessageId(state.messages) : 0n;
   const actualMessages = normalizeHistory(result.history);
+  const newReply = savedBefore > 0n && latestSavedMessageId(actualMessages, 'assistant') > savedBefore;
   if (window.ChatCache && cacheEpoch === chatCacheEpoch) {
     cacheSessions(); window.ChatCache.save(state.server, state.username, id, result);
   }
@@ -2075,9 +2124,11 @@ async function loadHistory(id, { accept = () => true, reconcileAttachments = tru
     }
   }
   if (preserveReading && captureMessagePosition($('messages'))?.follow === false) state.liveFollowScope = '';
-  renderMessages({forceLatest:!preserveReading&&receivedReply&&!state.messageSearch.open&&!notificationTarget});
-  locateNotificationMessage();
-  if (recoveryForeground() && window.ChatComposer && typeof window.ChatComposer.historyReceived === 'function') window.ChatComposer.historyReceived(id);
+  renderMessages({forceLatest:!preserveReading&&receivedReply&&!state.messageSearch.open&&!notificationTarget, newReply});
+  const locatedNotification = locateNotificationMessage();
+  if (recoveryForeground() && typeof window.ChatComposer?.historyReceived === 'function') {
+    window.ChatComposer.historyReceived(id, locatedNotification);
+  }
   if (window.ChatReceipts) window.ChatReceipts.historyReceived(id, result);
   window.ChatImageJobs?.historyReceived(id);
   return true;
@@ -2218,7 +2269,7 @@ function parseStream(body) {
 }
 async function sendMessage(event, prepared = null) {
   event.preventDefault();
-  const sendReceipt = {started:false,confirmed:false,failed:false,clientMessageId:null};
+  const sendReceipt = {started:false,confirmed:false,failed:false,clientMessageId:null,reply:null};
   if(primaryConnectionId()&&state.activeId&&state.activeId!==primaryConnectionId()){showNotice('这里是以前的记录，请回到当前 Bot继续长期聊天。');return sendReceipt;}
   const legacySticker = prepared && prepared.kind === 'sticker';
   const direct = prepared && prepared.kind === 'composition';
@@ -2276,9 +2327,13 @@ async function sendMessage(event, prepared = null) {
       const sentIds = new Set(files.map(file => file.attachment_id));
       state.attachmentQueues.set(sentSession, attachmentQueue(sentSession).filter(file => !sentIds.has(file.attachment_id)));
     } else for (const file of files) file.status = 'send-unknown';
-    if (stream.parts.length) state.messages.push({ id: stream.messageId ?? 'reply-' + Date.now(), serverId: stream.messageId,
-      role: 'assistant', text: stream.text, parts: stream.parts, delivery: replySaved ? 'confirmed' : 'unconfirmed' });
-    renderMessages();
+    if (stream.parts.length) {
+      const reply = { id: stream.messageId ?? 'reply-' + Date.now(), serverId: stream.messageId,
+        role: 'assistant', text: stream.text, parts: stream.parts, delivery: replySaved ? 'confirmed' : 'unconfirmed' };
+      state.messages.push(reply);
+      if (replySaved) sendReceipt.reply = reply;
+    }
+    renderMessages({ newReply: !!sendReceipt.reply });
     if (stream.error) {const failure=new Error(stream.error);failure.generationFailed=true;throw failure;}
     if (!replySaved) showNotice('已收到部分结果，正在核对服务器保存记录。');
     try {
@@ -2608,9 +2663,11 @@ window.AsteriaChatUI = Object.freeze({
             || config.server !== origin.server || config.username !== origin.username) return false;
       } catch (_) { return false; }
     }
-    notificationTarget = { account: chatAccountKey(), sessionId: id, messageId: String(messageId || ''), clickTarget };
+    const target = { account: chatAccountKey(), authEpoch: chatAuthEpoch,
+      sessionId: id, messageId: String(messageId || ''), clickTarget };
+    notificationTarget = target;
     if (window.ChatReceipts) window.ChatReceipts.notificationOpened(id, messageId);
-    if (window.ChatComposer) window.ChatComposer.openConversation(id);
+    if (window.ChatComposer) window.ChatComposer.openConversation(id, target);
     return true;
   },
   foregroundChanged: () => { foregroundRecovery.signal(); syncViewport(); if (phonePerceptionPanel) phonePerceptionPanel.foregroundChanged(); if (window.ChatNotificationStatus) window.ChatNotificationStatus.refresh(); window.ChatImageJobs?.foregroundChanged(); },

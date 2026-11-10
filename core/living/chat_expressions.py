@@ -670,14 +670,14 @@ class ChatExpressions:
             values.append(part)
         return values
 
-    def user_parts(self, scope, parts, message, *, references=None, attachments=None):
+    def user_parts(self, scope, parts, message, *, references=None, attachments=None, life_references=None):
         if parts is None:
             parts = [{'type': 'text', 'text': message}] if message.strip() else []
         if not isinstance(parts, list) or len(parts) > 24:
             raise ChatExpressionError('组合消息最多 24 个片段')
         result, projection = [], []
         actions = {row['id']: row for row in self.actions(scope)['items'] if row['enabled']}
-        action_count = sticker_count = attachment_count = reference_count = 0
+        action_count = sticker_count = attachment_count = reference_count = life_count = 0
         for part in parts:
             if not isinstance(part, dict):
                 raise ChatExpressionError('消息片段无效')
@@ -719,6 +719,13 @@ class ChatExpressions:
                 result.append({'type': 'sticker', 'asset_id': asset['id'], 'label': asset['name'],
                     'source': 'user_sticker', 'fragment_id': fragment})
                 projection.append('【用户表情：' + asset['name'] + '】' + asset['meaning'])
+            elif kind == 'life_reference':
+                reference=(life_references or {}).get(part.get('record_id',part.get('event_id')))
+                if reference is None or reference.get('record_revision',reference.get('event_revision'))!=part.get('record_revision',part.get('event_revision')) or reference.get('record_kind')!=part.get('record_kind'):
+                    raise ChatExpressionError('生活经历已变化，请重新选择后再发送')
+                life_count+=1
+                result.append(dict(reference,fragment_id=fragment))
+                projection.append('【明确追问角色生活资料】'+reference['label'])
             elif kind == 'reference':
                 reference = (references or {}).get(str(part.get('message_id')))
                 if reference is None:
@@ -734,6 +741,7 @@ class ChatExpressions:
                 result.append(dict(media, fragment_id=fragment, source='user_attachment'))
             else:
                 raise ChatExpressionError('不支持这个消息片段类型')
+        if life_count>1: raise ChatExpressionError('每条消息只关联一项经历')
         if action_count > 4 or sticker_count > 4 or attachment_count > 4 or reference_count > 2:
             raise ChatExpressionError('每条最多 4 个动作、4 张表情、4 个附件和 2 条引用')
         if not any(part['type'] == 'text' for part in result) and message.strip():

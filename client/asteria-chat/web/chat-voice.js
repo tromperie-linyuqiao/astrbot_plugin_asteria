@@ -2,7 +2,7 @@
 /* Voice is a rendering/input adapter. It never creates a second chat request. */
 window.ChatVoice = (() => {
   const defaults = {name:'Texas Voice · 独立音色',language:'zh-CN',timbre:'自然、清晰、克制的中文表达；不模仿原作配音演员',pronunciation:'普通话，专有名词保持原文',emotion:'平静为主，温和表达；不夸张',pauses:'遵循原文标点，不改变动作与事实',rate:0.95,pitch:1,binding:{service:'android_system',voice_id:''},rights:'system_voice',test_sample:'今天过得怎么样？我在这里，慢慢说就好。'};
-  let dialog, form, note, bar, barText, pause, progress, owner='', currentScope='', activeRequestId='', profileOwner='', profile=structuredClone(defaults), revision=0, saveable=false, busy=false, recognizing=false, recognitionOwner='', playback='idle', voices=[], serial=0, speechSerial=0, cloud={available:false,models:[]}, recent=[], recentBox, previewButton, retryButton, speechBusy=false, deviceLoading=null;
+  let dialog, form, note, bar, barText, pause, progress, owner='', currentScope='', activeRequestId='', profileOwner='', profile=structuredClone(defaults), revision=0, saveable=false, busy=false, recognizing=false, recognitionOwner='', playback='idle', voices=[], serial=0, speechSerial=0, cloud={available:false,models:[]}, recent=[], recentBox, previewButton, retryButton, speechBusy=false, deviceLoading=null, replyCall='',playbackWait=null,callWaiter=null;
   const scope=()=>JSON.stringify([state.server,state.username,state.activeId,chatAuthEpoch]);
   const node=(tag,text,cls='')=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;n.className=cls;return n;};
   const button=(label,fn,cls='text-button')=>{const b=node('button',label,cls);b.type='button';b.onclick=fn;return b;};
@@ -16,11 +16,20 @@ window.ChatVoice = (() => {
     if(target!==scope()||ticket!==speechSerial){const error=Error('原语音操作已结束。');error.voiceCancelled=true;throw error;}
     if(data?.ok!==true)throw Error(data?.message||'语音操作暂不可用');return data;
   }
-  function stop(){speechSerial++;activeRequestId='';busySpeech(false);if(available())void command('stop').catch(()=>{});owner='';if(bar)bar.hidden=true;playback='stopped';}
+  function stop(){
+    speechSerial++;replyCall='';activeRequestId='';busySpeech(false);
+    const stopped=available()?command('stop').then(()=>true,()=>false):Promise.resolve(false);
+    const waiter=playbackWait;playbackWait=null;const interrupted=callWaiter;callWaiter=null;
+    void stopped.then(ok=>{if(ok)interrupted?.resolve();});
+    void stopped.then(ok=>waiter?.({phase:ok?'stopped':'error',message:'播放停止未确认'}));
+    owner='';if(bar)bar.hidden=true;playback='stopped';return stopped;
+  }
   function scopeChanged(){const next=scope();if(currentScope===next)return;currentScope=next;stop();serial++;profileOwner='';profile=structuredClone(defaults);cloud={available:false,models:[]};recent=[];voices=[];deviceLoading=null;saveable=false;busy=false;recognizing=false;recognitionOwner='';closeActive();}
   function receive(value){
     if(!owner||owner!==scope()||!bar||!activeRequestId||value?.request_id!==activeRequestId)return;
-    playback=value.phase;bar.hidden=['idle','stopped'].includes(playback);
+    playback=value.phase;window.ChatCall?.voiceStateChanged();
+    if(['completed','error','stopped'].includes(playback)){replyCall='';const done=playbackWait;playbackWait=null;done?.(value);}
+    bar.hidden=['idle','stopped'].includes(playback);
     barText.textContent=({synthesizing:'正在生成语音',preparing:'正在准备播放',playing:'正在朗读',paused:'朗读已暂停',completed:'朗读完成',error:'语音暂不可用'})[playback]||'语音';
     if(value.message)barText.textContent+=' · '+value.message;
     if(dialog?.open)say(barText.textContent);
@@ -85,7 +94,7 @@ window.ChatVoice = (() => {
     retryButton.hidden=!recent.some(x=>x.preview&&x.retryable);
   }
   async function playCached(item){
-    if(speechBusy||!available())return;const target=scope(),ticket=++speechSerial;owner=target;activeRequestId='';busySpeech(true);
+    if(speechBusy||replyCall||!available())return;const target=scope(),ticket=++speechSerial;owner=target;activeRequestId='';busySpeech(true);
     try{speechStatus('正在读取已生成音频，不会再次合成…');const result=responseData(await nativeAsync('playCloudVoice',[state.activeId,item.audio_id,String(item.message_id||'preview')],120000,id=>{activeRequestId=id;}));if(target===scope()&&ticket===speechSerial&&result?.ok!==true)throw Error(result?.message||'手机播放未完成');}
     catch(e){if(target===scope()&&ticket===speechSerial)speechStatus(errorText(e));}
     finally{if(target===scope()&&ticket===speechSerial)busySpeech(false);}
@@ -108,30 +117,83 @@ window.ChatVoice = (() => {
   async function save(event){event.preventDefault();if(busy||!saveable||profileOwner!==scope())return;const target=scope(),draft=readForm();busy=true;paint();try{const data=await apiClient.json('POST','/chat/voice',{session_id:state.activeId,profile:draft,expected_revision:revision});if(target!==scope())return;profile=data.profile;revision=data.revision;say('声音档案已保存，之后的朗读使用新配置。');}catch(e){if(target===scope()){saveable=false;say(errorText(e)+' 请重新读取同一档案核对；不会自动再次提交。');}}finally{if(target===scope()){busy=false;paint();}}}
   function open(){if(!available()){showNotice('先打开已登录的聊天。');return;}setup();scopeChanged();window.ChatSettingsHub?.close();if(!dialog.open)dialog.showModal();void load();}
   function closeActive(){if(!dialog?.open)return false;dialog.close();return true;}
-  async function speakText(text,id,settings,retryFailed=false){setup();scopeChanged();if(!available()||speechBusy||busy)return;const target=scope(),speechTicket=++speechSerial;owner=target;activeRequestId='';busySpeech(true);
-    try{if(!settings&&profileOwner!==target){try{await fetchProfile(target,()=>speechTicket===speechSerial);}catch(_){if(target!==scope()||speechTicket!==speechSerial)return;profile=structuredClone(defaults);profileOwner=target;saveable=false;}}if(target!==scope()||speechTicket!==speechSerial)return;
-      const chosen=settings||profile;if(!text.trim())throw Error('这条消息没有可朗读的话语。动作和图片不会当成话语朗读。');if(text.length>3500)throw Error('这条消息超过单次 3500 字朗读上限，原文保持完整。');
+  function requireCloud(chosen){
+    const binding=chosen.binding;
+    if(!isCloudService(binding.service))throw Error('请在「声音与语音输入」保存云端音色，再开始双向语音。');
+    const cfg=serviceConfig(binding.service);
+    if(!cfg.available)throw Error(cfg.reason||'当前服务器没有启用云端语音。');
+    if(!cfg.models?.includes(binding.model||cfg.model))throw Error('所选模型未在当前服务器启用，请重新选择。');
+    if(binding.service==='cosyvoice'&&!binding.voice_id&&!cfg.default_voice_id)throw Error('请先填写 CosyVoice 的真实音色 ID。');
+    return cfg;
+  }
+  async function prepareCall(accept){
+    setup();scopeChanged();
+    if(speechBusy||busy||['preparing','synthesizing','playing','paused'].includes(playback))
+      throw Error('请先结束正在进行的朗读。');
+    if(!await fetchProfile(scope(),accept))return false;
+    requireCloud(profile);
+    return true;
+  }
+  async function speakText(text,id,settings,retryFailed=false,call=null){
+    setup();scopeChanged();
+    if(!available()||speechBusy||busy||replyCall){
+      if(call)throw Error('已有语音操作，请结束后继续通话。');
+      return;
+    }
+    const target=scope(),speechTicket=++speechSerial;
+    const same=()=>target===scope()&&speechTicket===speechSerial;
+    const accepts=()=>same()&&(!call||call.accept());
+    let playbackRequested=false;
+    owner=target;activeRequestId='';replyCall=call?.id||'';busySpeech(true);
+    try{
+      if(!settings&&profileOwner!==target){
+        try{await fetchProfile(target,accepts);}
+        catch(e){if(!accepts())return;if(call)throw e;profile=structuredClone(defaults);profileOwner=target;saveable=false;}
+      }
+      if(!accepts())return;
+      const chosen=settings||profile;
+      if(!text.trim())throw Error('这条消息没有可朗读的话语。动作和图片不会当成话语朗读。');
+      if(text.length>3500)throw Error('这条消息超过单次 3500 字朗读上限，原文保持完整。');
       bar.hidden=false;pause.hidden=true;progress.hidden=true;
-      if(isCloudService(chosen.binding.service)){
-        const cfg=serviceConfig(chosen.binding.service);if(!cfg.available)throw Error(cfg.reason||'当前服务器没有启用云端语音。');if(!cfg.models?.includes(chosen.binding.model||cfg.model))throw Error('所选模型未在当前服务器启用；请明确重新选择，原档案不会自动更换。');if(chosen.binding.service==='cosyvoice'&&!chosen.binding.voice_id&&!cfg.default_voice_id)throw Error('请先填写 CosyVoice 的真实音色 ID。');
+      if(call||isCloudService(chosen.binding.service)){
+        const cfg=requireCloud(chosen);
         if(text.length>(cfg.max_characters||1500))throw Error('云端单次支持 1500 字朗读；原消息不会被截断。');
         speechStatus('正在生成云端语音…稍后会直接播放，请不要连续点击。');
         const body=id==='preview'?{session_id:state.activeId,preview_text:text,profile:chosen}:{session_id:state.activeId,message_id:String(id)};
         if(retryFailed)body.retry_failed=true;
         const audio=await apiClient.json('POST','/chat/voice/synthesize',body);
-        if(target!==scope()||speechTicket!==speechSerial)return;
+        if(!accepts())return;
         if(audio.session_id!==state.activeId)throw Error('语音结果与当前会话不一致。');
         if(id!=='preview'&&audio.state==='skipped'&&audio.reason==='no_spoken_text'&&audio.message_id===String(id)){
           speechStatus('这条回复只有动作，没有台词。');return;
         }
         if(!/^[a-f0-9]{64}$/.test(audio.audio_id||''))throw Error('语音结果与当前会话不一致。');
         speechStatus(audio.cached?'正在播放缓存语音…':'正在下载语音…');
+        const finished=call?new Promise(resolve=>{playbackWait=resolve;}):null;
         const result=responseData(await nativeAsync('playCloudVoice',[state.activeId,audio.audio_id,String(id)],120000,request=>{activeRequestId=request;}));
         if(result?.ok!==true)throw Error(result?.message||'音频暂时无法播放。');
-      }else{speechStatus('准备朗读…');receive(await command('speak',{text,message_id:String(id),language:chosen.language,voice_id:chosen.binding.voice_id,rate:chosen.rate,pitch:chosen.pitch}));}
-    }catch(e){if(target===scope()&&speechTicket===speechSerial){speechStatus(errorText(e));pause.hidden=true;progress.hidden=true;}}
-    finally{if(target===scope()&&speechTicket===speechSerial){busySpeech(false);if(isCloudService(chosenService(settings)))void refreshReceipts(target);}}
+        playbackRequested=true;
+        if(finished){const completed=await finished;if(accepts()&&completed.phase==='error')throw Error(completed.message||'音频播放失败。');}
+      }else{
+        speechStatus('准备朗读…');
+        receive(await command('speak',{text,message_id:String(id),language:chosen.language,voice_id:chosen.binding.voice_id,rate:chosen.rate,pitch:chosen.pitch}));
+      }
+    }catch(e){
+      if(accepts()){speechStatus(errorText(e));pause.hidden=true;progress.hidden=true;if(call)throw e;}
+    }finally{
+      if(same()){
+        playbackWait=null;
+        if(call&&!playbackRequested)replyCall='';
+        busySpeech(false);
+        if(isCloudService(chosenService(settings)))void refreshReceipts(target);
+      }
+    }
   }
+  function speakCallReply(message,id,accept){
+    let resolve;const stopped=new Promise(done=>{resolve=done;});const waiter={id,resolve};callWaiter=waiter;
+    return Promise.race([speakText(speechText(message),message.serverId,undefined,false,{id,accept}),stopped]).finally(()=>{if(callWaiter===waiter)callWaiter=null;});
+  }
+  function cancelCallReply(id){return id&&replyCall===id?stop():Promise.resolve(true);}
   function chosenService(settings){return (settings||profile).binding.service;}
   async function refreshReceipts(target){try{const data=await apiClient.json('GET','/chat/voice?session_id='+encodeURIComponent(state.activeId));if(target===scope()){recent=Array.isArray(data.recent_audio)?data.recent_audio:[];paintRecent();}}catch(_){} }
   function speechText(message){
@@ -169,5 +231,5 @@ window.ChatVoice = (() => {
   }
   document.addEventListener('DOMContentLoaded',()=>{setup();const entry=button('声音与语音输入',open,'menu-item');entry.id='menu-voice';document.getElementById('more-menu').append(entry);const input=button('语音转文字',recognize,'attachment-picker');document.querySelector('[data-compose-pane="attachments"]').prepend(input);document.getElementById('voice-button').setAttribute('aria-label','语音识别后编辑草稿');document.getElementById('voice-button').title='语音转文字';},{once:true});
   window.addEventListener('pagehide',stop);
-  return {open,closeActive,scopeChanged,receive,speak,recognize,speechText};
+  return {phase:()=>playback,open,closeActive,scopeChanged,receive,speak,recognize,speechText,prepareCall,speakCallReply,cancelCallReply};
 })();

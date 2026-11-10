@@ -33,5 +33,6 @@ final class CallSegmenter {
         }
         return ready;
     }
+    float[] finish(){float[] result=voiced>=RATE*15/100?Arrays.copyOf(speech,size):null;clear();return result;}
     void clear(){Arrays.fill(speech,0);Arrays.fill(lead,0);size=leadSize=leadAt=voiced=quiet=0;level=0;}
 }

@@ -2,7 +2,15 @@
 /* Receipt metadata only. No message retry, extra poller or read-status guess. */
 window.ChatReceipts = (() => {
   let busy = false, active = null, known = new Set(), receivedKey = '', lastState = null, lastError = '';
+  let refreshSerial = 0;
   const phases = ['client_received', 'system_notification_posted', 'user_opened'];
+  const pendingOpenLimit = 32;
+  const validOpenId = id => typeof id === 'string' && id.length > 0 && id.length <= 160;
+  function pendingOpenIds(value) {
+    // Earlier versions stored a single ID under the same key.
+    const ids = Array.isArray(value) ? value.slice(-pendingOpenLimit) : [value];
+    return [...new Set(ids.filter(validOpenId))];
+  }
   function context(id) {
     return state.authenticated && state.server && state.username && id
       ? { id, key: 'texas-chat.receipts.' + JSON.stringify([state.server, state.username, id]) } : null;
@@ -25,8 +33,7 @@ window.ChatReceipts = (() => {
     try { localStorage.setItem(selected.key, JSON.stringify(value)); return true; }
     catch (_) { lastError = '本机无法保存收件确认；聊天记录仍在服务器。'; return false; }
   }
-  function enqueue(selected, ids, phase) {
-    const pending = read(selected);
+  function enqueue(selected, ids, phase, pending = read(selected)) {
     for (const id of ids) {
       const confirmed = lastState?.messages?.find(row => row.message_id === id);
       if (!confirmed?.[phase + '_at']) {
@@ -35,7 +42,7 @@ window.ChatReceipts = (() => {
         delete pending[id].unavailable;
       }
     }
-    const keys = Object.keys(pending);
+    const keys = Object.keys(pending).filter(id => id !== '$opened');
     while (keys.length > 64) delete pending[keys.shift()];
     return write(selected, pending);
   }
@@ -72,6 +79,8 @@ window.ChatReceipts = (() => {
         const result = await apiClient.json('POST', '/chat/receipts', body);
         if (!current(selected)) break;
         const unavailable = partial ? unavailableIds(result, ids, phase) : new Set();
+        // A confirmed report supersedes reads still waiting for their result.
+        refreshSerial++;
         lastState = result; lastError = '';
         const pending = read(selected);
         for (const id of ids) {
@@ -103,21 +112,32 @@ window.ChatReceipts = (() => {
       .filter(row => row?.content?.type === 'bot' && row.id != null).map(row => String(row.id)));
     active = snapshot?.receipt_transport?.schema === 1 && snapshot.receipt_transport.supported === true
       ? { ...selected, partial: snapshot.receipt_transport.partial_reports === true } : null;
-    const opened = read(selected).$opened;
-    if (typeof opened === 'string' && known.has(opened) && !state.cacheDisplay && recoveryForeground()) {
-      clearOpenedNotification(selected, opened);
-      if (active) enqueue(selected, [opened], 'user_opened');
-      const pending = read(selected); delete pending.$opened; write(selected, pending);
-    }
+    reconcileNotificationOpens(selected);
     if (!active) { render(); return; }
     const ids = [...known].slice(-32);
     if (ids.length) enqueue(selected, ids, 'client_received');
     void flush(selected);
   }
+  function reconcileNotificationOpens(selected) {
+    if (state.cacheDisplay || !recoveryForeground()) return;
+    const pending = read(selected);
+    const opened = pendingOpenIds(pending.$opened);
+    const matched = opened.filter(id => known.has(id));
+    if (!matched.length) return;
+    for (const id of matched) clearOpenedNotification(selected, id);
+    const waiting = opened.filter(id => !known.has(id));
+    if (waiting.length) pending.$opened = waiting;
+    else delete pending.$opened;
+    if (active) enqueue(selected, matched, 'user_opened', pending);
+    else write(selected, pending);
+  }
   function notificationOpened(sessionId, messageId) {
     const selected = context(sessionId);
-    if (!selected || typeof messageId !== 'string' || !messageId || messageId.length > 160) return;
-    const pending = read(selected); pending.$opened = messageId; write(selected, pending);
+    if (!selected || !validOpenId(messageId)) return;
+    const pending = read(selected);
+    const opened = pendingOpenIds(pending.$opened).filter(id => id !== messageId);
+    pending.$opened = [...opened, messageId].slice(-pendingOpenLimit);
+    write(selected, pending);
     // The notification click alone is insufficient: wait for the same saved
     // message to be received by loadHistory before reporting user_opened.
   }
@@ -144,18 +164,23 @@ window.ChatReceipts = (() => {
     const item = lastState?.messages?.at(-1);
     if (!item) { line('尚未读取最近消息的收件记录。'); return; }
     line('服务器：消息已保存');
-    for (const [field, label] of [['client_received', '客户端收取'], ['system_notification_posted', '已向系统发布通知'], ['user_opened', '客户端打开消息']])
+    for (const [field, label] of [['client_received', '客户端收取'], ['system_notification_posted', '已向系统发布通知'], ['user_opened', '客户端打开记录']])
       line(label + '：' + (item[field + '_at'] ? '客户端已报告' : '尚无报告'));
-    line('这是已登录客户端上报，不证明人已读或系统显示了横幅；不改变发送状态。');
+    line('打开记录可能来自通知点击或应用内跳转，包含仅进入会话的情况。回执无法确认是否定位到某条消息、是否已读或是否显示了横幅。发送状态单独记录。');
   }
   async function refresh() {
     const selected = context(state.activeId);
     if (!current(selected)) { render(); return; }
+    const serial = ++refreshSerial;
+    const fresh = () => serial === refreshSerial && current(selected);
     try {
       const result = await apiClient.json('GET', '/chat/receipts?session_id=' + encodeURIComponent(selected.id));
-      if (!current(selected)) return;
+      if (!fresh()) return;
       if (result?.schema === 1) { active = { ...selected, partial: result.partial_reports === true }; lastState = result; lastError = ''; }
-    } catch (_) { if (current(selected)) lastError = '服务器收件记录暂不可读取。'; }
+    } catch (_) {
+      if (!fresh()) return;
+      lastError = '服务器收件记录暂不可读取。';
+    }
     render();
   }
   return { historyReceived, notificationOpened, messageOpened, refresh, render };

@@ -196,6 +196,9 @@ class ContextAssembler:
             state = self.begin(req, scope)
         req.extra_user_content_parts.append(part)
         state['emitted'] = [part]
+        state['selection_receipt'] = [dict(id=item.fragment_id, source=item.source,
+            evidence_kind=item.evidence_kind) for item in fragments
+            if item.fragment_id in material['selected']]
         self.metrics['emitted'] += 1
         return material
 

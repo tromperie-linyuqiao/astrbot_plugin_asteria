@@ -24,6 +24,10 @@ final class ReplyWatchDiagnostics {
         change(saved, scope, "last_success_at", System.currentTimeMillis(), "last_error", JSONObject.NULL);
     }
 
+    static synchronized void backgroundReceived(SharedPreferences saved, String scope) {
+        change(saved, scope, "last_background_received_at", System.currentTimeMillis(), null, null);
+    }
+
     static synchronized void readReason(SharedPreferences saved, String scope, String reason) {
         change(saved, scope, "read_reason", readCode(reason), null, null);
     }
@@ -42,9 +46,16 @@ final class ReplyWatchDiagnostics {
         change(saved, scope, "stopped_at", System.currentTimeMillis(), "stop_reason", stopCode(reason));
     }
 
-    static synchronized JSONObject account(SharedPreferences saved, String scope) throws JSONException {
+    static JSONObject account(SharedPreferences saved, String scope) throws JSONException {
+        return account(saved, scope, saved.getBoolean("sync_blocked_" + scope, false));
+    }
+
+    static synchronized JSONObject account(SharedPreferences saved, String scope, boolean syncBlocked) throws JSONException {
         JSONObject row = rows(saved).optJSONObject(scope);
         if (row == null) row = new JSONObject();
+        String reason = row.optString("read_reason");
+        Object readReason = !syncBlocked && "cursor_unavailable_open_chat".equals(reason)
+                ? JSONObject.NULL : readCode(reason);
         Object outcome = row.opt("last_notice_outcome");
         long postedAt = row.optLong("last_notice_posted_at");
         // The existing synchronous pre/post-call journal remains authoritative
@@ -65,10 +76,11 @@ final class ReplyWatchDiagnostics {
         } catch (JSONException invalid) { outcome = "posting_unknown"; }
         return new JSONObject().put("last_attempt_at", timestamp(row.optLong("last_attempt_at")))
                 .put("last_success_at", timestamp(row.optLong("last_success_at")))
+                .put("last_background_received_at", timestamp(row.optLong("last_background_received_at")))
                 .put("last_notice_posted_at", timestamp(postedAt))
                 .put("last_notice_outcome", "posted".equals(outcome) || "posting_unknown".equals(outcome) ? outcome : JSONObject.NULL)
                 .put("last_error", errorCode(row.optString("last_error")))
-                .put("read_reason", readCode(row.optString("read_reason")))
+                .put("read_reason", readReason)
                 .put("stopped_at", timestamp(row.optLong("stopped_at", saved.getLong("stop_at_" + scope, 0))))
                 .put("stop_reason", stopCode(row.optString("stop_reason", saved.getString("stop_reason_" + scope, ""))));
     }

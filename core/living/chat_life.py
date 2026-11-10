@@ -4,6 +4,7 @@ from __future__ import annotations
 from .chat_identity import identity_service
 from .chat_workspace import ChatWorkspace
 from .personal_space import PersonalSpace
+from .life_chat_links import LifeChatLinks, resolve_reference
 
 
 def resources(api, username, session):
@@ -35,6 +36,22 @@ def current(api, username, session, original):
     return True
 
 
+def chat_links(api, username, session, item):
+    return LifeChatLinks(item[2], item[4], username, session.session_id,
+        current=lambda: current(api, username, session, item))
+
+
+def resolve_references(api, username, session, parts):
+    chosen=[part for part in (parts or []) if isinstance(part,dict) and part.get('type')=='life_reference']
+    if not chosen: return {}
+    if len(chosen)>1: raise ValueError('每条消息只关联一项经历')
+    item=resources(api,username,session)
+    with item[2].journal._lock:
+        value=resolve_reference(item[2],item[4],chosen[0])
+        current(api,username,session,item)
+        return {value.get('record_id',value.get('event_id')):value}
+
+
 def _personal_browser_record(record):
     """The mobile browser needs content/status, never a foreign identity tuple."""
     value=dict(record);value['fields']=dict(record['fields'])
@@ -54,7 +71,22 @@ def get(api, username, session, query):
         searching = any(name in query for name in ('query', 'kind', 'limit', 'offset'))
         if len(targets) > 1 or targets and searching:
             raise ValueError('请选择一项生活资料或搜索档案')
-        if query.get('view') == 'personal':
+        if query.get('view') == 'catalog':
+            if targets or query.get('id'): raise ValueError('目录搜索不能同时指定资料编号')
+            from .life_catalog import search
+            if query.get('shared','false') not in ('true','false'): raise ValueError('分享筛选无效')
+            result=search(service,scope,query=query.get('query',''),kind=query.get('kind','all'),
+                date_from=query.get('date_from',''),date_to=query.get('date_to',''),shared=query.get('shared')=='true',
+                limit=int(query.get('limit',20)),offset=int(query.get('offset',0)))
+            for row in result['records']:
+                if row['kind'] not in ('event','character','thread'): row['record']=_personal_browser_record(row['record'])
+            value=dict(catalog=result)
+        elif query.get('view') == 'worldline':
+            if targets!=['event_id'] or searching or query.get('id'): raise ValueError('世界线需要明确经历编号')
+            from .life_worldline import project
+            value=dict(worldline=project(service,scope,query['event_id']))
+            value['worldline']['chat_links']=chat_links(api,username,session,item).list(query['event_id'])
+        elif query.get('view') == 'personal':
             if targets: raise ValueError('私人资料与经历查询不能混用')
             personal = PersonalSpace(service)
             kind = query.get('kind','all')
@@ -93,6 +125,7 @@ def get(api, username, session, query):
         elif query.get('event_id'):
             value = service.detail(scope, query['event_id'])
             if not value or value.get('event') is None: raise KeyError(query['event_id'])
+            value['chat_links']=chat_links(api,username,session,item).list(query['event_id'])
         elif query.get('person_id'):
             person = service.get_character(scope, query['person_id'])
             if person is None: raise KeyError(query['person_id'])
@@ -113,16 +146,34 @@ def get(api, username, session, query):
         return value
 
 
-def post(api, username, session, body):
+def post(api, username, session, body, *, saved_message=None):
     item = resources(api, username, session)
     service, scope = item[2], item[4]
+    if body['action']=='follow_up' and ('record_kind' in body or 'record_id' in body):
+        if any(body.get(key) for key in ('event_id','person_id','thread_id')): raise ValueError('追问只能选择一项资料')
+        from .life_chat_links import reference_record
+        with service.journal._lock:
+            current(api,username,session,item)
+            kind,identity=body.get('record_kind'),body.get('record_id')
+            row=reference_record(service,scope,kind,identity)
+            if not row or not row['valid'] or row['archived'] or row.get('deleted'):raise ValueError('请先核对这项资料')
+            reference=resolve_reference(service,scope,dict(type='life_reference',record_kind=kind,record_id=identity,record_revision=row['revision']))
+            current(api,username,session,item)
+            return dict(session_id=session.session_id,record_kind=kind,record_id=identity,record_revision=row['revision'],
+                draft='想听你接着聊聊“'+reference['label']+'”，最近有什么新的想法？',reference=reference)
     targets = [name for name in ('event_id', 'person_id', 'thread_id') if body.get(name)]
-    if len(targets) != 1 or body['action'] == 'correct' and targets != ['event_id']:
+    if len(targets) != 1 or body['action'] in {'correct','link_message','forget_link'} and targets != ['event_id']:
         raise ValueError('请选择一项可操作的生活资料')
     target = targets[0]; identity = body[target]
     with service.journal._lock:
         current(api, username, session, item)
-        if body['action'] == 'follow_up':
+        if body['action']=='link_message':
+            if saved_message is None: raise PermissionError('需要正式会话消息')
+            value=dict(link=chat_links(api,username,session,item).add(identity,body.get('expected_revision'),
+                saved_message,body.get('relation'),body.get('note',''),body.get('request_id')))
+        elif body['action']=='forget_link':
+            value=dict(link=chat_links(api,username,session,item).remove(identity,body.get('link_id'),body.get('expected_revision')))
+        elif body['action'] == 'follow_up':
             reader = {'event_id': service.get_event, 'person_id': service.get_character, 'thread_id': service.get_thread}[target]
             record = reader(scope, identity)
             if record is None: raise KeyError(identity)
@@ -132,6 +183,8 @@ def post(api, username, session, body):
                 '想听你聊聊“'+fields['name']+'”，你们之间有什么故事？' if target == 'person_id' else
                 '之前的“'+fields['title']+'”现在怎么样了？'+('这件事后来如何收尾的？' if fields['status'] == 'resolved' else '想听你接着聊。'))
             value = {target: identity, target.removesuffix('_id')+'_revision': record['revision'], 'draft': draft}
+            if target=='event_id':
+                value['reference']=dict(type='life_reference',event_id=identity,event_revision=record['revision'],label=fields['title'])
         else:
             event = service.get_event(scope, identity)
             if event is None: raise KeyError(identity)

@@ -183,6 +183,10 @@ class PersonalSpace:
 
     def _row(self, scope, kind, identity):
         row = self.journal.fetch(_NS[_kind(kind)], _id(identity), scope)
+        return self._checked_row(scope,kind,identity,row)
+
+    def _checked_row(self, scope, kind, identity, row):
+        _kind(kind);_id(identity)
         if row is None:
             return None
         data = row['data']
@@ -210,14 +214,17 @@ class PersonalSpace:
                     or ref['kind'] not in {'event', 'character', 'space', 'interest'}):
                 raise RuntimeError('invalid personal-space dependency')
             life_ref = ref['kind'] in {'event', 'character'}
-            target = self.life._row(ref['kind'], scope, ref['id']) if life_ref else self._row(scope, ref['kind'], ref['id'])
+            row_key=('row',ref['kind'],ref['id'])
+            if row_key not in cache:
+                cache[row_key]=self.life._row(ref['kind'],scope,ref['id']) if life_ref else self._row(scope,ref['kind'],ref['id'])
+            target=cache[row_key]
             if target is None:
                 reason = 'missing_source'
             elif target['data']['archived'] or target['data'].get('deleted'):
                 reason = 'archived_source'
             elif target['data'].get('identity_revision' if ref['kind'] == 'character' else 'version') != ref['version']:
                 reason = 'source_corrected'
-            elif ref['kind'] == 'event' and self.life._invalid(scope, target['data']):
+            elif ref['kind'] == 'event' and self.life._invalid(scope, target['data'],cache=cache):
                 reason = 'source_needs_review'
             elif not life_ref and self._invalid(scope, target['data'], seen, cache):
                 reason = 'source_needs_review'
@@ -484,14 +491,20 @@ class PersonalSpace:
             self._scope(scope)
         return result
 
-    def history(self, scope, kind, id, limit=20):
+    def history(self, scope, kind, id, limit=20, *, offset=0, expected_revision=None):
         scope, kind = self._scope(scope), _kind(kind)
-        if type(limit) is not int or not 1 <= limit <= 100:
+        if (type(limit) is not int or not 1 <= limit <= 100
+                or type(offset) is not int or not 0 <= offset <= 50000):
             raise ValueError('bounded personal-space history required')
-        current = self._row(scope, kind, id)
-        records = []
-        if current:
-            for revision in range(current['revision'] - 1, max(0, current['revision'] - 1 - limit), -1):
+        if expected_revision is not None:
+            _revision(expected_revision, zero=True)
+        with self.journal._lock:
+            current = self._row(scope, kind, id)
+            current_revision = current['revision'] if current else 0
+            if expected_revision is not None and expected_revision != current_revision:
+                raise JournalConflict('personal-space history revision changed')
+            total, records = max(0, current_revision - 1), []
+            for revision in range(total - offset, max(0, total - offset - limit), -1):
                 row = self.journal.fetch(_HISTORY, kind + '.' + id + '.' + str(revision), scope)
                 if row:
                     entry = deepcopy(row['data'])
@@ -500,8 +513,8 @@ class PersonalSpace:
                     entry.get('snapshot', {}).pop('resource_snapshot', None)
                     entry.get('snapshot', {}).pop('source_snapshots', None)
                     records.append(entry)
-        self._scope(scope)
-        return dict(records=records, total=current['revision'] - 1 if current else 0)
+            self._scope(scope)
+        return dict(records=records, total=total, offset=offset, limit=limit, current_revision=current_revision)
 
     def generation(self, scope):
         scope = self._scope(scope)
@@ -525,7 +538,8 @@ class PersonalSpace:
                     resource = self._resource(scope, fields)
                     resources.append([key, resource['status'], resource['revision']])
             self._scope(scope)
-            return _digest([values, life_values, resources])
+            from .life_choices import LifeChoices
+            return _digest([values, life_values, resources, LifeChoices(self.life, self).revision(scope)])
 
     def list_review(self, scope, query='', limit=30, offset=0):
         """Only active records whose captured sources need human review."""
@@ -731,22 +745,35 @@ class PersonalSpace:
     def decision(self, scope):
         scope = self._scope(scope)
         with self.journal._lock:
+            from .life_choices import LifeChoices
+            controls = LifeChoices(self.life, self).snapshot(scope)
+            postponed = {(item['kind'], item['id']): item for item in controls['deferred'] if item['active']}
             now = self.life._now()
-            events = self.life.list_events(scope, limit=200)['records']
-            # The list ABI pages at 200 while the retained event ledger is
-            # bounded at 512. Include older real thread sources in the preview.
-            for offset in range(200, _LIFE_LIMIT['event'], 200):
-                events.extend(self.life.list_events(scope, limit=200, offset=offset)['records'])
-            threads = self.life.list_threads(scope, status='open', limit=128)['records']
-            people = self.life.list_characters(scope, limit=64)['records']
-            interests = self.list_records(scope, 'interest', limit=64)['records']
-            explorations = self.list_records(scope, 'exploration', limit=128)['records']
-            collections = self.list_records(scope, 'collection', limit=200)['records']
+            cache={};snapshot=self.life._retrieval_snapshot(scope,cache=cache)
+            events=list(snapshot['records']['event'].values())
+            threads=[row for row in snapshot['records']['thread'].values() if row['fields']['status']=='open']
+            people=list(snapshot['records']['character'].values())
+            personal={}
+            for kind in ('interest','exploration','collection'):
+                rows=self.journal.list(_NS[kind],scope,limit=_LIMIT[kind]+1)
+                if len(rows)>_LIMIT[kind]:raise RuntimeError('personal-space record capacity reached')
+                values=[]
+                for row in rows:
+                    checked=self._checked_row(scope,kind,row['key'],row)
+                    cache[('row',kind,row['key'])]=checked
+                    record=self._project(scope,checked,cache)
+                    if record['valid']:values.append(record)
+                personal[kind]=values
+            interests,explorations,collections=(personal[kind] for kind in ('interest','exploration','collection'))
             candidates = []
             def option(action, record, priority, eligible, reason):
+                deferred = postponed.get((record['kind'], record['id']))
+                if deferred:
+                    eligible, reason = False, 'explicitly_deferred'
                 candidates.append(dict(action=action, kind=record['kind'], id=record['id'], version=record['version'],
                     revision=record['revision'], name=record['fields'].get('name', record['fields'].get('title', '')),
-                    priority=priority, eligible=eligible, reason=reason))
+                    priority=priority, eligible=eligible, reason=reason,
+                    defer_until=deferred['until'] if deferred else None))
             event_times = {row['id']: row['fields']['occurred_at'] for row in events}
             for row in explorations:
                 if row['fields']['status'] not in {'planned', 'active'}:
@@ -777,10 +804,14 @@ class PersonalSpace:
             options.append(dict(action='ordinary_life', kind=None, id=None, version=None, priority=5,
                 eligible=ordinary_due, reason='ordinary_day_available' if ordinary_due else 'ordinary_day_cooldown'))
             options.append(dict(action='idle', kind=None, id=None, version=None, priority=0, eligible=True, reason='quiet_day_allowed'))
+            if controls['rest'] and controls['rest']['active']:
+                options.insert(0, dict(action='rest', kind=None, id=None, version=None, priority=100,
+                    eligible=True, reason='explicit_rest', defer_until=controls['rest']['until']))
             selected = next(value for value in options if value['eligible'])
             self._scope(scope)
             return dict(action=selected['action'], selected=deepcopy(selected), options=options,
-                deterministic=True, model_required=selected['action'] != 'idle', evidence_kind=EVIDENCE,
+                deterministic=True, model_required=selected['action'] not in {'idle', 'rest'}, evidence_kind=EVIDENCE,
+                controls=controls,
                 timezone=self.life.timezone_name, local_date=datetime.fromtimestamp(now, self.life.timezone).date().isoformat(),
                 source_versions=[{key: value[key] for key in ('kind', 'id', 'version', 'revision')}
                     for value in options if value['id'] is not None])
@@ -870,7 +901,7 @@ class PersonalSpace:
                 if (current is None or current['data']['archived'] or self.life._invalid(scope, current['data'])
                         or current['data']['version'] != event_version):
                     raise ValueError('current valid persisted effect event required')
-                pending, seen = [], set()
+                pending, seen, growth_deferred = [], set(), []
                 for index, effect in enumerate(effects):
                     if type(effect) is not dict or set(effect) - {'kind', 'id', 'expected_revision', 'fields', 'changes'} or 'kind' not in effect:
                         raise ValueError('explicit bounded personal-space effect required')
@@ -896,6 +927,15 @@ class PersonalSpace:
                         raise ValueError('bounded effect event references required')
                     proposed['event_ids'] = list(dict.fromkeys([*event_ids, event_id]))
                     fields = self._fields(kind, proposed)
+                    growth_marks = None
+                    if kind == 'interest':
+                        from .life_growth import constrain
+                        growth_marks, held = constrain(old['data'] if old else None, fields,
+                            ('attention', 'status', 'next_direction'), now=self.life._now(),
+                            event_id=event_id, event_version=event_version)
+                        if held:
+                            growth_deferred.append(dict(kind=kind, id=effect.get('id'),
+                                fields=[item['field'] for item in held], reasons=held))
                     if kind == 'collection':
                         if fields.get('resource_scope') is not None and fields['resource_scope'] != scope:
                             link_fields=('resource_type','resource_id','resource_scope','resource_revision')
@@ -923,6 +963,7 @@ class PersonalSpace:
                         data = self._new(scope, kind, request_id + '.effect.' + str(index), fields,
                             dict(kind='model_generated', ref=event_id))
                     identity = (kind, data['id'])
+                    if growth_marks is not None: data['growth_updates'] = growth_marks
                     if identity in seen:
                         raise ValueError('duplicate personal-space effect target')
                     seen.add(identity)
@@ -933,7 +974,7 @@ class PersonalSpace:
                     data['source_snapshots'] = self._capture_sources(scope, data['dependencies'], staged)
                 result = dict(schema=1, state='complete', request_id=request_id, fingerprint=fingerprint,
                     event_id=event_id, event_version=event_version, records=[dict(kind=kind, id=data['id']) for kind, data, _ in pending],
-                    evidence_kind=EVIDENCE, created=True, at=self.life._now())
+                    growth_deferred=growth_deferred, evidence_kind=EVIDENCE, created=True, at=self.life._now())
                 self._write(db, scope, pending, reason='recorded sourced life effects', actor='model_generated', receipt=(key, result))
             self._scope(scope, 'write')
         return result

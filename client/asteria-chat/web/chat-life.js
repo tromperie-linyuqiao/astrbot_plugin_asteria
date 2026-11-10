@@ -6,7 +6,10 @@ window.ChatLife = (() => {
   let owner = '', session = '', ownerAuth = null, epoch = 0, serial = 0, busy = false;
   let overview = null, detail = null, view = 'today', selection = null, editor = null;
   let searchData = null, listStale = false, restorePosition = null;
+  let catalogKind,catalogShared,catalogFrom,catalogTo;
   const positions = new Map(), trail = [];
+  let worldline = null, linking = null;
+  const linkPending = new Map();
   const pending = new Map(); // Only unfinished user corrections, never ledger data.
   const statuses = { ongoing: '进行中', completed: '已结束', cancelled: '已取消', open: '仍在继续', resolved: '已解决' };
   const kinds = { canonical: '正典人物', recurring: '原创常驻人物', temporary: '临时人物' };
@@ -26,16 +29,20 @@ window.ChatLife = (() => {
   const recordName = (kind, record) => kind === 'character' ? fields(record).name || '未命名人物' : eventName(record);
   const selectedRecord = () => detail?.[{ event: 'event', character: 'person', thread: 'thread' }[selection?.kind]];
   const parameter = kind => ({ event: 'event_id', character: 'person_id', thread: 'thread_id' })[kind];
-  const listKey = () => searchData ? 'search:' + searchData.query : view;
+  const listKey = () => searchData ? 'search:' + JSON.stringify([searchData.query,searchData.kind,searchData.date_from,searchData.date_to,searchData.shared]) : view;
+  const catalogFilter=()=>({kind:catalogKind.value,date_from:catalogFrom.value,date_to:catalogTo.value,shared:catalogShared.value});
   const say = value => { note.textContent = value; };
   function controls() {
     refresh.disabled = back.disabled = busy;
     searchInput.disabled = searchGo.disabled = busy;
+    for(const control of [catalogKind,catalogShared,catalogFrom,catalogTo])if(control)control.disabled=busy;
     for (const n of body.querySelectorAll('button,input,textarea,select')) n.disabled = busy || n.dataset.unavailable === 'true';
+    if(linking?.save)linking.save.disabled=busy||linking.save.dataset.unavailable==='true'||linkPending.has(linkKey());
     if (editor?.save) editor.save.disabled = busy || !editor.confirm.checked || editor.stale || pending.has(key(editor.record.id));
     for (const n of tabs.querySelectorAll('button')) n.disabled = busy;
   }
   function invalidate() {
+    worldline = linking = null;
     epoch++; serial++; owner = session = ''; ownerAuth = null; busy = false; overview = detail = selection = editor = searchData = restorePosition = null; listStale = false; positions.clear(); trail.length = 0;
     body?.replaceChildren(); if (body) delete body.dataset.listKey; if (note) note.textContent = '';
   }
@@ -51,10 +58,18 @@ window.ChatLife = (() => {
     tabs = make('nav', undefined, 'life-tabs'); tabs.setAttribute('aria-label', '生活档案分类');
     for (const [id, label] of [['today', '今日'], ['recent', '近期'], ['ongoing', '进行中'], ['people', '人物']]) { const n = button(label, () => { rememberList(); view = id; searchData = selection = editor = null; searchInput.value = ''; if (overview && !listStale) renderOverview(); else void read(); }, 'life-tab'); n.dataset.lifeTab = id; tabs.append(n); }
     searchForm = make('form', undefined, 'life-search'); searchForm.setAttribute('role', 'search');
-    searchInput = make('input'); searchInput.id = 'life-search'; searchInput.type = 'search'; searchInput.maxLength = 120; searchInput.placeholder = '搜索经历、人物或未完事项'; searchInput.setAttribute('aria-label', '搜索生活档案');
+    searchInput = make('input'); searchInput.id = 'life-search'; searchInput.type = 'search'; searchInput.maxLength = 120; searchInput.placeholder = '搜索经历、人物、兴趣或收藏'; searchInput.setAttribute('aria-label', '搜索生活档案');
     searchGo = make('button', '搜索', 'text-button'); searchGo.type = 'submit';
     searchForm.append(searchInput, searchGo); searchForm.addEventListener('submit', event => { event.preventDefault(); if (!busy) void searchRecords(searchInput.value.trim()); });
-    searchInput.addEventListener('input', () => { if (!busy && searchData && !searchInput.value.trim()) { rememberList(); searchData = null; if (overview && !listStale) renderOverview(); else void read(); } });
+    const filter=make('details',undefined,'life-catalog-filter');filter.append(make('summary','分类、日期与分享筛选'));
+    const grid=make('div',undefined,'life-catalog-fields');
+    const choice=(label,id,options)=>{const row=make('label'),select=make('select');select.id=id;select.setAttribute('aria-label',label);for(const [key,text]of options){const option=make('option',text);option.value=key;select.append(option);}row.append(make('span',label),select);grid.append(row);return select;};
+    catalogKind=choice('资料类型','life-catalog-kind',[['all','全部档案'],['event','经历'],['character','人物'],['thread','待续事项'],['interest','兴趣'],['exploration','探索'],['collection','收藏'],['space','空间'],['item','物件']]);
+    catalogShared=choice('分享记录','life-catalog-shared',[['','不限'],['true','已确认分享'],['false','尚未确认分享']]);
+    const date=(label,id)=>{const row=make('label'),input=make('input');input.type='date';input.id=id;input.setAttribute('aria-label',label);row.append(make('span',label),input);grid.append(row);return input;};
+    catalogFrom=date('起始日期','life-catalog-from');catalogTo=date('结束日期','life-catalog-to');
+    filter.append(grid,make('p','按角色时区筛选：经历用发生日期，其他资料用更新日期；分享筛选覆盖全部记录。','life-muted'));searchForm.append(filter);
+    tabs.append(button('全部档案',()=>{if(!busy){selection=null;catalogKind.value='all';void searchRecords(searchInput.value.trim());}},'life-tab'));
     body = make('section', undefined, 'life-body'); body.id = 'life-body';
     const actions = make('div', undefined, 'life-toolbar'); refresh = button('重新读取', () => read()); refresh.id = 'life-refresh'; actions.append(refresh);
     note = make('p', '', 'life-note'); note.id = 'life-note'; note.setAttribute('role', 'status'); note.setAttribute('aria-live', 'polite');
@@ -199,6 +214,7 @@ window.ChatLife = (() => {
       for (const person of rows) body.append(personCard(person, true));
       if (!rows.length) body.append(make('p', '还没有相关人物档案。偶遇的人不必立即成为常驻人物。', 'life-empty'));
     }
+    if(linking){heading.textContent='关联这条聊天';body.prepend(make('p','选择一段经历，再确认关联方式。原聊天内容不会改写。','life-link-intro'));}
     restoreReading(positions.get(view)); say('已从 TLS 读取。查看档案不会推进生活或发送消息。'); controls();
   }
   function personCard(person, expanded = false) {
@@ -220,7 +236,7 @@ window.ChatLife = (() => {
     const record = detail.event, f = fields(record), main = card(eventName(record));
     main.append(make('small', [time(f.occurred_at), statuses[f.status] || '状态未提供', recordNote(record)].filter(Boolean).join(' · ')), make('p', f.content || '暂无正文', 'life-content'));
     const actions = make('div', undefined, 'life-event-actions'), ask = button('追问这段经历', followUp, 'primary-button'), correct = button('纠正内容', () => editEvent());
-    ask.dataset.unavailable = String(record.valid === false || record.archived === true); correct.dataset.unavailable = String(record.archived === true); actions.append(ask, correct); main.append(actions); body.append(main);
+    ask.dataset.unavailable = String(record.valid === false || record.archived === true); correct.dataset.unavailable = String(record.archived === true); actions.append(ask, correct, button('查看世界线',()=>openWorldline(record.id))); main.append(actions); body.append(main);
     for (const person of detail.related?.people || []) body.append(personCard(person));
     body.append(links('前面的经历', detail.related?.previous), links('后来的经历', detail.related?.following));
     const threads = card('关联事项'); for (const item of detail.threads || []) threads.append(threadCard(item));
@@ -229,6 +245,8 @@ window.ChatLife = (() => {
     if (!(detail.shares || []).length) shares.append(make('p', '尚无分享回执。值得分享不等于已经发送。', 'life-muted')); body.append(shares);
     const history = make('details', undefined, 'life-history'); history.append(make('summary', '修正历史（' + (detail.history || []).length + '）'));
     for (const old of detail.history || []) { const version = old.snapshot || old.record || old, value = fields(version); history.append(make('p', '版本 ' + (version.version ?? old.version ?? '未提供') + ' · ' + (value.title || eventName(record))), make('p', value.content || '原内容未提供', 'life-preview')); } body.append(history);
+    renderChatLinks(detail.chat_links || []);
+    if(linking) renderLinkForm(record);
     const operation = pending.get(key(record.id)); if (operation?.phase === 'unknown') { if (operation.read) body.append(button('已核对当前版本，结束等待', () => { pending.delete(key(record.id)); renderDetail(); say('已结束上次操作的等待；如需继续纠正，请重新比较当前版本。'); }, 'life-link')); say(operation.read ? '上次保存结果待核对。当前显示服务器版本，应用不会重新提交。' : '上次保存结果待核对。请重新读取当前版本，应用不会重新提交。'); }
     else say(record.archived ? '此记录已归档，仅供查阅。' : record.valid === false ? '这条经历待复核；可纠正内容，核对前不能追问。' : '虚构经历来自当前有效档案；追问会先加入可编辑输入框。'); controls();
   }
@@ -250,7 +268,7 @@ window.ChatLife = (() => {
     return data;
   }
   async function read() {
-    if (busy || !dialog?.open) return; if (!selection && searchData) return searchRecords(searchData.query);
+    if (busy || !dialog?.open) return; if(worldline)return openWorldline(worldline.event_id); if (!selection && searchData) return searchRecords(searchData.query);
     rememberList(); const t = ticket(); busy = true; controls(); say('正在读取生活档案…');
     const chosen = selection, editing = editor ? { title: editor.title.value, content: editor.content.value, status: editor.status.value } : null;
     try {
@@ -262,14 +280,98 @@ window.ChatLife = (() => {
     } catch (error) { if (current(t)) { say(error.status === 404 ? chosen ? '这条档案已不可用，请返回列表重新读取。' : '当前服务器尚未提供生活档案，请更新服务端后再读取。' : errorText(error)); } return false; }
     finally { if (current(t)) { busy = false; controls(); } }
   }
+
+  const worldKinds={event:'经历',character:'人物',thread:'待续事项',interest:'兴趣',exploration:'探索',collection:'收藏',space:'空间',item:'物件'};
+  const worldValue=value=>Array.isArray(value)?value.join('；'):({steady:'持续关注',growing:'兴趣渐浓',fading:'兴趣渐淡',active:'进行中',paused:'暂时搁置',completed:'已完成',planned:'待探索',cancelled:'已取消'}[value]||value||'未记录');
+  const worldRelations={continues:'延续为',involves:'参与',grounds:'成为来源',explores:'继续探索',collects:'相关收藏',contains:'包含'};
+  function worldOpen(row){
+    worldline=null;
+    if(parameter(row.kind)) { if(selection?.kind===row.kind&&selection.id===row.id)renderDetail();else openRecord(row.kind,row.id); }
+    else window.ChatPersonalSpace?.openRecord(row.kind,row.id);
+  }
+  async function openWorldline(id){
+    if(busy||!dialog?.open)return;const t=ticket();busy=true;controls();say('正在读取关联世界线…');
+    try{
+      const data=validate(await apiClient.json('GET','/chat/life?session_id='+encodeURIComponent(t.session)+'&view=worldline&event_id='+encodeURIComponent(id)),t.session);if(!current(t))return;
+      const graph=data.worldline;if(graph?.event_id!==id||!Array.isArray(graph.nodes)||!Array.isArray(graph.edges))throw Error('服务器未返回这段经历的世界线。');
+      worldline=graph;heading.textContent='这段经历的世界线';body.replaceChildren();tabs.hidden=searchForm.hidden=true;back.hidden=false;
+      const nodes=new Map(graph.nodes.map(n=>[n.id,n])),root=nodes.get(graph.root_id||id);
+      body.append(card(root?.title||'世界线','life-world-root'),make('p','只连接已有资料中明确记录的关系；相邻时间不代表发生因果。','life-muted'));
+      const sections=new Map();
+      for(const row of graph.nodes){if(row.id===(graph.root_id||id))continue;const name=row.kind==='event'?'前后经历':row.kind==='character'?'相关人物':row.kind==='thread'?'仍在继续':'兴趣与私人档案';if(!sections.has(name))sections.set(name,[]);sections.get(name).push(row);}
+      for(const [title,rows]of sections){const box=card(title);for(const row of rows){
+        const item=make('section',undefined,'life-world-node');item.append(button((worldKinds[row.kind]||'资料')+' · '+row.title,()=>worldOpen(row),'life-link'));
+        if(row.summary)item.append(make('p',row.summary));
+        if(row.valid===false||row.archived)item.append(make('small','来源已变化或归档 · 待复核，不作为有效前情','life-warning'));
+        for(const edge of graph.edges.filter(e=>e.from===row.id||e.to===row.id)){const from=nodes.get(edge.from),to=nodes.get(edge.to);if(from&&to)item.append(make('small',from.title+' → '+(worldRelations[edge.relation]||'关联')+' → '+to.title+(edge.valid===false?'（待复核）':''),'life-world-edge'));}
+        box.append(item);
+      }body.append(box);}
+      if(!sections.size)body.append(make('p','尚无明确关联，不会自动补写故事。','life-empty'));
+      const growth=card('有来源的变化');
+      for(const row of graph.growth||[]){const item=make('section',undefined,'life-world-node');item.append(make('strong',row.title),make('p',({relationship:'人物关系',attention:'关注变化',status:'状态',findings:'探索发现',next_direction:'下一方向'}[row.field]||row.field)+'：'+worldValue(row.before)+' → '+worldValue(row.after)));
+        for(const sourceId of row.source_event_ids||[]){const source=nodes.get(sourceId);item.append(button('来源：'+(source?.title||'相关经历'),()=>{worldline=null;openRecord('event',sourceId);},'life-link'));}
+        if(row.valid===false)item.append(make('small','关联来源待复核','life-warning'));growth.append(item);}
+      if(!(graph.growth||[]).length)growth.append(make('p','没有可展示的有来源变化；普通经历不会自动改写核心人格。','life-muted'));body.append(growth);
+      if(graph.coverage?.truncated)body.append(make('p','关联较多，这里仅显示有限的附近关系；可打开具体资料继续查看。','life-muted'));
+      say('按当前档案读取，未调用模型或改写任何经历。');
+    }catch(error){if(current(t))say(errorText(error));}
+    finally{if(current(t)){busy=false;controls();}}
+  }
+  const linkTypes={asked_about:'询问过这段经历',interested:'明确对它感兴趣',recommended:'推荐了相关内容',correction:'这条聊天提出纠正',discussed:'一起讨论过'};
+  const linkKey=()=>owner+'|'+(selection?.id||'')+'|'+(linking?.messageId||'');
+  function renderChatLinks(rows){
+    const box=card('我们聊过');for(const [k,operation]of linkPending)if(k.startsWith(owner+'|remove|')&&operation.event_id===selection?.id&&!rows.some(r=>r.id===operation.id))linkPending.delete(k);
+    for(const row of rows){const entry=make('section',undefined,'life-world-node');
+      entry.append(make('strong',linkTypes[row.relation]||'明确关联'),make('p',row.note||'由你明确关联的一条真实聊天。'));
+      entry.append(make('small',row.valid===false?'经历来源已变化 · 待复核':'真实聊天关联，不代表用户现实经历'));
+      if(Number.isInteger(row.revision)&&row.id){const remove=button('移除这个关联',()=>{remove.hidden=true;const confirm=button('确认移除关联',()=>forgetChatLink(row),'text-button');entry.append(make('p','只移除这项关联，原聊天与生活经历保留。','life-muted'),confirm);},'life-link');remove.dataset.unavailable=String(linkPending.has(owner+'|remove|'+row.id));entry.append(remove);
+        if(linkPending.has(owner+'|remove|'+row.id))entry.append(make('p','移除结果待核对，请重新读取；不会重发。','life-warning'));}
+      box.append(entry);
+    }if(!rows.length)box.append(make('p','还没有明确关联的聊天，可从消息的“···”中选择“关联生活经历”。','life-muted'));body.append(box);
+  }
+  async function forgetChatLink(row){
+    const eventId=selection?.id,pendingKey=owner+'|remove|'+row.id;if(busy||!eventId||linkPending.has(pendingKey))return;
+    const t=ticket(),operation={event_id:eventId,id:row.id,request_id:'life-forget-'+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+'-'+Math.random().toString(36).slice(2))};linkPending.set(pendingKey,operation);busy=true;controls();say('正在移除这项关联…');
+    try{
+      const data=validate(await apiClient.json('POST','/chat/life',{session_id:t.session,action:'forget_link',event_id:eventId,link_id:row.id,expected_revision:row.revision,request_id:operation.request_id}),t.session);
+      if(data.link?.id!==row.id||data.link.active!==false||data.link.state!=='removed')throw Error('移除结果尚未确认，请重新读取核对。');
+      linkPending.delete(pendingKey);if(!current(t))return;busy=false;await read();if(sameOwner(t))say('已移除关联，原聊天与生活经历保留。');
+    }catch(error){if([400,403,404,409].includes(error.status))linkPending.delete(pendingKey);if(current(t))say(errorText(error)+' 结果待核对时请重新读取，不会自动重试。');}
+    finally{if(current(t)){busy=false;controls();}}
+  }
+  function renderLinkForm(record){
+    const box=card('将选中的聊天关联到这里'),choose=make('select'),noteInput=make('textarea');choose.setAttribute('aria-label','聊天关联方式');noteInput.setAttribute('aria-label','关联补充说明');noteInput.rows=2;noteInput.maxLength=240;noteInput.placeholder='可选：补充关联原因，不必复制聊天';noteInput.value=linking.note;
+    for(const [value,label]of Object.entries(linkTypes)){const o=make('option',label);o.value=value;choose.append(o);}choose.value=linking.relation;
+    choose.onchange=()=>linking.relation=choose.value;noteInput.oninput=()=>linking.note=noteInput.value;
+    const save=button('确认关联这条聊天',()=>saveChatLink(record),'primary-button');save.dataset.unavailable=String(record.valid===false||record.archived===true);linking.save=save;
+    box.append(choose,noteInput,make('p','仅记录你明确确认的关联；不会把虚构经历写成你的现实生活。纠正内容仍需使用“纠正内容”。','life-muted'),save);body.prepend(box);
+    const pendingKey=linkKey(),operation=linkPending.get(pendingKey);
+    if(operation){const found=(detail.chat_links||[]).some(row=>String(row.message_id)===linking.messageId&&row.relation===operation.relation);
+      if(found){linkPending.delete(pendingKey);box.append(make('p','已从服务器核对到这条关联。','life-muted'));save.dataset.unavailable='true';}
+      else{box.append(make('p','上次保存结果待核对。可重新读取，应用不会再次提交。','life-warning'));save.dataset.unavailable='true';}}
+  }
+  async function saveChatLink(record){
+    if(busy||!linking||record.valid===false||record.archived||linkPending.has(linkKey()))return;
+    const t=ticket(),messageId=linking.messageId,relation=linking.relation,noteText=linking.note.trim(),pendingKey=linkKey();
+    const operation={relation,request_id:'life-link-'+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+'-'+Math.random().toString(36).slice(2))};linkPending.set(pendingKey,operation);busy=true;controls();say('正在保存明确关联…');
+    try{
+      const data=validate(await apiClient.json('POST','/chat/life',{session_id:t.session,action:'link_message',event_id:record.id,message_id:messageId,relation,note:noteText,expected_revision:record.revision,request_id:operation.request_id}),t.session);
+      if(data.link?.event_id!==record.id||String(data.link?.message_id)!==messageId||data.link?.relation!==relation)throw Error('关联结果尚未确认，请重新读取核对。');
+      linkPending.delete(pendingKey);if(!current(t))return;linking=null;busy=false;await read();if(sameOwner(t))say('已保存明确关联；原聊天和经历正文保持。');
+    }catch(error){if([400,403,404,409].includes(error.status))linkPending.delete(pendingKey);if(current(t))say(errorText(error)+' 保存结果待核对时请重新读取，不会自动重试。');}
+    finally{if(current(t)){busy=false;controls();}}
+  }
+
   function openEvent(id) { openRecord('event', id); }
   function openRecord(kind, id) {
+    if(!parameter(kind)&&Object.hasOwn(worldKinds,kind)){window.ChatPersonalSpace?.openRecord(kind,id);return;}
     if (!parameter(kind) || !validId(id) || busy || selection?.kind === kind && selection.id === id) return;
     if (selection) trail.push({ selection, position: readingPosition() }); else rememberList();
-    selection = { kind, id }; detail = editor = restorePosition = null; tabs.hidden = searchForm.hidden = true; back.hidden = false; body.replaceChildren(make('p', '正在读取这条档案…')); void read();
+    worldline=null; selection = { kind, id }; detail = editor = restorePosition = null; tabs.hidden = searchForm.hidden = true; back.hidden = false; body.replaceChildren(make('p', '正在读取这条档案…')); void read();
   }
   function returnToList() {
     if (busy) return;
+    if(worldline){worldline=null;renderDetail();return;}
     if (selection && trail.length) { const previous = trail.pop(); selection = previous.selection; restorePosition = previous.position; editor = null; void read(); return; }
     if (!selection && searchData) { rememberList(); searchData = null; searchInput.value = ''; if (overview && !listStale) renderOverview(); else void read(); return; }
     selection = editor = restorePosition = null;
@@ -279,36 +381,39 @@ window.ChatLife = (() => {
   function renderSearch() {
     detail = selection = editor = null; heading.textContent = '找到的档案'; tabs.hidden = searchForm.hidden = false; back.hidden = false; back.setAttribute('aria-label', '返回生活档案列表'); body.replaceChildren(); body.dataset.listKey = listKey();
     for (const n of tabs.querySelectorAll('button')) n.setAttribute('aria-pressed', 'false');
-    const data = searchData; body.append(make('p', '“' + data.query + '” · ' + data.total + ' 条当前记录', 'life-search-count'));
-    for (const { kind, record } of data.records) { const row = kind === 'event' ? eventCard(record) : kind === 'character' ? personCard(record) : threadCard(record); row.prepend(make('small', { event: '经历', character: '人物', thread: '事项' }[kind], 'life-kind')); body.append(row); }
+    const data = searchData; body.append(make('p', (data.query?'“'+data.query+'”':'当前筛选') + ' · ' + data.total + ' 条记录', 'life-search-count'));
+    body.append(make('p','经历按发生日期、其他资料按更新日期 · '+(data.timezone||'角色时区'),'life-muted'));
+    for (const { kind, record } of data.records) { let row;if(kind==='event')row=eventCard(record);else if(kind==='character')row=personCard(record);else if(kind==='thread')row=threadCard(record);else{row=card(fields(record).name||'生活资料');row.append(make('p',(fields(record).description||'').slice(0,180),'life-preview'),button('查看详情',()=>window.ChatPersonalSpace?.openRecord(kind,record.id),'life-link'));}row.prepend(make('small',worldKinds[kind],'life-kind'));body.append(row);}
     if (!data.records.length) body.append(make('p', '暂时没有匹配的档案。可以换个人物名、地点或经历中的词再找找。', 'life-empty'));
     if (data.offset + data.limit < data.total) body.append(button('再看一些', () => searchRecords(data.query, true), 'life-more'));
     restoreReading(positions.get(listKey())); say('结果来自服务器当前有效档案，查看或搜索不会推进生活。'); controls();
   }
   async function searchRecords(query, append = false) {
     if (busy || !dialog?.open || selection) return false;
-    if (!query) { rememberList(); searchData = null; if (overview && !listStale) renderOverview(); else void read(); return true; }
-    rememberList(); const t = ticket(), previous = searchData, offset = append && previous?.query === query ? previous.offset + previous.limit : 0;
+    const filters=catalogFilter();if(filters.date_from&&filters.date_to&&filters.date_from>filters.date_to){say('结束日期不能早于起始日期。');return false;}
+    rememberList(); const t = ticket(), previous = searchData, compatible=previous?.query===query&&previous?.filterKey===JSON.stringify(filters),offset=append&&compatible?previous.offset+previous.limit:0;
     busy = true; controls(); say('正在搜索生活档案…');
     try {
-      const data = validate(await apiClient.json('GET', '/chat/life?session_id=' + encodeURIComponent(t.session) + '&query=' + encodeURIComponent(query) + '&kind=all&limit=20&offset=' + offset), t.session); if (!current(t)) return false;
-      const result = data.search;
-      if (!result || result.query !== query || result.kind !== 'all' || !Array.isArray(result.records) || !Number.isInteger(result.total) || result.total < 0 || result.offset !== offset || !Number.isInteger(result.limit) || result.limit < 1 || result.records.some(row => !parameter(row.kind) || !validId(row.record?.id))) throw Error('服务器未返回可读取的搜索结果。');
-      const records = append && previous?.query === query ? [...previous.records] : [];
+      const params=new URLSearchParams({session_id:t.session,view:'catalog',query,kind:filters.kind,limit:'20',offset:String(offset)});for(const name of ['date_from','date_to','shared'])if(filters[name])params.set(name,filters[name]);
+      const data = validate(await apiClient.json('GET', '/chat/life?' + params), t.session); if (!current(t)) return false;
+      const result = data.catalog;
+      if (!result || result.query !== query || result.kind !== filters.kind || !Array.isArray(result.records) || !Number.isInteger(result.total) || result.total < 0 || result.offset !== offset || !Number.isInteger(result.limit) || result.limit < 1 || result.records.some(row => !Object.hasOwn(worldKinds,row.kind) || !validId(row.record?.id))) throw Error('服务器未返回可读取的搜索结果。');
+      const records = append && compatible ? [...previous.records] : [];
       for (const row of result.records) { const at = records.findIndex(value => value.kind === row.kind && value.record.id === row.record.id); if (at < 0) records.push(row); else records[at] = row; }
-      searchData = { ...result, records }; searchInput.value = query; listStale = false;
-      if (!append) positions.delete(listKey()); renderSearch(); return true;
+      searchData = { ...result, records,filterKey:JSON.stringify(filters) }; searchInput.value = query; listStale = false;
+      if (!append) { positions.delete(listKey()); searchForm.querySelector('.life-catalog-filter').open=false; } renderSearch(); return true;
     } catch (error) { if (current(t)) say(errorText(error)); return false; }
     finally { if (current(t)) { busy = false; controls(); } }
   }
   async function followUp() {
     const record = selectedRecord(), chosen = selection; if (busy || !record || record.valid === false || record.archived) return; const t = ticket(); busy = true; controls(); say('正在准备追问草稿…');
     try {
-      const data = validate(await apiClient.json('POST', '/chat/life', { session_id: t.session, action: 'follow_up', [parameter(chosen.kind)]: record.id }), t.session); if (!current(t)) return;
-      if (data[parameter(chosen.kind)] !== record.id || typeof data.draft !== 'string' || !data.draft.trim()) throw Error('服务器未返回这条档案的追问草稿。');
+      const data = validate(await apiClient.json('POST', '/chat/life', { session_id: t.session, action: 'follow_up', ...(chosen.kind==='event'?{event_id:record.id}:{record_kind:chosen.kind,record_id:record.id}) }), t.session); if (!current(t)) return;
+      if ((chosen.kind==='event'?data.event_id:data.record_id) !== record.id || chosen.kind!=='event'&&data.record_kind!==chosen.kind || typeof data.draft !== 'string' || !data.draft.trim()) throw Error('服务器未返回这条档案的追问草稿。');
       const input = document.getElementById('draft'), text = data.draft.trim(), value = input.value ? input.value + '\n\n' + text : text;
       if (input.disabled) throw Error('当前聊天输入框只读，请回到正在使用的对话再追问。');
       if (value.length > (input.maxLength > 0 ? input.maxLength : 16000)) throw Error('当前聊天草稿过长，请先整理输入框，再加入追问；原草稿未改动。');
+      if(!data.reference||(chosen.kind==='event'?data.reference.event_id!==record.id||data.reference.event_revision!==data.event_revision:data.reference.record_kind!==chosen.kind||data.reference.record_id!==record.id||data.reference.record_revision!==data.record_revision))throw Error('服务器未提供这份资料的精确引用，请重新读取后再追问。');window.ChatComposer.addLifeReference(data.reference);
       input.value = value; saveDraft(); input.dispatchEvent(new Event('input', { bubbles: true })); closeActive(); input.focus(); showNotice('追问已加入输入框，可继续编辑，确认后再发送。');
     } catch (error) { if (current(t)) say(errorText(error)); }
     finally { if (current(t)) { busy = false; controls(); } }
@@ -347,12 +452,14 @@ window.ChatLife = (() => {
       if (current(t)) { editing.stale = true; editing.confirm.checked = false; say(errorText(error) + ' 编辑内容保留，请重新读取比较；应用不会自动重新提交。'); }
     } finally { operation.promise = null; if (current(t)) { busy = false; controls(); } }
   }
-  function open(targetKind, targetId) {
+  function open(targetKind, targetId, message = null) {
+    if(!parameter(targetKind)&&Object.hasOwn(worldKinds,targetKind)&&validId(targetId)){window.ChatPersonalSpace?.openRecord(targetKind,targetId);return;}
     const linked = !!parameter(targetKind) && validId(targetId);
     if (!state.authenticated || !state.activeId) { showNotice('请先打开自己的聊天会话。'); return; }
     setup(); if (dialog.open && owner === scope() && ownerAuth === auth() && !linked) return;
+    catalogKind.value='all';catalogShared.value=catalogFrom.value=catalogTo.value='';
     closeActive(); owner = scope(); session = state.activeId; ownerAuth = auth(); epoch++; serial++; view = 'today'; overview = detail = editor = selection = searchData = restorePosition = null; searchInput.value = ''; listStale = false; positions.clear(); trail.length = 0; busy = false;
-    window.ChatPersonalSpace?.closeActive(); window.ChatSettingsHub?.close(); window.ChatExperience?.close(); dialog.showModal(); if(linked){selection={kind:targetKind,id:targetId};tabs.hidden=searchForm.hidden=true;back.hidden=false;body.replaceChildren(make('p','正在读取来源档案…'));}else renderOverview(); void read();
+    window.ChatPersonalSpace?.closeActive(); window.ChatSettingsHub?.close(); window.ChatExperience?.close(); dialog.showModal(); if(message)linking={messageId:String(message.serverId),role:message.role,note:'',relation:'discussed'}; if(linked){selection={kind:targetKind,id:targetId};tabs.hidden=searchForm.hidden=true;back.hidden=false;body.replaceChildren(make('p','正在读取来源档案…'));}else renderOverview(); void read();
   }
   function init() {
     const entry = button('生活档案', () => { hideMoreMenu(); open(); }, 'menu-item'); entry.id = 'menu-life'; document.getElementById('more-menu')?.append(entry);
@@ -362,5 +469,5 @@ window.ChatLife = (() => {
     if (window.ChatExperience) window.ChatExperience.openLife = open;
   }
   document.addEventListener('DOMContentLoaded', init, { once: true });
-  return { open, closeActive, scopeChanged, openRecord:(kind,id)=>open(kind,id) };
+  return { open, closeActive, scopeChanged, openRecord:(kind,id)=>open(kind,id), linkMessage:message=>{if(message?.delivery==='confirmed'&&/^\d+$/.test(String(message.serverId))) {open(null,null,message);view='recent';if(overview)renderOverview();}} };
 })();

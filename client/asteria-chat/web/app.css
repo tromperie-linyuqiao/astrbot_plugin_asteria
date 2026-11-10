@@ -218,6 +218,7 @@ svg { display: block; }
 .waiting-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 8px 0 0 #849d8666,16px 0 0 #849d8633; margin-right: 16px; animation: breathe 1.5s ease-in-out infinite; }
 @keyframes breathe { 50% { opacity: .35; } }
 .jump-latest { position: absolute; right: max(24px,calc((100% - var(--chat-width))/2)); bottom: calc(var(--composer-height) + 12px); z-index: 15; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text-soft); box-shadow: var(--shadow); border-radius: 20px; font-size: 11px; padding: 10px 16px; }
+.jump-latest[data-new-reply], .continue-reading[data-new-reply] { border-color: var(--accent); background: var(--accent-soft); color: var(--text-strong); font-weight: 600; }
 .pending-actions, .attachment-queue { display: flex; gap: 7px; flex-wrap: wrap; padding: 0 2px 9px; }
 .pending-action { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 9px; color: var(--text); background: var(--accent-soft); font-size: 11px; line-height: 1.6; }
 .pending-action-label { color: var(--text-soft); }

@@ -19,8 +19,8 @@
   const title = record => record?.fields?.name || record?.fields?.title || record?.id || '未命名记录';
   const pending = new Map();
   let scope = null, kind = 'space', selected = null, records = [], total = 0, offset = 0, serial = 0, busy = false;
-  let listState = 'unread';
-  let overview = null, draft = null, lifeReference = null, refs = {space:[], interest:[], event:[], character:[]};
+  let listState = 'unread', queuedSection = null, historyView = null;
+  let overview = null, draft = null, lifeReference = null, actionControls = null, refs = {space:[], interest:[], event:[], character:[]};
   let review = null, reviewTotal = null, picker = {type:'music',sources:[],source:null,records:[],total:0,offset:0,selected:null};
   root.innerHTML = `<section class="panel personal-space"><div class="panel-head"><div><p class="ps-eyebrow">角色的生活一隅</p><h2>个人空间与兴趣</h2><p class="hint">整理她居住的地方、留下的物件，以及愿意继续了解的事。</p></div><button type="button" data-ps-refresh>刷新与核对</button></div><p class="ps-boundary">这里保存角色的虚构生活。泰拉正典、现实公开资料、原创虚构与模型推测分别标明来源；收藏不会证明真实听过、读过或到访。</p><p data-ps-status class="ps-status" role="status" aria-live="polite"></p><div data-ps-counts class="ps-counts"></div><section data-ps-decision class="ps-decision" aria-label="生活选择预览"></section><div class="ps-tabs" role="tablist" aria-label="个人生活资料">${Object.entries(labels).map(([id,label]) => `<button type="button" role="tab" id="ps-tab-${id}" aria-controls="ps-records" data-ps-tab="${id}" aria-selected="false">${label}</button>`).join('')}</div><section id="ps-records" role="tabpanel"><form data-ps-search class="ps-toolbar"><label>查找<input data-ps-query type="search" maxlength="200" placeholder="名称、说明或兴趣关键词"></label><button type="submit">搜索</button><button type="button" data-ps-new class="primary">新增私人空间</button><div class="ps-filters"><label><input type="checkbox" data-ps-archived>含归档与已删除</label><label><input type="checkbox" data-ps-invalid>含待复核</label></div></form><div class="ps-columns"><section class="ps-catalog" aria-label="资料列表"><div data-ps-list></div><div class="actions ps-pager"><button type="button" data-ps-prev>上一页</button><span data-ps-range></span><button type="button" data-ps-next>下一页</button></div></section><aside class="ps-side"><section data-ps-detail class="ps-detail" aria-label="资料详情"></section><section data-ps-reference class="ps-reference" hidden aria-label="关联生活资料"></section><section data-ps-editor class="ps-editor" hidden aria-label="独立资料编辑器"><div class="panel-head"><h3 data-ps-editor-title></h3><button data-ps-cancel type="button">取消编辑</button></div><p data-ps-editor-identity class="hint"></p><form data-ps-form><div data-ps-fields class="ps-edit-grid"></div><label data-ps-reason-wrap>维护原因<input data-ps-reason maxlength="400"></label><div class="actions"><button class="primary" type="submit">保存并回读</button></div></form><p class="hint ps-edit-note">保存会保留历史版本与来源。切换右侧详情不会改变当前编辑对象。</p></section></aside></div></section><div class="actions"><button data-ps-release type="button" hidden>已核对，结束本次等待</button></div></section>`;
   const $ = name => root.querySelector('[data-ps-' + name + ']');
@@ -40,6 +40,7 @@
   lifeSettings.onclick = () => {if (typeof setView === 'function') setView('autonomous_life');};
   availability.append(archiveState, executionState, lifeSettings); $('status').after(availability);
   function showAvailability(runtime) {
+    actionControls=runtime?.action_controls||null;
     if(listState==='ready')archiveState.textContent = '私人档案已接通，可查看和维护现有资料。';
     const reason = runtime?.reason, state = runtime?.state;
     executionState.textContent = state === 'paused_budget' || reason === 'model_budget_zero'
@@ -56,6 +57,7 @@
   function controls() {
     const uncertain = pending.has(key(scope)), blocked = busy || !scope || uncertain;
     for (const element of root.querySelectorAll('input,select,textarea,button')) element.disabled = blocked;
+ for(const button of root.querySelectorAll('[data-history-read]'))button.disabled=busy||!scope||historyView?.loading===true;
     $('refresh').disabled = busy || !scope;
     for (const element of root.querySelectorAll('[data-ps-tab],[data-ps-read],[data-ps-preview]')) element.disabled = busy || !scope;
     for (const element of [$('query'), $('archived'), $('invalid'), ...$('search').querySelectorAll('[type=submit]')]) element.disabled = busy || !scope;
@@ -265,7 +267,7 @@
       const result=await call('GET','personal/resources',{...target,resource_type:picker.type,source_scope:JSON.stringify(source),query:$('resource-query').value.trim(),limit:12,offset:picker.offset},target);
       if(token!==serial||!same(target))return;picker.records=result.records||[];picker.total=result.total??picker.records.length;drawResourceList();
     }catch(error){if(token===serial&&same(target)){picker.records=[];picker.total=0;drawResourceList();message(error.publicMessage||error.message,true);}}
-    finally{if(token===serial&&same(target)){busy=false;controls();}}
+    finally{if(token===serial&&same(target)){busy=false;controls();drainSection();}}
   }
   function openPicker() {
     if(busy||!scope||pending.has(key(scope)))return;
@@ -296,7 +298,7 @@
     try{const result=await call('GET','personal/review-preview',{...target,kind:recordKind,id},target);if(token!==serial||!same(target))return;
       review={...result,scope:target,kind:recordKind,id};selected={...result.record,kind:recordKind};if(draft?.reviewToken){draft.reviewToken=null;$('form').querySelector('[type=submit]').hidden=false;$('reason-wrap').hidden=false;}$('review-confirmed').checked=false;$('review-edit').checked=false;$('review-reason').value='';drawDetail();drawReview();
     }catch(error){if(token===serial&&same(target)){review=null;drawReview();message(error.publicMessage||error.message,true);}}
-    finally{if(token===serial&&same(target)){busy=false;controls();}}
+    finally{if(token===serial&&same(target)){busy=false;controls();drainSection();}}
   }
   function readFailed(error){listState='error';archiveState.textContent='本次档案读取未完成，不能按空资料处理；请手动刷新。';drawList();drawVisual();message(error.publicMessage||error.message,true);}
   async function loadReviews() {
@@ -306,7 +308,7 @@
       listState='ready';records=result.records||[];total=result.total??records.length;reviewTotal=total;if(overview)overview.review_count=total;if(pending.has(key(target)))pending.get(key(target)).checked=true;
       selected=null;review=null;drawCounts();drawList();drawDetail();drawReview();message(pending.has(key(target))?'已回读待复核资料，请先核对原操作是否生效。':'已读取需要人工核对的来源关联；没有自动确认或重写。');
     }catch(error){if(token===serial&&same(target))readFailed(error);}
-    finally{if(token===serial&&same(target)){busy=false;controls();}}
+    finally{if(token===serial&&same(target)){busy=false;controls();drainSection();}}
   }
   function sourceDetails(parent, record) {
     const section = node('section', undefined, 'ps-provenance');
@@ -330,6 +332,46 @@
     if (!sources.length && record.kind === 'exploration') section.append(node('p', '尚未附上外部资料；已标注的内容依据仍需按来源核对。', 'hint'));
     parent.append(section);
   }
+function startHistory(data,host,recordKind,record){
+ const rows=Array.isArray(data)?data:data?.records||data?.history||[];
+ const paged=Number.isSafeInteger(data?.current_revision)&&Number.isSafeInteger(data?.offset)&&Number.isSafeInteger(data?.limit)&&Number.isSafeInteger(data?.total);
+ historyView={host,kind:recordKind,id:record.id,rows,paged,revision:data?.current_revision,total:data?.total??rows.length,next:paged?data.offset+data.limit:rows.length,loading:false,error:'',stale:paged&&data.current_revision!==record.revision};
+ paintHistory(historyView);
+}
+function paintHistory(view){
+ const host=view.host,opened=new Set([...host.querySelectorAll('[data-history-row][open]')].map(row=>row.dataset.historyRow));host.replaceChildren();
+ host.append(node('p',view.paged?'已显示 '+view.rows.length+' / '+view.total+' 条旧版本 · 基于修订 '+view.revision:'已显示 '+view.rows.length+' 条旧版本；当前服务未提供分页信息，不能确认已读取全部历史。','hint'));
+ for(const row of view.rows){
+  const entry=node('details');entry.dataset.historyRow=String(row.revision??row.version);entry.open=opened.has(entry.dataset.historyRow);
+  entry.append(node('summary','版本 '+(row.version??row.revision??'')+' · '+stamp(row.replaced_at||row.at||row.updated_at)),node('p',row.reason||'资料维护','hint'));
+  const old=row.snapshot?.fields||row.fields;if(old){const values=node('dl',undefined,'ps-facts');for(const name of ['name','description','status','goal','findings','questions','explored'])fact(values,fieldLabels[name],statusLabels[old[name]]||old[name]);entry.append(values);}
+  host.append(entry);
+ }
+ if(!view.rows.length)host.append(node('p','尚无可显示的修正记录。','hint'));
+ if(view.stale)host.append(node('p','资料已发生修正；已读历史保留，请从最新版本重新读取后继续。','ps-warning'));
+ if(view.error)host.append(node('p',view.error+' 已读历史和编辑草稿保留。','ps-warning'));
+ const actions=node('div',undefined,'actions');
+ if(view.paged&&!view.stale&&view.next<view.total)action(actions,'查看更多旧版本',()=>loadHistory(false));
+ if(view.stale||view.error||!view.paged)action(actions,'从最新版本重新读取',()=>loadHistory(true));
+ for(const button of actions.querySelectorAll('button')){button.dataset.historyRead='true';button.disabled=view.loading||busy||!scope;}
+ if(view.loading)actions.append(node('span','正在读取旧版本…','hint'));host.append(actions);
+}
+async function loadHistory(reset){
+ const view=historyView;if(busy||!scope||!view||view.loading||!view.host.isConnected)return;
+ const target={...scope},token=serial,requestedOffset=reset?0:view.next;
+ const query={...target,kind:view.kind,id:view.id,limit:20,offset:requestedOffset};if(!reset)query.expected_revision=view.revision;
+ view.loading=true;view.error='';paintHistory(view);
+ const current=()=>historyView===view&&token===serial&&same(target)&&selected?.id===view.id&&view.host.isConnected;
+ try{
+  const result=await call('GET','personal/history',query,target);if(!current())return;
+  const paged=Number.isSafeInteger(result?.current_revision)&&Number.isSafeInteger(result?.offset)&&Number.isSafeInteger(result?.limit)&&Number.isSafeInteger(result?.total);
+  if(!Array.isArray(result?.records)||!reset&&(!paged||result.offset!==requestedOffset||result.current_revision!==view.revision))throw Error('历史分页未对应当前记录，请重新读取。');
+  if(paged&&(result.offset!==requestedOffset||result.limit!==20))throw Error('历史分页范围不匹配。');
+  view.rows=reset?result.records:view.rows.concat(result.records);view.paged=paged;view.revision=result.current_revision;view.total=result.total??view.rows.length;view.next=paged?result.offset+result.limit:view.rows.length;view.stale=false;
+ }catch(error){if(current()){view.stale=Number(error.status)===409;view.error=view.stale?'翻页期间资料发生了变化。':error.publicMessage||error.message;}}
+ finally{if(current()){view.loading=false;paintHistory(view);}}
+}
+
   function drawDetail(history = []) {
     const parent = $('detail'); parent.replaceChildren();
     if (!selected) {parent.append(node('p', '选择一项，查看她的生活细节、关联和修正历史。', 'empty')); return;}
@@ -360,17 +402,15 @@
     action(actions, record.deleted ? '恢复已删除记录' : record.archived ? '恢复归档' : '归档', () => maintenance(record.deleted || record.archived ? 'restore' : 'archive', record));
     if (!record.deleted) action(actions, '软删除', () => maintenance('delete', record), 'danger');
     parent.append(actions);
+    if(['interest','exploration'].includes(recordKind)&&!record.deleted&&!record.archived&&record.valid!==false&&['active','planned','paused'].includes(f.status)&&Number.isSafeInteger(actionControls?.revision)){
+      const deferred=(actionControls.deferred||[]).find(row=>row.kind===recordKind&&row.id===record.id&&row.active!==false&&row.valid!==false&&!row.stale&&row.until>Date.now()/1000);
+      if(deferred)parent.append(node('p','暂缓至 '+stamp(deferred.until)+'，仍保留已有发现和来源。','hint'));
+      const resume=!!deferred||f.status==='paused';
+      action(actions,resume?'继续这项'+labels[recordKind]:'这项'+labels[recordKind]+'延后一天',()=>controlAction(resume?'restart':'defer',record));
+    }
     const versions = node('details', undefined, 'ps-history'); versions.append(node('summary', '修正历史与记录编号'));
     versions.append(node('code', record.id));
-    const rows = Array.isArray(history) ? history : history?.records || history?.history || [];
-    for (const row of rows) {
-      const item = node('details'); item.append(node('summary', '版本 ' + (row.version ?? row.revision ?? '') + ' · ' + stamp(row.at || row.replaced_at || row.updated_at)), node('p', row.reason || '资料维护', 'hint'));
-      const old = row.snapshot?.fields || row.fields;
-      if (old) {const values = node('dl', undefined, 'ps-facts'); for (const name of ['name','description','status','goal','findings','questions','explored']) fact(values, fieldLabels[name], statusLabels[old[name]] || old[name]); item.append(values);}
-      versions.append(item);
-    }
-    if (!rows.length) versions.append(node('p', '尚无可显示的修正记录。', 'hint'));
-    parent.append(versions); controls();
+    const host=node('div');versions.append(host);parent.append(versions);startHistory(history,host,recordKind,record);controls();
   }
   async function openLife(refKind, id) {
     if (busy || !scope) return;
@@ -385,7 +425,7 @@
       parent.append(node('p', '虚构生活档案 · ' + record.id, 'hint'));
       if (typeof global.TLSAutonomousLifePanel?.openRecord === 'function') action(parent, '在生活档案中维护', () => {setView('autonomous_life'); global.TLSAutonomousLifePanel.openRecord(refKind, id);}).dataset.psRead = 'true';
     } catch (error) {if (token === serial && same(target)) message(error.publicMessage || error.message, true);}
-    finally {if (token === serial && same(target)) {busy = false; controls();}}
+    finally {if (token === serial && same(target)) {busy = false; controls();drainSection();}}
   }
   async function openRecord(recordKind, id) {
     if (busy || !scope || !labels[recordKind]) return;
@@ -401,7 +441,7 @@
       if (token !== serial || !same(target)) return;
       selected = {...record, kind:recordKind}; records = list.records || []; total = list.total ?? records.length; drawList(); drawDetail(history);
     } catch (error) {if (token === serial && same(target)) message(error.publicMessage || error.message, true);}
-    finally {if (token === serial && same(target)) {busy = false; controls();}}
+    finally {if (token === serial && same(target)) {busy = false; controls();drainSection();}}
   }
   const listQuery = target => ({...target, kind, status:['interest','exploration'].includes(kind)?$('state').value:'', category:kind==='collection'?$('category').value:'',sort:$('sort').value, query:$('query').value.trim(), include_archived:$('archived').checked, include_invalid:$('invalid').checked, limit:24, offset});
   async function load(refreshSummary = false) {
@@ -428,14 +468,14 @@
       drawCounts(); drawDecision(); drawVisual(); drawList(); drawDetail(history || []);
       message(pending.has(key(target)) ? '已回读服务器资料。请核对原操作是否生效；不会自动重发。' : '已读取当前会话的个人生活资料。读取没有调用模型。');
     } catch (error) {if (token === serial && same(target)) readFailed(error);}
-    finally {if (token === serial && same(target)) {busy = false; controls();}}
+    finally {if (token === serial && same(target)) {busy = false; controls();drainSection();}}
   }
   async function preview() {
     if (busy || !scope) return;
     const target = {...scope}, token = ++serial; busy = true; controls();
     try {const result = await call('GET','personal/decision',target,target); if (token === serial && same(target)) {drawDecision(result); message('已预览当前生活选择；没有推进生活或发送消息。');}}
     catch (error) {if (token === serial && same(target)) message(error.publicMessage || error.message,true);}
-    finally {if (token === serial && same(target)) {busy = false; controls();}}
+    finally {if (token === serial && same(target)) {busy = false; controls();drainSection();}}
   }
   function input(name, label, type, value, options = []) {
     const wrap = node('label', label, type === 'checkbox' ? 'ps-check' : ''), element = node(type === 'textarea' ? 'textarea' : ['select','multiple'].includes(type) ? 'select' : 'input');
@@ -530,7 +570,7 @@
     if (busy || !scope || pending.has(key(scope)) || !same(edit.scope)) return;
     const target = {...scope}, token = ++serial; busy = true; pending.set(key(target),{checked:false}); controls(); let failure = '';
     try {
-      await call('POST','personal/' + path,{scope:target,...body},target);
+      await call('POST',path==='actions/control'?path:'personal/' + path,{scope:target,...body},target);
       if (token !== serial || !same(target)) return;
       pending.delete(key(target)); draft = null; $('editor').hidden = true;
       if(path==='collect'){$('picker').hidden=true;picker.selected=null;}
@@ -550,16 +590,25 @@
     $('state').closest('label').hidden=!['interest','exploration'].includes(kind);
     $('category').closest('label').hidden=kind!=='collection';
   }
+  function controlAction(operation,record){
+    if(draft){message('编辑内容仍保留，请先保存或取消，再调整行动安排。',true);return;}
+    if(busy||pending.has(key(scope))||!Number.isSafeInteger(actionControls?.revision))return;
+    const id=global.TLSBrowserCompat?.uuid?.()||global.crypto?.randomUUID?.();
+    if(!id){message('当前浏览器无法生成请求标识，请刷新后重试。',true);return;}
+    const body={action:operation,request_id:'personal-action-'+id,expected_revision:actionControls.revision,target_kind:record.kind||kind,target_id:record.id,expected_target_revision:record.revision,reason:operation==='defer'?'管理员将当前探索延后一天':'管理员恢复当前探索'};
+    if(operation==='defer')body.minutes=1440;
+    void mutate('actions/control',body,{scope:{...scope}});
+  }
   function switchKind(value) {
     if (busy || !labels[value]&&value!=='review') return;
     showMode('catalog');
     kind = value;listState='unread'; selected = null; records = []; total = 0; offset = 0; lifeReference = null; $('reference').hidden = true;
     review=null;$('review').hidden=true;$('picker').hidden=true;
     if(draft?.reviewToken){draft.reviewToken=null;$('form').querySelector('[type=submit]').hidden=false;$('reason-wrap').hidden=false;}
-    paintTabs(); drawList(); drawDetail(); load();
+    paintTabs(); drawList(); drawDetail();global.dispatchEvent(new CustomEvent('tls-admin-sectionchange',{detail:{view:'personal_space',section:value}})); load();
   }
   function scopeChanged() {
-    listState='unread';serial++; busy = false; scope = currentScope(); selected = null; records = []; total = 0; offset = 0; overview = null; draft = null; lifeReference = null;review=null;reviewTotal=null;
+    queuedSection=null;actionControls=null;listState='unread';serial++; busy = false; scope = currentScope(); selected = null; records = []; total = 0; offset = 0; overview = null; draft = null; lifeReference = null;review=null;reviewTotal=null;
     picker={type:'music',sources:[],source:null,records:[],total:0,offset:0,selected:null};$('picker').hidden=true;$('review').hidden=true;$('review-confirmed').checked=false;$('review-edit').checked=false;
     refs = {space:[],interest:[],event:[],character:[]}; $('editor').hidden = true; $('reference').hidden = true;
     $('query').value = ''; $('archived').checked = false; $('invalid').checked = false;
@@ -598,5 +647,16 @@
       else {const uuid = global.TLSBrowserCompat?.uuid?.() || global.crypto?.randomUUID?.(); if (!uuid) throw Error('当前浏览器无法生成请求标识，请刷新后再操作。'); mutate('create',{kind:draft.kind,request_id:'personal-ui-' + uuid,fields,source:{kind:'operator',ref:sourceRef || 'personal-space-console'}},draft);}
     } catch (error) {message(error.message,true);}
   });
-  global.TLSPersonalSpacePanel = {activate:()=>load(true),scopeChanged,openRecord}; paintTabs(); scopeChanged();showMode('visual');
+  function openSection(value){
+    if(!labels[value]&&value!=='review')return false;
+    if(draft&&kind!==value){message('当前编辑内容仍保留。请先保存或取消，再切换工作区域。',true);return false;}
+    if(busy){queuedSection={kind:value,scope:key(currentScope())};return true;}
+    if(kind===value){showMode('catalog');if(listState==='unread')void load();return true;}
+    switchKind(value);return true;
+  }
+  function drainSection(){
+    const request=queuedSection;queuedSection=null;
+    if(request&&request.scope===key(currentScope())&&state.view==='personal_space')openSection(request.kind);
+  }
+  global.TLSPersonalSpacePanel = {activate:()=>load(true),scopeChanged,openRecord,openSection}; paintTabs(); scopeChanged();showMode('visual');
 })(window);

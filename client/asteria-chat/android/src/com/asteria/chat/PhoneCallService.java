@@ -18,17 +18,32 @@ public final class PhoneCallService extends Service {
     private static volatile Observer observer;
     private static final class Active {
         final String id,scope,session;final BooleanSupplier current;final int silence;final float threshold;
+        final boolean voiceReplies;
+        boolean replyOutput, playerOutput;
         volatile CallSession pipeline;volatile PhoneCallService service;volatile boolean ended;String finalMessage="通话已结束 · 麦克风已关闭";
-        Active(String id,String scope,String session,BooleanSupplier current,int silence,float threshold){this.id=id;this.scope=scope;this.session=session;this.current=current;this.silence=silence;this.threshold=threshold;}
+        Active(String id,String scope,String session,BooleanSupplier current,int silence,float threshold,boolean voiceReplies){
+            this.id=id;this.scope=scope;this.session=session;this.current=current;this.silence=silence;this.threshold=threshold;
+            this.voiceReplies=voiceReplies;
+        }
     }
     private Active owner;private PowerManager.WakeLock wake;private String lastNotification="";
     static void observe(Observer value){observer=value;}
     static boolean running(){Active a=active;return a!=null&&!a.ended&&(a.pipeline==null||a.pipeline.snapshot().active);}
-    static void outputCurrent(boolean value){Active a=active;if(a!=null&&a.current.getAsBoolean()&&a.pipeline!=null)try{a.pipeline.output(value);}catch(Exception failed){a.pipeline.pause("声音播放已结束，请明确继续收音");}}
-    static synchronized void begin(Context context,String id,String scope,String session,BooleanSupplier current,int silence,float threshold){
+    private static void applyOutput(Active call) throws Exception {
+        CallSession pipeline=call.pipeline;
+        boolean output=call.replyOutput||call.playerOutput;
+        if(pipeline!=null&&pipeline.snapshot().output!=output) pipeline.output(output);
+    }
+    static void outputCurrent(boolean value){
+        Active call=active;
+        if(call==null||!call.current.getAsBoolean()||call.pipeline==null) return;
+        call.playerOutput=value;
+        try{applyOutput(call);}catch(Exception failed){call.pipeline.pause("声音播放已结束，请明确继续收音");}
+    }
+    static synchronized void begin(Context context,String id,String scope,String session,BooleanSupplier current,int silence,float threshold,boolean voiceReplies){
         if(active!=null)throw new IllegalStateException("请先结束当前通话");
         if(!id.matches("[a-zA-Z0-9_-]{8,100}"))throw new IllegalArgumentException("通话编号无效");
-        Active next=new Active(id,scope,session,current,silence,threshold);active=next;
+        Active next=new Active(id,scope,session,current,silence,threshold,voiceReplies);active=next;
         try{context.startForegroundService(new Intent(context,PhoneCallService.class).putExtra("id",id));}
         catch(RuntimeException e){active=null;throw e;}
     }
@@ -41,12 +56,12 @@ public final class PhoneCallService extends Service {
         Active a=active;if(a==null||!a.id.equals(id)||!a.scope.equals(scope)||!a.current.getAsBoolean())throw new IllegalStateException("原通话已结束或会话已变化");
         if(action.equals("end")){end();return;}
         CallSession p=a.pipeline;if(p==null)throw new IllegalStateException("正在启动通话，请稍候");
-        switch(action){case "mute":p.mute();break;case "resume":p.resume();break;case "hold":p.pause("聊天结果待确认，自动发送已暂停；请检查聊天后明确继续");break;case "ack":p.ack(sequence);break;case "output":p.output(output);break;default:throw new IllegalArgumentException("通话操作无效");}
+        switch(action){case "finish_turn":p.finishTurn();break;case "mute":p.mute();break;case "resume":p.resume();break;case "hold":p.pause("聊天结果待确认，自动发送已暂停；请检查聊天后明确继续");break;case "ack":p.ack(sequence);break;case "output":a.replyOutput=output;applyOutput(a);break;default:throw new IllegalArgumentException("通话操作无效");}
     }
     static synchronized void end(){Active a=active;if(a==null||a.ended)return;a.ended=true;CallSession p=a.pipeline;if(p!=null)p.close();PhoneCallService service=a.service;if(service!=null)service.finish(a);else{active=null;emit(a,object("ok",true,"call_id",a.id,"session_id",a.session,"active",false,"message",a.finalMessage));}}
     private static JSONObject snapshot(Active a){
         CallSession.Snapshot s=a.pipeline==null?null:a.pipeline.snapshot();JSONArray turns=new JSONArray();if(s!=null)for(CallSession.Turn turn:s.turns)turns.put(object("sequence",turn.sequence,"text",turn.text));
-        return object("ok",true,"call_id",a.id,"session_id",a.session,"active",s==null||s.active,"muted",s!=null&&s.muted,"held",s!=null&&s.held,"capturing",s!=null&&s.capturing,"output",s!=null&&s.output,"level",s==null?0:s.level,"message",s==null?"正在准备本机通话":s.message,"turns",turns);
+        return object("ok",true,"call_id",a.id,"session_id",a.session,"active",s==null||s.active,"voice_replies",a.voiceReplies,"muted",s!=null&&s.muted,"held",s!=null&&s.held,"capturing",s!=null&&s.capturing,"output",s!=null&&s.output,"level",s==null?0:s.level,"message",s==null?"正在准备本机通话":s.message,"turns",turns);
     }
     private static void emit(Active a,JSONObject value){Observer listener=observer;if(listener!=null)listener.changed(value);}
     @Override public int onStartCommand(Intent intent,int flags,int startId){

@@ -64,6 +64,33 @@
     tasks:['提醒与投递记录','查看调度、待处理、失败与实际执行结果'],
     maintenance:['资料维护','来源核对、批量维护与资料体检']
   };
+  // Business workspaces point to existing editors and their real record tabs.
+  const destinations = [
+    {id:'life-events',view:'autonomous_life',section:'event',title:'近期经历与世界线',description:'查看经历、前序后续和来源关联'},
+    {id:'life-threads',view:'autonomous_life',section:'thread',title:'正在继续的事项',description:'查看未完事项与已有后续'},
+    {id:'life-people',view:'autonomous_life',section:'character',title:'人物与关系',description:'查看正典、常驻与临时人物及关系来源'},
+    {id:'life-shares',view:'autonomous_life',section:'shares',title:'生活分享记录',description:'查看分享候选、尝试和实际结果'},
+    {id:'life-settings',view:'autonomous_life',section:'settings',title:'自主生活与后台预算',description:'查看推进设置、当前状态和角色后台模型'},
+    {id:'private-interest',view:'personal_space',section:'interest',title:'兴趣脉络',description:'维护兴趣缘由、关注变化与下一步方向'},
+    {id:'private-exploration',view:'personal_space',section:'exploration',title:'探索记录',description:'查看探索问题、发现与参考来源'},
+    {id:'private-collection',view:'personal_space',section:'collection',title:'个人收藏',description:'查看收藏与兴趣、音乐或图片资料的联系'},
+    {id:'private-space',view:'personal_space',section:'space',title:'私人空间',description:'维护角色的生活空间与环境'},
+    {id:'private-item',view:'personal_space',section:'item',title:'私人物品',description:'查看物件、赠礼与来源经历'},
+    {id:'private-review',view:'personal_space',section:'review',title:'关联待复核',description:'核对来源修正后受影响的私人资料'}
+  ];
+  const workspaces = [
+    {id:'home',title:'系统工作台',description:'运行状态、今日安排与需要处理的事项',entries:['overview','brief','native_ownership']},
+    {id:'life',title:'角色生活中心',description:'从近期经历接续世界线与未完事项',entries:['life-events','life-threads','pc_daily_native']},
+    {id:'interests',title:'兴趣与探索中心',description:'知道她在关注什么、正在了解什么',entries:['private-interest','private-exploration']},
+    {id:'people',title:'人物与关系中心',description:'区分人物身份，核对关系变化的来源',entries:['life-people','life-events']},
+    {id:'private',title:'私人数字档案',description:'空间、物品与收藏沿用同一份生活资料',entries:['private-collection','private-space','private-item','private-review']},
+    {id:'memory',title:'记忆与上下文中心',description:'检索记忆、核对候选与上下文展示范围',entries:['memory','profile_candidates','context_display']},
+    {id:'sharing',title:'分享与消息中心',description:'生活分享、主动节奏与实际投递分开查看',entries:['life-shares','proactive_native','tasks']},
+    {id:'background',title:'后台任务与模型',description:'查看推进预算、任务模型与实际调用',entries:['life-settings','model_routes','insight']}
+  ];
+  const destination = id => destinations.find(row=>row.id===id);
+  const destinationHash = row => row.view+'/'+row.section;
+  const entryInfo = id => {const row=destination(id);return row?[row.title,row.description]:info(id);};
   const aliases = {'domain-interaction':'area-companion','domain-memory':'area-memory','domain-perception':'area-perception','domain-role':'area-role','domain-actions':'area-automation','domain-system':'area-integrations'};
   const owners = {chat_corpus:'resources',personal_space:'role',overview:'workbench',brief:'workbench',autonomous_life:'role',pc_daily_native:'role',narrative:'role',preferences:'role',memory:'memory',personal:'memory',timeline:'memory',profile_candidates:'memory',mc_summary:'memory',memory_strategy:'memory',history:'memory',phone_service:'perception',phone:'perception',insight:'perception',phone_flow:'companion',proactive_native:'companion',expression:'companion',rules:'companion',policy:'companion',data:'resources',assets:'resources',music_library:'resources',maintenance:'resources',agenda:'automation',dates:'automation',special_occasions:'automation',memo_notes:'automation',personal_goals:'automation',scoped_daily_plan:'automation',tasks:'automation',model_routes:'models',native_ownership:'integrations',modules:'integrations',config:'settings',context_display:'settings',workspace_appearance:'settings'};
   const info = id => descriptions[id] || ENTRY_INFO[id] || [TITLES[id] || id,''];
@@ -119,12 +146,35 @@
     const top=node('div',undefined,'aw-toolbar'),crumb=node('nav',undefined,'aw-breadcrumb');crumb.id='aw-breadcrumb';crumb.setAttribute('aria-label','当前位置');
     const search=node('div',undefined,'aw-search-wrap'),field=node('input');field.id='aw-search';field.type='search';field.placeholder='查找功能、设置与资料入口';field.setAttribute('aria-label','查找管理功能');field.autocomplete='off';
     const results=node('div',undefined,'aw-search-results');results.id='aw-search-results';results.hidden=true;results.setAttribute('aria-label','功能搜索结果');search.append(field,results);top.append(crumb,search);document.querySelector('.header').after(top);
-    const searchable=Array.from(new Set(areas.flatMap(a=>a.groups.flatMap(g=>g.entries))));
+    let currentDestination=null;
+    function openDestination(id,remember=true){
+      const target=destination(id);
+      if(!target){openEntry(id);return;}
+      const previous=restoring;restoring=true;setView(target.view);
+      const panel=target.view==='autonomous_life'?window.TLSAutonomousLifePanel:window.TLSPersonalSpacePanel;
+      if(typeof panel?.openSection!=='function'){restoring=previous;notify('这个分类入口暂未准备好，请刷新页面后重试。',true);return;}
+      if(panel.openSection(target.section)===false){restoring=previous;if(remember&&location.hash!=='#'+target.view)history.pushState(null,'','#'+target.view);return;}
+      currentDestination=target;paint(target.view);restoring=previous;
+      if(remember&&location.hash!=='#'+destinationHash(target))history.pushState(null,'','#'+destinationHash(target));
+    }
+    const hub=node('section',undefined,'panel aw-workspaces');hub.id='aw-workspaces';hub.setAttribute('aria-label','八个工作区域');
+    const hubHead=node('div',undefined,'panel-head');hubHead.append(node('div',undefined));hubHead.firstChild.append(node('h2','从这里开始'),node('p','按要做的事进入原有资料与管理页面。上方范围决定正在查看哪个角色与会话。','hint'));
+    const hubFilter=node('input');hubFilter.type='search';hubFilter.placeholder='筛选工作区域';hubFilter.setAttribute('aria-label','筛选工作区域');hubHead.append(hubFilter);hub.append(hubHead);
+    const hubGrid=node('div',undefined,'aw-workspace-grid'),hubEmpty=node('p','没有匹配的工作区域。可试试“人物”“收藏”或清空搜索。','empty');hubEmpty.hidden=true;hubEmpty.setAttribute('role','status');hub.append(hubGrid,hubEmpty);
+    for(const area of workspaces){
+      const card=node('article',undefined,'aw-workspace-card');card.dataset.awWorkspace=area.id;
+      card.append(node('h3',area.title),node('p',area.description,'hint'));const entries=node('div',undefined,'aw-workspace-links');
+      for(const id of area.entries){const link=button(entryInfo(id)[0],()=>openDestination(id));link.dataset.awDestination=id;entries.append(link);}
+      card.append(entries);hubGrid.append(card);
+    }
+    hubFilter.addEventListener('input',()=>{const query=hubFilter.value.trim().toLocaleLowerCase();let count=0;for(const card of hubGrid.children){card.hidden=!!query&&!card.textContent.toLocaleLowerCase().includes(query);if(!card.hidden)count++;}hubEmpty.hidden=!!count;});
+    const overview=$('view-overview');overview.querySelector('.workbench-grid').after(hub);
+    const searchable=Array.from(new Set([...destinations.map(row=>row.id),...areas.flatMap(a=>a.groups.flatMap(g=>g.entries))]));
     function closeSearch(){results.hidden=true;field.setAttribute('aria-expanded','false');}
     function searchFeatures(){
       results.replaceChildren();const query=field.value.trim().toLocaleLowerCase();if(!query){closeSearch();return;}
-      const matches=searchable.filter(id=>info(id).join(' ').toLocaleLowerCase().includes(query));
-      for(const id of matches){const [title,description]=info(id),b=button('',()=>{closeSearch();field.value='';openEntry(id);},'aw-search-result');b.append(node('strong',title),node('small',description));results.append(b);}
+      const matches=searchable.filter(id=>entryInfo(id).join(' ').toLocaleLowerCase().includes(query));
+      for(const id of matches){const [title,description]=entryInfo(id),b=button('',()=>{closeSearch();field.value='';openDestination(id);},'aw-search-result');b.append(node('strong',title),node('small',description));results.append(b);}
       if(!matches.length)results.append(node('p','没有匹配的功能，试试“记忆”“手机”或“日程”。','empty'));
       results.hidden=false;field.setAttribute('aria-expanded','true');
     }
@@ -159,6 +209,8 @@
       const area=areas.find(a=>a.id===VIEW_SECTIONS[view])||areas[0];
       crumb.replaceChildren(button(area.name,()=>setView(area.home)));
       if(view!==area.home)crumb.append(node('span','/','aw-crumb-separator'),node('span',info(view)[0],'aw-crumb-current'));
+      if(currentDestination?.view===view)crumb.append(node('span','/','aw-crumb-separator'),node('span',currentDestination.title,'aw-crumb-current'));
+      if(view!=='overview')crumb.prepend(button('工作区',()=>setView('overview')),node('span','/','aw-crumb-separator'));
       $('page-title').textContent=view===area.home?area.name:info(view)[0];
       document.querySelectorAll('.aw-domain-scope').forEach(n=>n.textContent=state.scope?'资料操作将使用上方选定的用户、角色和会话。':'可浏览功能入口；管理会话资料前，请在上方选择会话。');
       $('current-scope-bar').hidden=['chat_corpus','history','model_routes','config','memory_strategy','workspace_appearance','area-models','area-integrations','area-settings','native_ownership','modules'].includes(view);
@@ -279,7 +331,7 @@
     const original=setView;
     setView=function(requested){
       const view=aliases[requested]||requested;if(!TITLES[view])return;
-      original(view);paintRelations(view,true);
+      currentDestination=null;original(view);paintRelations(view,true);
       if(view==='context_display')ensureContextSettings();
       paint(view);
       loadLibrarySources(view);
@@ -288,7 +340,7 @@
       window.dispatchEvent(new CustomEvent('tls-admin-viewchange',{detail:{view}}));
     };
     const originalChoose=chooseScope;
-    chooseScope=function(scope){const value=originalChoose(scope);if(catalogReady)catalogSelection=state.scope&&{...state.scope};paint(state.view);if(libraries[state.view]){defaultLibrarySource(state.view);drawLibrarySources(state.view);}return value;};
+    chooseScope=function(scope){const target=currentDestination;const value=originalChoose(scope);if(target&&target.view===state.view){const panel=target.view==='autonomous_life'?window.TLSAutonomousLifePanel:window.TLSPersonalSpacePanel;panel?.openSection?.(target.section);}if(catalogReady)catalogSelection=state.scope&&{...state.scope};paint(state.view);if(libraries[state.view]){defaultLibrarySource(state.view);drawLibrarySources(state.view);}return value;};
     // The original startup request can already be in flight when this script
     // starts. Observe its option replacement, including a genuinely empty
     // memory catalog, before selecting a stored material source.
@@ -306,14 +358,26 @@
     const originalDrawDataCenter=drawDataCenter;
     drawDataCenter=function(){const value=originalDrawDataCenter();paintDataLibrarySources();return value;};
     window.addEventListener('pagehide',()=>catalogObserver?.disconnect(),{once:true});
-    window.addEventListener('popstate',()=>{const view=aliases[location.hash.slice(1)]||location.hash.slice(1)||'overview';if(TITLES[view]){restoring=true;setView(view);restoring=false;}});
-    window.addEventListener('hashchange',()=>{const view=aliases[location.hash.slice(1)]||location.hash.slice(1);if(TITLES[view]&&state.view!==view){restoring=true;setView(view);restoring=false;}});
+    function restoreLocation(){
+      const raw=location.hash.slice(1),target=destinations.find(row=>destinationHash(row)===raw);
+      if(target){openDestination(target.id,false);return;}
+      const view=aliases[raw]||raw||'overview';
+      if(TITLES[view]){restoring=true;setView(view);restoring=false;}
+    }
+    window.addEventListener('popstate',restoreLocation);
+    window.addEventListener('hashchange',()=>{if(currentDestination&&location.hash==='#'+destinationHash(currentDestination))return;if(location.hash!=='#'+state.view)restoreLocation();});
+    window.addEventListener('tls-admin-sectionchange',event=>{
+      const {view,section}=event.detail||{};if(state.view!==view)return;
+      const target=destinations.find(row=>row.view===view&&row.section===section);if(!target)return;
+      currentDestination=target;paint(view);
+      if(!restoring)history.replaceState(null,'','#'+destinationHash(target));
+    });
     $('aw-appearance-edit')?.addEventListener('click',openLayoutEditor);
     $('refresh').addEventListener('click',()=>{if(['model_routes','memory_strategy'].includes(state.view))setView(state.view);});
-    const target=aliases[location.hash.slice(1)]||location.hash.slice(1)||state.view;
-    restoring=true;setView(TITLES[target]?target:'overview');restoring=false;
-    if(location.hash!=='#'+state.view)history.replaceState(null,'','#'+state.view);
-    window.TLSAdminWorkspace=Object.freeze({areas:areas.map(a=>({id:a.id,name:a.name,home:a.home,entries:Array.from(new Set(a.groups.flatMap(g=>g.entries)))})),navigate:view=>setView(view),refresh:()=>paint(state.view)});
+    const initial=location.hash.slice(1);
+    if(destinations.some(row=>destinationHash(row)===initial)||TITLES[aliases[initial]||initial])restoreLocation();
+    else{restoring=true;setView(state.view||'overview');restoring=false;history.replaceState(null,'','#'+state.view);}
+    window.TLSAdminWorkspace=Object.freeze({areas:areas.map(a=>({id:a.id,name:a.name,home:a.home,entries:Array.from(new Set(a.groups.flatMap(g=>g.entries)))})),workspaces:workspaces.map(row=>({...row})),openDestination,navigate:view=>setView(view),refresh:()=>paint(state.view)});
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
 })();

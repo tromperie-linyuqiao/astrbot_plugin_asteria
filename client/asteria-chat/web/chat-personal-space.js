@@ -277,21 +277,24 @@ window.ChatPersonalSpace = (() => {
     if (previous) { ({ selected, record, related } = previous); renderDetail(); body.scrollTop = previous.position; }
     else { selected = record = related = null; renderList(); if (!listing) void read(); }
   }
-  function appendDraft() {
+  async function appendDraft() {
     if (!active() || busy || !ready || !record || record.valid === false || record.archived || record.deleted || resourceBlocked(record)) return;
     const input = document.getElementById('draft');
     if (!input || input.disabled || input.readOnly) { say('当前聊天输入框只读，请回到正在使用的对话再接着聊。'); return; }
-    const prompt = { space: '想听你聊聊这里最近的样子。', item: '想接着听听它的故事。', interest: '最近有什么新想法，或者还想探索什么？', exploration: '想接着聊聊你的计划和已经发现的内容。', collection: '想听听你为什么把它收进收藏。' }[record.kind];
-    const draft = '[虚构生活资料 ' + record.kind + ':' + record.id + '] 关于「' + name(record) + '」，' + prompt;
-    const value = input.value ? input.value + '\n\n' + draft : draft;
-    if (value.length > (input.maxLength > 0 ? input.maxLength : 16000)) { say('当前聊天草稿过长，请先整理输入框；原草稿未改动。'); return; }
-    input.value = value; saveDraft(); input.dispatchEvent(new Event('input', { bubbles: true })); closeActive(); input.focus(); showNotice('已加入可编辑草稿，确认后再发送。');
+    const t=ticket(),chosen={kind:record.kind,id:record.id};busy=true;controls();say('正在准备资料追问…');
+    try{
+      const data=await apiClient.json('POST','/chat/life',{session_id:t.session,action:'follow_up',record_kind:chosen.kind,record_id:chosen.id});if(!current(t))return;
+      if(data?.session_id!==t.session||data.record_kind!==chosen.kind||data.record_id!==chosen.id||typeof data.draft!=='string'||!data.draft.trim()||!data.reference||data.reference.record_kind!==chosen.kind||data.reference.record_id!==chosen.id||data.reference.record_revision!==data.record_revision)throw Error('服务器未返回这份资料的精确追问，请更新服务端或重新读取。');
+      const value=input.value?input.value+'\n\n'+data.draft.trim():data.draft.trim();
+      if(input.disabled||input.readOnly||value.length>(input.maxLength>0?input.maxLength:16000))throw Error('当前草稿不可追加或已经过长；原草稿保留。');
+      window.ChatComposer.addLifeReference(data.reference);input.value=value;saveDraft();input.dispatchEvent(new Event('input',{bubbles:true}));closeActive();input.focus();showNotice('资料追问已加入草稿，确认后再发送。');
+    }catch(error){if(current(t))say(errorText(error));}finally{if(current(t)){busy=false;controls();}}
   }
-  function open() {
+  function open(targetKind,targetId) {
     if (!state.authenticated || !state.activeId) { showNotice('请先打开自己的聊天会话。'); return; }
-    setup(); if (active()) return;visualSection='spaces';browsingAll=false;
+    setup(); if (active()&&!targetId) return;visualSection='spaces';browsingAll=false;
     closeActive(); owner = scope(); session = state.activeId; ownerAuth = auth(); epoch++; serial++; serverScope = null; kind = 'all'; query = ''; offset = 0; listing = selected = record = related = null; trail.length = 0; busy = ready = false; listPosition = 0; searchInput.value = '';for(const select of archiveFilters.querySelectorAll('select'))select.selectedIndex=0;
-    window.ChatSettingsHub?.close(); window.ChatExperience?.close(); window.ChatLife?.closeActive(); dialog.showModal(); renderList(); void read();
+    window.ChatSettingsHub?.close(); window.ChatExperience?.close(); window.ChatLife?.closeActive(); dialog.showModal(); if(targetKind&&validId(targetId)){kind=targetKind;selected={kind:targetKind,id:targetId};} renderList(); void read();
   }
-  return { open, closeActive, scopeChanged };
+  return { open, closeActive, scopeChanged, openRecord:(kind,id)=>open(kind,id) };
 })();

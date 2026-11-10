@@ -6,7 +6,7 @@ window.ChatComposer = (() => {
   const model = { scope: '', serial: 0, epoch: 0, operation: null, actionEditorSerial: 0, preferenceEditorSerial: 0, loaded: false, loading: false, error: '',
     assets: [], expressionAliases:false, showExpressionTags:false, actions: [], actionRevision: undefined, defaultActions: [], mutualActions: [], mutualId:'', groupSupported:false, selfActions: [], selfSupported: false, actionGroup:'character', actionFilter:'quick', selfVerb:'', selfPart:'', selfQuery:'', stickers: [], extras: [], order: [], panel: '', expandedPanel: false, filter: 'all', query: '', touchCatalog:null, touchVerb:'', touchPart:'', touchQuery:'', touchUnknown:false,
     pickMode: 'attach', category: '', selected: null, actionEditing: null, batch: null, batchSerial: 0, defaultsSerial: 0, busy: false,
-    cachedAssets:false, previews: new Map(), nativeViewport: null, watch: null, watchTarget: '', pendingWatch: '', notificationId: null };
+    cachedAssets:false, previews: new Map(), nativeViewport: null, watch: null, watchTarget: '', pendingWatch: '', notification: null };
   const node = id => document.getElementById(id);
   const scope = () => state.authenticated && state.activeId
     ? JSON.stringify([state.server, state.username, state.activeId,
@@ -42,7 +42,7 @@ window.ChatComposer = (() => {
     try {
       const saved = JSON.parse(localStorage.getItem(draftStore()) || 'null');
       if (saved && [1, 2].includes(saved.version)) {
-        model.extras = Array.isArray(saved.extras) ? saved.extras.filter(value => value && ['text','reference'].includes(value.type)).slice(0, 24).map(value=>({...value,fragment_id:value.fragment_id||identity(value.type)})) : [];
+        model.extras = Array.isArray(saved.extras) ? saved.extras.filter(value => value && ['text','reference','life_reference'].includes(value.type)).slice(0, 24).map(value=>({...value,fragment_id:value.fragment_id||identity(value.type)})) : [];
         model.order = Array.isArray(saved.order) ? saved.order.filter(value => typeof value === 'string').slice(0, 24) : [];
         state.pendingActions = (saved.actions || []).filter(value => value && typeof value.id === 'string'
           && typeof value.label === 'string' && typeof value.description === 'string').slice(0, 4);
@@ -104,8 +104,8 @@ window.ChatComposer = (() => {
     list.hidden=!expanded;
     if(expanded) for(const [index,value] of values.entries()) {
       const row=document.createElement('div');row.className='composition-item';row.dataset.fragmentId=value.fragment_id;if(!previous.has(value.fragment_id))row.classList.add('composition-enter');
-      const names={text:'话语',action:'动作',sticker:'表情',attachment:'附件',image:'图片',file:'文件',record:'语音',video:'视频',reference:'引用'};
-      const label=button((value.type==='action'?(value.target==='self'?'自己的动作':'对角色的动作'):names[value.type]||'片段')+' · '+(value.label||value.text||value.filename||value.description||'消息').slice(0,70),()=>{
+      const names={text:'话语',action:'动作',sticker:'表情',attachment:'附件',image:'图片',file:'文件',record:'语音',video:'视频',reference:'引用',life_reference:'生活经历'};
+      const label=button((value.type==='action'?(value.target==='self'?'我':actionGroup(model.actions.find(v=>v.id===value.action_id)||value)==='mutual'?'双人':'对角色'):names[value.type]||'片段')+' · '+(value.label||value.text||value.filename||value.description||'消息').slice(0,70),()=>{
         if(value.type==='text') {
           const editor=node('compose-text-editor');model.editingText=value.fragment_id;editor.value=value.text;node('compose-text-dialog').showModal();
         } else if(value.type==='action') { const action=model.actions.find(v=>v.id===value.action_id);if(action)editAction(action); }
@@ -120,6 +120,21 @@ window.ChatComposer = (() => {
     setText('compose-summary',expanded?'按上方顺序发送 · '+values.length+' 个片段':'');
     if(node('compose-preview'))node('compose-preview').hidden=!values.length;
     node('compose-summary').hidden=!expanded;refreshActionSelection();syncComposerMetrics();
+  }
+  const lifeKinds=new Set(['character','thread','interest','exploration','collection','space','item']);
+  function lifeReference(value){
+    if(!value||value.type!=='life_reference')return null;
+    const event=typeof value.event_id==='string',id=event?value.event_id:value.record_id,revision=event?value.event_revision:value.record_revision;
+    if(typeof id!=='string'||!id.length||id.length>96||!Number.isSafeInteger(revision)||revision<1||!event&&!lifeKinds.has(value.record_kind))return null;
+    return {type:'life_reference',...(event?{event_id:id,event_revision:revision}:{record_kind:value.record_kind,record_id:id,record_revision:revision}),label:String(value.label||'生活资料').slice(0,120),...(typeof value.text==='string'?{text:value.text.slice(0,2400)}:{}),...(value.source==='user_selected_life'?{source:value.source}:{})};
+  }
+  function addLifeReference(value) {
+    const reference=lifeReference(value);if(!state.authenticated||!state.activeId||!reference)throw Error('服务器没有返回可用的生活资料引用。');
+    if(model.scope!==scope())throw Error('当前角色的组合草稿尚未就绪，请重新打开经历。');
+    if(!model.extras.some(p=>p.type==='life_reference')&&parts(node('draft').value.trim()).length>=23)throw Error('组合草稿片段太多，请先整理后再加入追问。');
+    model.extras=model.extras.filter(p=>p.type!=='life_reference');
+    model.extras.push({...reference,fragment_id:identity('life')});
+    persist();renderPreview();renderChrome();
   }
   function addReference(value) {
     if(model.extras.filter(v=>v.type==='reference').length>=2) {showNotice('每条最多引用两条消息。');return;}
@@ -184,7 +199,12 @@ window.ChatComposer = (() => {
     const height = model.nativeViewport && model.nativeViewport.height || window.visualViewport && window.visualViewport.height || innerHeight;
     // Account for the actual notice/navigation/draft space rather than assuming
     // the header and input are the only siblings above the transcript.
-    const room = drawer.getBoundingClientRect().height + node('messages').getBoundingClientRect().height;
+    const log=node('messages'),logStyle=getComputedStyle(log);
+    const area=document.querySelector('.composer-area'),main=area.closest('.chat-main');
+    const overflow=Math.max(0,area.getBoundingClientRect().bottom-Math.min(height,main.getBoundingClientRect().bottom));
+    const room=Math.max(0,drawer.getBoundingClientRect().height+log.getBoundingClientRect().height-overflow);
+    // Transcript padding cannot flex away. Exclude it from the tray's budget.
+    const capacity=Math.max(0,room-(parseFloat(logStyle.paddingTop)||0)-(parseFloat(logStyle.paddingBottom)||0));
     const preferred = Math.min(model.expandedPanel ? 440 : 248, height * (model.expandedPanel ? .54 : .30));
     const pane=[...drawer.children].find(child=>child.matches('[data-compose-pane]')&&!child.hidden);
     const paneStyle=pane&&getComputedStyle(pane),drawerStyle=getComputedStyle(drawer);
@@ -194,11 +214,15 @@ window.ChatComposer = (() => {
     const padding=paneStyle?(parseFloat(paneStyle.paddingTop)||0)+(parseFloat(paneStyle.paddingBottom)||0):0;
     // Keep the tabs, explicit action buttons and one touch row reachable when
     // call status, a manual draft and the keyboard share the visible rectangle.
-    const minimum=Math.min(room,Math.ceil(fixed+padding+44));
+    // Reserve an actual choice row, not just the category buttons above it.
+    const choice=model.panel==='actions'&&pane?.querySelector('.touch-choices .touch-choice');
+    const choiceEnd=choice?choice.getBoundingClientRect().bottom-pane.getBoundingClientRect().top+pane.scrollTop:0;
+    const readable=Math.max(padding+44,choiceEnd+(parseFloat(paneStyle?.paddingBottom)||0));
+    const minimum=Math.min(capacity,Math.ceil(fixed+readable));
     const reserve = Math.min(model.expandedPanel ? 120 : Math.min(260, height * .28),
       Math.max(Math.min(120, height * .20), room - Math.min(208, preferred)),Math.max(0,room-minimum));
     const budget = Math.min(preferred, room - reserve);
-    const limit=Math.max(42,minimum,Math.floor(budget))+'px';if(drawer.style.maxHeight!==limit)drawer.style.maxHeight=limit;
+    const limit=Math.max(0,Math.min(capacity,Math.max(42,minimum,Math.floor(budget))))+'px';if(drawer.style.maxHeight!==limit)drawer.style.maxHeight=limit;
   }
   function setPanel(name = '') {
     withReading(() => {
@@ -292,6 +316,18 @@ window.ChatComposer = (() => {
     }
   }
   window.addEventListener('chat-media-cache-cleared', () => {model.previews.clear();if(model.cachedAssets){model.assets=[];model.cachedAssets=false;renderAssets();}});
+  function briefExpressionName(value) {
+    const name=String(value||'').replace(/[\u0000-\u001f]/g,' ').trim();
+    if(!name||/[\\/]|^[a-f0-9]{24,}|\.(png|jpe?g|gif|webp)$/i.test(name))return '表情';
+    return name.split(/(?:标签|tags?|asset_id|来源)\s*[:：]/i)[0].trim().slice(0,36)||'表情';
+  }
+  function openSticker(image) {
+    if(!image.naturalWidth||!image.src)return;
+    let dialog=node('sticker-reader');
+    if(!dialog){dialog=document.createElement('dialog');dialog.id='sticker-reader';dialog.className='settings-dialog sticker-reader';document.body.append(dialog);}
+    dialog.replaceChildren();const close=button('关闭大图',()=>dialog.close(),'secondary-button');
+    const large=document.createElement('img');large.src=image.src;large.alt=image.alt;dialog.append(close,large);dialog.showModal();
+  }
   function thumbnail(image, asset) {
     const id = assetId(asset), current = scope(), epoch = chatAuthEpoch;
     const currentRead = () => current === scope() && epoch === chatAuthEpoch;
@@ -316,7 +352,7 @@ window.ChatComposer = (() => {
       pending.catch(() => { if (model.previews.get(key) === pending) model.previews.delete(key); });
     }
     pending.then(url => { if (currentRead() && image.isConnected && image.dataset.stickerId === id && image.dataset.stickerVersion === String(version)) { image.src = url; image.classList.add('loaded'); delete image.dataset.previewFailed; } })
-      .catch(() => { if (currentRead() && image.isConnected && image.dataset.stickerId === id && image.dataset.stickerVersion === String(version)) { image.alt = asset.name || '图片暂不可用'; image.dataset.previewFailed = '1'; } });
+      .catch(() => { if (currentRead() && image.isConnected && image.dataset.stickerId === id && image.dataset.stickerVersion === String(version)) { image.alt = briefExpressionName(asset.meaning||asset.name)+' · 暂未加载'; image.dataset.previewFailed = '1'; } });
   }
   const searchKey=value=>String(value||'').normalize('NFKC').toLocaleLowerCase();
   const expressionAliases=value=>Array.isArray(value.aliases)?value.aliases:[];
@@ -392,14 +428,15 @@ window.ChatComposer = (() => {
       const pick = button('', () => model.pickMode === 'send' || actorPref(asset, 'user').quick_send
         ? sendNow([{ type: 'sticker', asset_id: assetId(asset) }]) : attachAsset(asset), 'expression-pick');
       pick.disabled = model.cachedAssets || asset.enabled === false || actorPref(asset, 'user').hidden === true;
-      pick.title = [asset.name, asset.meaning, (asset.tags || []).join('、')].filter(Boolean).join(' · ');
-      const image = document.createElement('img'); image.alt = asset.name || '表情'; image.width = 84; image.height = 84; pick.append(image);
-      const label = document.createElement('span'); label.textContent = asset.name || '表情'; pick.append(label);
+      pick.title = briefExpressionName(asset.meaning||asset.name);
+      pick.setAttribute('aria-label',pick.title);pick.oncontextmenu=event=>{event.preventDefault();if(!model.cachedAssets)openPreference(asset);};
+      const image = document.createElement('img'); image.alt = briefExpressionName(asset.meaning||asset.name); image.width = 84; image.height = 84; pick.append(image);
+      const label = document.createElement('span'); label.textContent = briefExpressionName(asset.meaning||asset.name); pick.append(label);
       const controls = document.createElement('div'); controls.className = 'expression-controls';
       const star = button(actorPref(asset, 'user').favorite ? '★' : '☆', () => savePreference(assetId(asset), 'user', { favorite: !actorPref(asset, 'user').favorite }), 'expression-star');
       star.setAttribute('aria-label', (actorPref(asset,'user').favorite?'取消收藏 ':'收藏 ') + (asset.name || '表情'));
       star.setAttribute('aria-pressed',String(!!actorPref(asset,'user').favorite));
-      const detail = button('偏好', () => openPreference(asset), 'text-button');star.disabled=detail.disabled=model.cachedAssets;controls.append(star, detail);
+      const detail = button('详情', () => openPreference(asset), 'text-button');star.disabled=detail.disabled=model.cachedAssets;controls.append(star, detail);
       card.append(pick, controls); grid.append(card); thumbnail(image, asset);
     }
     if (!grid.children.length && model.loaded) {
@@ -450,6 +487,12 @@ window.ChatComposer = (() => {
     const list = node('shared-action-list'); if (!list) return;
     list.replaceChildren();
     renderTouchBuilder();
+    const quick=document.createElement('div');quick.className='action-quick-strip';
+    for(const value of orderedActions().filter(v=>actionGroup(v)===model.actionGroup&&v.enabled!==false&&(v.quick!==false||v.last_used)).slice(0,8)){
+      const pick=button(value.label,()=>{attachAction(value);refreshActionSelection();},'touch-choice');
+      pick.disabled=model.busy||interactionBusy()||state.pendingActions.length>=4;quick.append(pick);
+    }
+    const builder=node('native-touch-picker');if(builder){builder.querySelector('.action-quick-strip')?.remove();builder.prepend(quick);}
     setText('action-status', model.loading ? '正在读取动作…' : model.error || (model.actionGroup==='self'?'描述自己的动作，再点发送。':model.actionGroup==='mutual'?'由你发起互动，角色的回应随情境展开。':'选动作和部位，再点发送。'));
     const filters=document.createElement('div');filters.className='action-target-tabs';
     for(const [id,label]of [['quick','常用与全部'],['recent','最近使用']]){const pick=button(label,()=>{model.actionFilter=id;renderActions();},'text-button');pick.setAttribute('aria-pressed',String(model.actionFilter===id));filters.append(pick);}list.append(filters);
@@ -469,10 +512,11 @@ window.ChatComposer = (() => {
       const actions = document.createElement('div'); actions.className = 'action-row-controls';
       const favorite=button(value.quick===false?'☆':'★',()=>updateQuick(value),'action-favorite');favorite.setAttribute('aria-label',(value.quick===false?'收藏':'取消常用')+' '+value.label);favorite.setAttribute('aria-pressed',String(value.quick!==false));actions.append(favorite);
       const immediate = button('直接发', () => sendNow([actionPart(value)]), 'text-button'); immediate.disabled = value.enabled === false;
-      actions.append(immediate, button('编辑', () => editAction(value), 'text-button')); row.append(body, actions);
+      actions.append(button('编辑', () => editAction(value), 'text-button'));
+      const details=document.createElement('details'),detailsTitle=document.createElement('summary');detailsTitle.textContent='详情与管理';details.append(detailsTitle,description,actions);row.append(body,details);
       const move=document.createElement('div');move.className='action-sort-controls';
       const peers=values.filter(item=>(item.quick!==false)===(value.quick!==false));
-      for(const [text,delta,title]of [['↑',-1,'向前排列'],['↓',1,'向后排列']]){const control=button(text,()=>moveAction(value,delta),'text-button');const at=peers.findIndex(item=>item.id===value.id);control.disabled=at+delta<0||at+delta>=peers.length;control.setAttribute('aria-label',title+' '+value.label);move.append(control);}body.append(move);
+      for(const [text,delta,title]of [['↑',-1,'向前排列'],['↓',1,'向后排列']]){const control=button(text,()=>moveAction(value,delta),'text-button');const at=peers.findIndex(item=>item.id===value.id);control.disabled=at+delta<0||at+delta>=peers.length;control.setAttribute('aria-label',title+' '+value.label);move.append(control);}details.append(move);
       if (value.quick === false || value.enabled === false) others.append(row); else list.append(row);
     }
     if (others.children.length > 1) list.append(others);
@@ -678,7 +722,7 @@ window.ChatComposer = (() => {
       const choices=document.createElement('div');choices.className='touch-choices mutual-action-choices';
       for(const value of model.mutualActions){
         const pick=button(value.label,()=>{
-          model.mutualId=value.id;model.touchVerb='';model.touchPart='';model.touchQuery='';renderTouchBuilder();
+          model.mutualId=value.id;model.touchVerb='';model.touchPart='';model.touchQuery='';renderTouchBuilder();void useMutualAction(false);
         },'touch-choice');
         pick.dataset.mutualAction=value.id;pick.setAttribute('aria-pressed',String(value.id===model.mutualId));
         choices.append(pick);
@@ -737,7 +781,7 @@ window.ChatComposer = (() => {
   function renderSelfBuilder(box){
     if(!model.selfSupported){box.append(Object.assign(document.createElement('p'),{className:'compose-status',textContent:'服务器尚未支持自身动作，请更新后使用。'}));return;}
     const selected=model.selfActions.find(value=>value.id===model.selfVerb),target=selected?.targets?.find(value=>value.id===model.selfPart);
-    const heading=document.createElement('div');heading.className='touch-path';heading.append(button(selected?.label||'① 选择自己的动作',()=>{model.selfVerb='';model.selfPart='';model.selfQuery='';renderTouchBuilder();},'touch-breadcrumb'),Object.assign(document.createElement('strong'),{textContent:target?.label||'② 选择目标'}));box.append(heading);
+    const heading=document.createElement('div');heading.className='touch-path';heading.append(button(selected?.label||'① 选择自己的动作',()=>{model.selfVerb='';model.selfPart='';model.selfQuery='';renderTouchBuilder();},'touch-breadcrumb'),Object.assign(document.createElement('strong'),{textContent:selected?.targets?.length===1?'选择后加入草稿':target?.label||'② 选择目标'}));box.append(heading);
     if(selected&&selected.targets?.length!==1){
       const targets=document.createElement('div');targets.className='touch-choices self-action-targets';
       for(const value of selected.targets||[]){const pick=button(value.label,()=>{model.selfPart=value.id;renderTouchBuilder();},'touch-choice');pick.setAttribute('aria-pressed',String(value.id===model.selfPart));targets.append(pick);}
@@ -761,6 +805,7 @@ window.ChatComposer = (() => {
       for(const value of visible){
         const pick=button(value.label,()=>{
           model.selfVerb=value.id;model.selfPart=value.targets?.length===1?value.targets[0].id:'';renderTouchBuilder();
+          if(value.targets?.length===1)void useSelfAction(false);
           if(value.targets?.length!==1)node('native-touch-picker').querySelector('.self-action-targets')?.scrollIntoView({block:'nearest'});
         },'touch-choice');
         pick.dataset.selfAction=value.id;pick.setAttribute('aria-pressed',String(value.id===model.selfVerb));choices.append(pick);
@@ -802,6 +847,7 @@ window.ChatComposer = (() => {
   }
   async function useSelfAction(direct){
     if(model.busy||!model.loaded||!model.selfSupported||model.touchUnknown)return;
+    if(interactionBusy()||state.pendingActions.length>=4){showNotice('当前动作尚未加入，请先处理消息或移除一个动作。');return;}
     const selected=model.selfActions.find(value=>value.id===model.selfVerb),target=selected?.targets?.find(value=>value.id===model.selfPart);if(!selected||!target)return;
     const op=beginOperation();if(!op)return;
     renderTouchConfirmation();
@@ -1058,6 +1104,7 @@ window.ChatComposer = (() => {
       if(typeof part.fragment_id==='string'&&/^[A-Za-z0-9_.:-]{1,128}$/.test(part.fragment_id))identity.fragment_id=part.fragment_id;
       if(Number.isInteger(part.order)&&part.order>=0)identity.order=part.order;
       if (['text', 'speech', 'plain'].includes(part.type) && typeof part.text === 'string') return [{ ...identity,type: 'plain', text: part.text }];
+      if (part.type === 'life_reference') {const reference=lifeReference(part);return reference?[{...identity,...reference}]:[];}
       if (part.type === 'reference') return [{...part,type:'reference'}];
       if (part.type === 'attachment') return [{...mediaPart({...part,type:part.media_type||'file',source:'upload'}),...identity}];
       if (part.type === 'action') {
@@ -1080,6 +1127,8 @@ window.ChatComposer = (() => {
     }) : [];
   }
   function renderPart(part) {
+    if(part.type==='life_reference')return button('生活资料 · '+(part.label||'查看来源'),()=>window.ChatLife?.openRecord(part.event_id?'event':part.record_kind,part.event_id||part.record_id),'typed-reference life-reference');
+
     if(part.type==='reference') {const quote=document.createElement('blockquote');quote.className='typed-reference';quote.textContent=(part.role==='assistant'?'角色':'你')+' · '+(part.text||'引用的附件消息');return quote;}
     if (part.type === 'action') {
       const action = document.createElement('span'); action.className = 'typed-action';
@@ -1099,9 +1148,9 @@ window.ChatComposer = (() => {
       }
       action.title = part.description; return action;
     }
-    const card = document.createElement('div'); card.className = 'typed-sticker';
+    const card = document.createElement('button'); card.type='button';card.className = 'typed-sticker';card.setAttribute('aria-label','查看表情大图');
     const image = document.createElement('img'); image.width = 128; image.height = 128;
-    image.alt = part.name || '表情'; card.append(image); thumbnail(image, { id: part.asset_id, name: part.name }); return card;
+    image.alt = briefExpressionName(part.name); card.append(image);card.onclick=()=>openSticker(image); thumbnail(image, { id: part.asset_id, name: part.name }); return card;
   }
   function editorTargetChanged(){
     const self=node('compose-action-target').value==='self';
@@ -1110,6 +1159,7 @@ window.ChatComposer = (() => {
     if(self)setText('compose-action-error','自己的动作会作为叙事输入。退开一步可结束这段会话的虚拟接触。');else setText('compose-action-error','');
   }
   function closeActive() {
+    if(node('sticker-reader')?.open){node('sticker-reader').close();return true;}
     if(node('action-defaults-dialog')?.open){model.defaultsSerial++;node('action-defaults-dialog').close();return true;}
     if(node('composition-preview-dialog')?.open){node('composition-preview-dialog').close();return true;}
     if(node('action-batch-dialog')?.open){closeBatchActions();return true;}
@@ -1168,34 +1218,53 @@ window.ChatComposer = (() => {
     model.watchTarget = target;
     try { watchChanged(parse(native().setReplyWatch(true, state.activeId, conversationTitle(), lastAssistantId()))); } catch (_) {}
   }
-  function historyReceived(sessionId) {
+  function historyReceived(sessionId, locatedNotification) {
+    // Only the successful owned history read can satisfy the queued tap.
+    if (locatedNotification && model.notification === locatedNotification) model.notification = null;
     // Called only after the original authenticated history path succeeds.
     // Keep normal login independently of the optional background watch.
+    let refreshDiagnostics = false;
     if(recoveryForeground()&&sessionId===state.activeId&&watchScope()&&typeof native().rememberReplyAccount==='function'){
       const recent=[...state.messages].reverse().find(row=>row.role==='assistant'&&row.delivery==='confirmed'&&row.serverId!=null);
       const excerpt=recent?(recent.parts||[]).map(part=>part.text||part.description||(part.type==='sticker'?'[表情]':part.type==='image'?'[图片]':'')).filter(Boolean).join(' ').slice(0,360):'';
-      try{native().rememberReplyAccount(sessionId,conversationTitle(),lastAssistantId(),excerpt);window.ChatNotificationStatus?.refresh();}catch(_){}
+      try {
+        native().rememberReplyAccount(sessionId,conversationTitle(),lastAssistantId(),excerpt);
+        refreshDiagnostics = true;
+      } catch (_) {}
     }
-    if (!recoveryForeground() || sessionId !== state.activeId || !model.watch || model.watch.running !== true
-        || model.watch.session_id !== sessionId || !watchScope()) return;
-    const seen = lastAssistantId();
-    const gap = model.watch.message_sync === 'cursor_unavailable'
-      || model.watch.reason === 'cursor_unavailable_open_chat';
-    if (typeof native().ackReplyWatch !== 'function' || !seen || !gap && model.lastWatchAck === watchScope() + '|' + seen) return;
     try {
+      if (!recoveryForeground() || sessionId !== state.activeId || !model.watch || model.watch.running !== true
+          || model.watch.session_id !== sessionId || !watchScope()) return;
+      const seen = lastAssistantId();
+      const gap = model.watch.message_sync === 'cursor_unavailable'
+        || model.watch.reason === 'cursor_unavailable_open_chat';
+      if (typeof native().ackReplyWatch !== 'function' || !seen || !gap && model.lastWatchAck === watchScope() + '|' + seen) return;
       // The acknowledgement bridge never starts a stopped watch or polls HTTP.
       const answer = parse(native().ackReplyWatch(sessionId, seen));
       if (answer && answer.ok === true) model.lastWatchAck = watchScope() + '|' + seen;
     } catch (_) { /* Next genuine history read may acknowledge it again. */ }
+    finally {
+      if (refreshDiagnostics) {
+        try { window.ChatNotificationStatus?.refresh(); } catch (_) {}
+      }
+    }
   }
-  function openConversation(id) {
+  function openConversation(id, target) {
     if (typeof id !== 'string' || !id || id.length > 256 || /[\u0000-\u001f]/.test(id)) return;
-    model.notificationId = id; flushNotification();
+    model.notification = target || { sessionId: id, account: chatAccountKey(), authEpoch: chatAuthEpoch };
+    flushNotification();
   }
   function flushNotification() {
-    if (!model.notificationId || !state.authenticated || state.loading || state.sending || state.attaching || state.creating) return;
-    const id = model.notificationId; model.notificationId = null;
-    selectSession(id,{focusLatest:true}); // Ownership stays on the original history path.
+    const pending = model.notification;
+    if (!pending) return;
+    if (!notificationAccountCurrent(pending)) {
+      model.notification = null;
+      if (notificationTarget === pending) notificationTarget = null;
+      return;
+    }
+    if (!state.authenticated || state.loading || state.sending || state.attaching || state.creating) return;
+    model.notification = null;
+    selectSession(pending.sessionId,{focusLatest:true}); // Ownership stays on the original history path.
   }
   function init() {
     const preview=document.createElement('dialog');preview.id='composition-preview-dialog';preview.className='settings-dialog';
@@ -1273,6 +1342,6 @@ window.ChatComposer = (() => {
   return { init, sync, snapshot, clear, recover, restore, persist, hasContent, renderPreview,
     toggle: () => setPanel(model.panel ? '' : 'expressions'), setPanel, closeActive, closePanel,
     viewportChanged: onViewport, viewport: () => model.nativeViewport, withReading, panelHeight,
-    normalizeParts, renderPart, addReference, commitText, showActions: () => setPanel('actions'),
+    normalizeParts, renderPart, addReference, addLifeReference, commitText, showActions: () => setPanel('actions'),
     toggleWatch, watchChanged, permissionChanged, historyReceived, openConversation };
 })();

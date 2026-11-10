@@ -139,6 +139,7 @@
       <p class="appearance-help">头像会居中裁剪；外观图片保存在本机，动图会取静态画面。</p>
       <label>聊天背景</label><div class="appearance-palettes" role="group" aria-label="选择聊天背景"><button type="button" data-appearance-palette="default" class="palette-default">默认</button><button type="button" data-appearance-palette="mint" class="palette-mint">浅绿</button><button type="button" data-appearance-palette="sand" class="palette-sand">暖沙</button><button type="button" data-appearance-palette="night" class="palette-night">深林</button></div>
       <div class="appearance-picker-row"><button id="choose-background" type="button" class="secondary-button">自选背景图片</button><span id="appearance-image-status" class="appearance-help">图片在本机处理，不上传服务器。</span></div>
+      <label for="appearance-sticker-size">聊天表情大小</label><select id="appearance-sticker-size"><option value="compact">紧凑</option><option value="standard">标准</option><option value="large">较大</option></select><p class="appearance-help">仅影响表情的阅读尺寸；普通照片保持原来的显示方式。点表情可查看大图。</p>
       <p id="appearance-error" class="form-error" role="alert" hidden></p>
       <div class="appearance-actions"><button id="appearance-reset" type="button" class="text-button">恢复默认</button><div><button id="appearance-cancel" type="button" class="secondary-button">取消</button><button id="appearance-save" type="submit" class="primary-button">保存</button></div></div>
     </form>
@@ -254,6 +255,8 @@
   <link rel="stylesheet" href="chat-voice.css">
   <script defer src="chat-voice.js"></script>
   <link rel="stylesheet" href="chat-call.css">
+  <script defer src="chat-devices.js"></script>
+  <script defer src="chat-feedback.js"></script>
   <script defer src="chat-call.js"></script>
   <script defer src="chat-image-jobs.js"></script>
 </body>

@@ -87,6 +87,7 @@ public final class ReplyWatchService extends Service {
     private Network validatedNetwork;
 
     private static final class Watch {
+        JSONObject deviceContext;long deviceContextAt;
         final String server, token, session, title, scope, baseline;
         ReplyWatchAccounts.Record registration;
         final AtomicBoolean polling = new AtomicBoolean();
@@ -145,12 +146,16 @@ public final class ReplyWatchService extends Service {
             if (live != null && !service.current(live)) live = null;
             boolean active = live != null;
             if (active) { activeCount++; if (selected == null || isVisible(live)) selected = live; }
+            // The active watch updates its flag after the cursor commit succeeds.
+            boolean syncBlocked = active ? live.syncBlocked : saved.getBoolean("sync_blocked_" + record.id, false);
+            String accountReason = active ? live.reason : saved.getString("stop_reason_" + record.id, "service_not_running");
+            if (!syncBlocked && "cursor_unavailable_open_chat".equals(accountReason)) accountReason = "";
             JSONObject row = new JSONObject().put("id", record.id).put("server", record.server)
                     .put("username", record.username).put("session_id", record.session).put("title", record.title)
                     .put("account_id", record.id).put("can_activate", true).put("registered", true).put("enabled", saved.getBoolean("enabled", false) && !saved.getBoolean("paused_" + record.id, false))
                     .put("active", active).put("running", active).put("verified_session", active && live.verified)
                     .put("state", active ? live.state : "stopped")
-                    .put("reason", active ? live.reason : saved.getString("stop_reason_" + record.id, "service_not_running"))
+                    .put("reason", accountReason)
                     .put("foreground_visible", active && isVisible(live))
                     .put("last_message_id", saved.getString("preview_id_" + record.id, ""))
                     .put("last_message_preview", saved.getString("preview_text_" + record.id, ""))
@@ -161,7 +166,7 @@ public final class ReplyWatchService extends Service {
                     .put("last_sync_at", active && live.lastSyncAt > 0 ? live.lastSyncAt : JSONObject.NULL)
                     .put("next_poll_seconds", active ? Math.max(0, live.nextPollAt - SystemClock.elapsedRealtime()) / 1000 : 0)
                     .put("notification_outcome_unknown", active ? live.uncertainNotices : 0);
-            row.put("diagnosis", ReplyWatchDiagnostics.account(saved, record.id));
+            row.put("diagnosis", ReplyWatchDiagnostics.account(saved, record.id, syncBlocked));
             accounts.put(row);
         }
         JSONArray stopped = stoppedAccounts(saved);
@@ -204,6 +209,7 @@ public final class ReplyWatchService extends Service {
             JSONObject record = new JSONObject();
             record.put("ok", true).put("runtime_permission_granted", permission)
                     .put("app_notifications_enabled", enabled)
+                    .put("active_message_notifications", activeMessageCount(manager))
                     .put("reply_channel", channelStatus(REPLY_CHANNEL, replies))
                     .put("watch_channel", channelStatus(WATCH_CHANNEL, watchChannel))
                     .put("proactive_channel", channelStatus(NotificationChannels.PROACTIVE, manager.getNotificationChannel(NotificationChannels.PROACTIVE)))
@@ -234,6 +240,20 @@ public final class ReplyWatchService extends Service {
             return record.toString();
         } catch (RuntimeException | JSONException unavailable) {
             return "{\"ok\":false,\"error\":\"notification_status_unavailable\",\"heads_up_guaranteed\":false}";
+        }
+    }
+
+    private static Object activeMessageCount(NotificationManager manager) {
+        try {
+            int count = 0;
+            for (StatusBarNotification note : manager.getActiveNotifications()) {
+                String tag = note.getTag();
+                if (note.getId() == 4400 && tag != null && tag.startsWith(NOTICE_PREFIX)
+                        && NotificationChannels.isMessageChannel(note.getNotification().getChannelId())) count++;
+            }
+            return count;
+        } catch (RuntimeException unavailable) {
+            return JSONObject.NULL;
         }
     }
 
@@ -372,7 +392,9 @@ public final class ReplyWatchService extends Service {
                 active.remember(selected, messageId);
             // Only the visible, authenticated page supplies a saved row ID.
             // Keep the later server sequence when a stale page acknowledges an older row.
-            if (acceptsForegroundSyncCursor(selected.syncCursor, messageId, selected.syncBlocked)) {
+            boolean alreadyReconciled = !selected.syncBlocked && messageId.equals(selected.syncCursor)
+                    && "foreground_reconciled".equals(selected.syncState);
+            if (!alreadyReconciled && acceptsForegroundSyncCursor(selected.syncCursor, messageId, selected.syncBlocked)) {
                 active.rememberSync(selected, messageId);
                 selected.syncBlocked = false;
                 selected.syncState = "foreground_reconciled";
@@ -828,6 +850,7 @@ public final class ReplyWatchService extends Service {
     private void updateWatch(Watch selected, String state, String reason, long delay) {
         synchronized (ADMISSION) {
             if (!current(selected)) return;
+            if ("cursor_unavailable_open_chat".equals(reason) && !selected.syncBlocked) return;
             ReplyWatchDiagnostics.readReason(metadata, selected.scope, reason);
             if ("reconnecting".equals(state)) ReplyWatchDiagnostics.error(metadata, selected.scope, reason);
             publish(state, reason, selected, true, delay);
@@ -900,10 +923,6 @@ public final class ReplyWatchService extends Service {
                 return;
             }
             String nextCursor = incremental ? syncNext(data, requestAfter, history) : "";
-            synchronized (ADMISSION) {
-                if (!current(selected)) return;
-                ReplyWatchDiagnostics.success(metadata, selected.scope);
-            }
             List<JSONObject> assistants = new ArrayList<>();
             for (int index = 0; index < history.length(); index++) {
                 JSONObject row = history.optJSONObject(index);
@@ -913,8 +932,18 @@ public final class ReplyWatchService extends Service {
                 if (content != null && "bot".equals(content.optString("type")) && !id.isEmpty() && id.length() <= 160)
                     assistants.add(row);
             }
+            synchronized (ADMISSION) {
+                if (!current(selected)) return;
+                ReplyWatchDiagnostics.success(metadata, selected.scope);
+                // A validated incremental page proves this watch read new saved
+                // Bot rows, regardless of quiet settings or Android publication.
+                if (incremental && !assistants.isEmpty()
+                        && requestAfter.equals(selected.syncCursor) && !isVisible(selected))
+                    ReplyWatchDiagnostics.backgroundReceived(metadata, selected.scope);
+            }
             if (!current(selected)) return;
             selected.verified = true;
+            selected.deviceContext=data.optJSONObject("device_context");selected.deviceContextAt=android.os.SystemClock.elapsedRealtime();
             JSONObject receipts = data.optJSONObject("receipt_transport");
             selected.receiptsSupported = receipts != null && receipts.optInt("schema") == 1 && receipts.optBoolean("supported");
             selected.partialReceipts = selected.receiptsSupported && receipts.optBoolean("partial_reports");
@@ -953,7 +982,9 @@ public final class ReplyWatchService extends Service {
                     String latestId = String.valueOf(history.optJSONObject(history.length() - 1).opt("id"));
                     if (positiveId(latestId) && !rememberBackgroundSync(selected, latestId, requestAfter)) return;
                 }
-                selected.syncState = selected.syncSupported ? "baseline_saved" : "legacy_history_window";
+                // A later recent-history window does not close an earlier legacy gap.
+                if (selected.syncSupported || !"legacy_cursor_outside_window".equals(selected.syncState))
+                    selected.syncState = selected.syncSupported ? "baseline_saved" : "legacy_history_window";
             }
             if (!assistants.isEmpty()) {
                 JSONObject recent = assistants.get(assistants.size() - 1);
@@ -1023,7 +1054,8 @@ public final class ReplyWatchService extends Service {
             if (!current(selected) || isVisible(selected)) return false;
             List<NoticeMessage> allowed = new ArrayList<>();
             for (NoticeMessage value : incoming)
-                if (preferences.allows(value.kind, java.util.Calendar.getInstance()) && NotificationChannels.allowed(manager, value.kind)) allowed.add(value);
+                if (!(android.os.SystemClock.elapsedRealtime()-selected.deviceContextAt<15000 && DeviceContinuity.visibleElsewhere(selected.deviceContext,value.id,DeviceContinuity.id(this)))
+                        && preferences.allows(value.kind, java.util.Calendar.getInstance()) && NotificationChannels.allowed(manager, value.kind)) allowed.add(value);
             List<NoticeMessage> previous = new ArrayList<>(selected.notices);
             mergeNoticeMessages(selected.notices, allowed);
             for (NoticeMessage old : previous) if (!selected.notices.contains(old)) manager.cancel(messageTag(selected.scope, old.id), 4400);

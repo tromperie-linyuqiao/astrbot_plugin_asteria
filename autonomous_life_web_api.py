@@ -17,10 +17,10 @@ PREFIX = '/astrbot_plugin_virtual_body/page/autonomous-life'
 MAX_BODY = 64 * 1024
 PERSONAL_READS = ('personal/resources','personal/resource-sources','personal/review-list','personal/review-preview','personal/overview','personal/records','personal/record','personal/history','personal/decision')
 PERSONAL_WRITES = ('personal/collect','personal/review-confirm','personal/create','personal/update','personal/archive','personal/restore','personal/delete')
-READS = PERSONAL_READS + ('overview', 'events', 'event', 'characters', 'character', 'threads', 'thread', 'shares', 'history', 'settings')
+READS = PERSONAL_READS + ('overview', 'events', 'event', 'characters', 'character', 'threads', 'thread', 'shares', 'history', 'settings', 'worldline', 'actions/status', 'event/impact')
 WRITES = PERSONAL_WRITES + ('event/create', 'event/correct', 'event/archive', 'event/restore',
           'character/create', 'character/update', 'character/archive', 'character/restore',
-          'thread/create', 'thread/update', 'thread/archive', 'thread/restore', 'settings/save', 'advance')
+          'thread/create', 'thread/update', 'thread/archive', 'thread/restore', 'settings/save', 'advance', 'actions/control')
 KINDS = {'event': ('events', 'list_events'), 'character': ('characters', 'list_characters'),
          'thread': ('threads', 'list_threads')}
 
@@ -82,7 +82,9 @@ class NativeAutonomousLifeWebApi:
                 allowed |= {'query', 'include_archived', 'include_invalid', 'limit', 'offset'}
             elif route in KINDS: allowed |= {'id'}
             elif route == 'shares': allowed |= {'event_id', 'limit'}
-            elif route == 'history': allowed |= {'kind', 'id', 'limit'}
+            elif route in {'worldline','event/impact'}: allowed |= {'event_id'}
+            elif route == 'history': allowed |= {'kind', 'id', 'limit','offset','expected_revision'}
+            if route == 'personal/history': allowed.add('expected_revision')
             if set(data) - allowed: raise _InvalidRequest('生活档案查询含未知字段')
             raw = {key: data.get(key) for key in SCOPE_FIELDS}
             if 'private' in data: raw['private'] = data['private'] is True or data['private'] == 'true'
@@ -103,7 +105,51 @@ class NativeAutonomousLifeWebApi:
         if set(data) != set(fields) | {'scope'}:
             raise _InvalidRequest('请求字段不完整或含多余字段')
 
+    @staticmethod
+    def _capacity(service, scope):
+        """Count only validated current entities in the requested admin scope.
+
+        Buckets describe retention, not dependency validity or whether an item
+        is still ongoing. History and other Journal namespaces are not exposed.
+        """
+        from .core.living.autonomous_life import _NS as life_ns, _LIMIT as life_limit
+        from .core.living.personal_space import _NS as personal_ns, _LIMIT as personal_limit
+        scope=service._scope(scope);personal=PersonalSpace(service)
+        kinds=[];totals=dict(total=0,active=0,archived=0,deleted=0,limit=0,remaining=0)
+        with service.journal._lock:
+            for kind,limit in {**life_limit,**personal_limit}.items():
+                namespace=(life_ns if kind in life_limit else personal_ns)[kind]
+                rows=service.journal.list(namespace,scope,limit=limit+1)
+                if len(rows)>limit:raise RuntimeError('life retention exceeds supported capacity')
+                counts=dict(kind=kind,total=len(rows),active=0,archived=0,deleted=0,limit=limit,remaining=limit-len(rows))
+                for row in rows:
+                    checked=(service._checked_row(kind,scope,row['key'],row) if kind in life_limit else
+                        personal._checked_row(scope,kind,row['key'],row))
+                    value=checked['data']
+                    bucket='deleted' if value.get('deleted') is True else 'archived' if value['archived'] else 'active'
+                    counts[bucket]+=1
+                kinds.append(counts)
+                for key in totals:totals[key]+=counts[key]
+            service._scope(scope)
+            return dict(scope_only=True,read_only=True,as_of=service._now(),totals=totals,kinds=kinds,
+                archive_releases_capacity=False,active_semantics='not_archived_not_deleted',remaining_guarantees_write=False)
+
     def _operate(self, service, route, scope, data, actor):
+        if route=='actions/status':
+            from .core.living.life_choices import LifeChoices
+            return LifeChoices(service).snapshot(scope)
+        if route=='actions/control':
+            from .core.living.life_choices import LifeChoices
+            required={'scope','action','request_id','expected_revision'}
+            optional={'target_kind','target_id','expected_target_revision','minutes','reason'}
+            if not required.issubset(data) or set(data)-required-optional:raise _InvalidRequest('请选择明确的行动与当前版本')
+            return LifeChoices(service).control(scope,action=data['action'],request_id=data['request_id'],
+                expected_revision=self._revision(data),actor=actor,**{key:data[key] for key in optional if key in data})
+        if route=='event/impact':
+            return service.correction_impact(scope,_text(data.get('event_id'),'经历ID',160))
+        if route=='worldline':
+            from .core.living.life_worldline import project
+            return project(service,scope,_text(data.get('event_id'),'经历ID',160))
         if route.startswith('personal/'):
             personal = PersonalSpace(service)
             operation = route.split('/',1)[1]
@@ -159,7 +205,9 @@ class NativeAutonomousLifeWebApi:
                     status=data.get('status',''),category=data.get('category',''),sort=data.get('sort','updated'))
             if operation in {'record','history'}:
                 identity = _text(data.get('id'), '资料ID',160)
-                if operation == 'history': return personal.history(scope,kind,identity,limit=_integer(data.get('limit',20),'limit',1,100))
+                if operation == 'history': return personal.history(scope,kind,identity,
+                    limit=_integer(data.get('limit',20),'limit',1,100),offset=_integer(data.get('offset',0),'offset',0,50000),
+                    expected_revision=_integer(data['expected_revision'],'expected_revision',0,2**53-1) if 'expected_revision' in data else None)
                 value = personal.get_record(scope,kind,identity)
                 if value is None: raise KeyError(identity)
                 return dict(self._personal_links(service, scope, value), archive_links=personal.archive_links(scope,value))
@@ -179,7 +227,9 @@ class NativeAutonomousLifeWebApi:
             if operation == 'update': return personal.update(scope,kind,identity,changes=data['changes'],**kwargs)
             if operation == 'delete': return personal.delete(scope,kind,identity,**kwargs)
             return personal.archive(scope,kind,identity,archived=operation=='archive',**kwargs)
-        if route == 'overview': return service.overview(scope)
+        if route == 'overview':
+            with service.journal._lock:
+                return dict(service.overview(scope),capacity=self._capacity(service,scope))
         if route == 'settings': return service.settings(scope)
         if route in {'events', 'characters', 'threads'}:
             def flag(name):
@@ -201,7 +251,8 @@ class NativeAutonomousLifeWebApi:
             kind = data.get('kind')
             if kind not in KINDS: raise _InvalidRequest('资料类型无效')
             return service.history(scope, kind, _text(data.get('id'), '资料ID', 160),
-                limit=_integer(data.get('limit', 20), 'limit', 1, 100))
+                limit=_integer(data.get('limit', 20), 'limit', 1, 100),offset=_integer(data.get('offset',0),'offset',0,50000),
+                expected_revision=_integer(data['expected_revision'],'expected_revision',0,2**53-1) if 'expected_revision' in data else None)
         kind, operation = route.split('/')
         if operation == 'create':
             self._exact(data, {'request_id', 'fields'})

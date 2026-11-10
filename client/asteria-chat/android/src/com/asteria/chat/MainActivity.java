@@ -58,7 +58,7 @@ public final class MainActivity extends Activity {
     private WebView web;
     private ChatViewportController viewport;
     private NativeBridge bridge;
-    private TexasVoice voice;
+    private AsteriaVoice voice;
     private ReplyWatchService.Observer replyWatchObserver;
     private Intent pendingReplyIntent;
     private boolean replyAccountSwitching;
@@ -123,7 +123,11 @@ public final class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(true);
         bridge = new NativeBridge();
         PhoneCallService.observe(value -> runOnUiThread(() -> {if(trusted()&&web!=null)web.evaluateJavascript("window.ChatCall&&window.ChatCall.receive("+value.toString()+")",null);}));
-        voice = new TexasVoice(this, value -> {PhoneCallService.outputCurrent("playing".equals(value.optString("phase"))||"preparing".equals(value.optString("phase")));if(trusted() && web!=null) web.evaluateJavascript("window.ChatVoice&&window.ChatVoice.receive("+value.toString()+")",null);});
+        voice = new AsteriaVoice(this, value -> {
+            String phase=value.optString("phase");
+            PhoneCallService.outputCurrent("playing".equals(phase)||"preparing".equals(phase)||"paused".equals(phase));
+            if(trusted()&&web!=null) web.evaluateJavascript("window.ChatVoice&&window.ChatVoice.receive("+value.toString()+")",null);
+        });
         if (bridge.token == null) {
             PhonePerceptionService.stop(this, "login_required");
             // Explicit saved background accounts remain independent of the visible login.
@@ -357,7 +361,7 @@ public final class MainActivity extends Activity {
             if (!trusted()) return json("error", "local_page_required").toString();
             synchronized (lock) {
                 return json("server", server, "authenticated", token != null, "username", AttachmentCache.username(token), "version", BuildConfig.VERSION_NAME,
-                        "foreground", foreground.get(),
+                        "foreground", foreground.get(), "deviceId", DeviceContinuity.id(MainActivity.this),
                         "replyWatch", decode(ReplyWatchService.snapshot(MainActivity.this), "application/json"),
                         "localOnly", true, "tlsCertificatePin", !BuildConfig.DEFAULT_CERT_SHA256.isEmpty(),
                         "attachmentCacheRecovery", attachmentRecovery).toString();
@@ -943,7 +947,7 @@ public final class MainActivity extends Activity {
             requireCurrent(selected.auth);if(!foreground.get()||!selected.auth.token.equals(token))throw new IllegalStateException("请返回当前聊天后再次开始通话");
             synchronized(lock){visibleSession=selected.sessionId;}
             if(voice!=null)voice.stop();
-            PhoneCallService.begin(MainActivity.this,options.getString("call_id"),callScope(selected.auth,selected.sessionId),selected.sessionId,()->callCurrent(selected),options.optInt("silence_ms",1200),.009f);
+            PhoneCallService.begin(MainActivity.this,options.getString("call_id"),callScope(selected.auth,selected.sessionId),selected.sessionId,()->callCurrent(selected),options.optInt("silence_ms",1200),.009f,options.optBoolean("voice_replies"));
             deliver(selected.requestId,200,PhoneCallService.status(MainActivity.this,callScope(selected.auth,selected.sessionId)));
         }
         private void callPermissionResult(int[] grants){

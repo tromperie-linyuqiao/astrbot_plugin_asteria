@@ -2549,6 +2549,14 @@ class AsteriaPlugin(Star):
         if service is None: return
         return await service.hook('normalize_tts_enhancement_response')(event, resp, *args, **kwargs)
 
+    @filter.on_llm_request(priority=-31000)
+    async def capture_chat_context_receipt(self, event: AstrMessageEvent, req: ProviderRequest):
+        from .core.living.chat_context_observer import capture
+        try:
+            capture(self, event, req)
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            logger.debug('Asteria Chat context receipt unavailable')
+
     @filter.on_llm_response()
     async def integrated_pc_record_external_llm_token_usage(self, event: AstrMessageEvent, resp, *args, **kwargs):
         service = self._full_pc_service()
