@@ -268,11 +268,31 @@ class AutonomousLifeRuntime:
                 state, reason = 'failed', {'failed':'recent_failure', 'unknown':'result_unknown', 'generating':'last_step_interrupted'}[outcome]
             elif wait_reason: state, reason = 'waiting', wait_reason
             elif outcome == 'quiet': state, reason = 'quiet', 'quiet_result'
+        # This is a time lower bound, not a promised scheduler invocation. Keep
+        # the original saved next_check_at separately for historical diagnosis.
+        from datetime import timedelta
+        budget_reset=None
+        if call_limit>0 and calls>=call_limit or event_limit>0 and events>=event_limit:
+            tomorrow=datetime.fromtimestamp(now,zone).date()+timedelta(days=1)
+            budget_reset=datetime.combine(tomorrow,datetime.min.time(),tzinfo=zone).timestamp()
+        rest_until=action_controls['rest']['until'] if action_controls['rest'] and action_controls['rest']['active'] else None
+        blockers=[]
+        if running:blockers.append('existing_life_step_running')
+        if not policy['enabled']:blockers.append('life_disabled')
+        if not self._bound() or daily is None or not daily.active:blockers.append('existing_daily_owner_unavailable')
+        if not live:blockers.append('live_scope_not_registered')
+        if call_limit==0:blockers.append('model_budget_zero')
+        if event_limit==0:blockers.append('event_budget_zero')
+        if not providers:blockers.append('life_model_not_configured')
+        next_at=None if blockers else max(now,next_at or 0,rest_until or 0,budget_reset or 0)
+        timing=dict(as_of=now,timezone=getattr(zone,'key',str(zone)),budget_resets_at=budget_reset,
+            rest_until=rest_until,blockers=blockers,kind='earliest_possible_not_scheduled',
+            next_automatic_at_local=datetime.fromtimestamp(next_at,zone).isoformat() if next_at is not None else None)
         return dict(state=state, configured=policy['enabled'], share_enabled=policy['share_enabled'],
             reason=reason, reason_label=STATUS_REASONS[reason], registered=live,
             can_advance=can_advance, advance_block_reason=blocked_reason or ('minimum_interval' if not can_advance else None),
             advance_block_label=STATUS_REASONS.get(blocked_reason or ('minimum_interval' if not can_advance else None)),
-            automatic_ready=automatic_ready, wait_reason=wait_reason, next_eligible_at=minimum_at, next_automatic_at=next_at,
+            automatic_ready=automatic_ready, wait_reason=wait_reason, next_eligible_at=minimum_at, next_automatic_at=next_at,timing=timing,
             budget=budget, last_error=last_error, error_category=last_error['error_category'] if last_error else None,
             last_attempt_at=data.get('last_attempt_at'), last_result=last_result, review=data.get('review'),
             next_check_at=data.get('next_check_at'), day=day,last_attempt_day=data.get('day'),

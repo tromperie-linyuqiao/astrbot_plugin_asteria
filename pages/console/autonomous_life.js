@@ -10,7 +10,7 @@ const uuid=()=>{const value=global.TLSBrowserCompat?.uuid?.()||global.crypto?.ra
 const labels={event:'经历',character:'人物',thread:'开放事项'};
 const plurals={event:'events',character:'characters',thread:'threads'};
 const states={ongoing:'进行中',completed:'已结束',cancelled:'已取消',open:'未结束',resolved:'已解决',canonical:'正典人物',recurring:'常驻人物',temporary:'临时人物'};
-const runtimeStates={disabled:'未开启',ready:'允许尝试评估',waiting:'等待下一次评估',quiet:'最近是平静日',needs_review:'需要复核',failed:'最近评估未完成',paused_budget:'预算暂停',budget_exhausted:'今日预算已用完',model_unavailable:'后台模型未配置',advanced:'已产生新经历',created:'已产生新经历',blocked:'暂不可推进',unavailable:'暂不可用',running:'正在评估',idle:'待评估',not_registered:'等待真实会话登记',deferred:'等待推进条件',busy:'已有评估正在进行'};
+const runtimeStates={disabled:'未开启',ready:'允许尝试评估',waiting:'等待下一次评估',resting:'正在休息',quiet:'最近是平静日',needs_review:'需要复核',failed:'最近评估未完成',paused_budget:'预算暂停',budget_exhausted:'今日预算已用完',model_unavailable:'后台模型未配置',advanced:'已产生新经历',created:'已产生新经历',blocked:'暂不可推进',unavailable:'暂不可用',running:'正在评估',idle:'待评估',not_registered:'等待真实会话登记',deferred:'等待推进条件',busy:'已有评估正在进行'};
 const errorLabels={provider_restricted:'模型服务限制了这次请求',provider_access_denied:'模型服务拒绝访问',provider_authentication:'模型服务认证失败',provider_rate_limited:'模型服务限流',provider_timeout:'模型服务响应超时',provider_connection:'无法连接模型服务',provider_unavailable:'模型服务暂不可用',invalid_model_output:'模型返回内容无法解析',invalid_life_record:'生成的生活资料需要复核',runtime_permission:'当前来源或权限已变化',unknown_result:'请求结束状态尚未确认',unknown_error:'发生未分类错误'};
 const stamp=value=>typeof value==='number'&&Number.isFinite(value)?new Date(value*1000).toLocaleString():'尚无记录';
 let queuedOpen=null,historyView=null;
@@ -96,6 +96,10 @@ function drawRuntime(){
   const callsLimit=calls?.limit??settings?.settings?.max_model_calls_per_day;
   const eventsLimit=eventsBudget?.limit??settings?.settings?.max_events_per_day;
   const budgetText=node('p',`今日预算：模型 ${calls?.used??runtime.model_calls_today??0} / ${callsLimit??'未读取'} 次 · 新经历 ${eventsBudget?.used??runtime.events_today??0} / ${eventsLimit??'未读取'} 条`,'life-budget');budgetText.dataset.lifeBudget='true';banner.append(budgetText);
+  const timing=runtime.timing,next=runtime.next_automatic_at;
+  const timeText=!timing?'暂未提供预计时间；保存的检查时刻不代表会自动执行。':typeof next!=='number'?'暂不能估计，请查看当前阻碍。':next<=timing.as_of?'已到可评估时间，仍需满足会话、预算和模型条件。':(timing.next_automatic_at_local?.replace('T',' ')||stamp(next))+'；满足条件后才会评估。';
+  const nextTime=node('p','最早可再评估：'+timeText,'hint');nextTime.dataset.lifeNextEvaluation='true';banner.append(nextTime);
+  banner.append(node('small','这里只表示预算、休息与间隔允许的最早时间，不保证届时调用或模型成功。'));
   const ids=Array.isArray(runtime.model?.provider_ids)?runtime.model.provider_ids.filter(value=>typeof value==='string'):[];
   banner.append(node('p','后台模型：'+(runtime.model?.configured===true?(ids.join(' → ')||'已配置后台任务路由'):'尚未配置可用的后台模型'),'life-model'));
   if(runtime.model?.route_scope)banner.append(node('small',runtime.model.route_scope==='character'?'使用当前角色独立的后台模型配置。':'继承后台“自主生活”任务配置；不继承普通聊天模型。'));
@@ -113,9 +117,9 @@ function drawRuntime(){
    target.append(controlsBox);
   }
   const details=node('details'),summary=node('summary','时间与最近评估详情');details.append(summary);
-  for(const [name,label]of [['last_attempt_at','最近评估'],['next_check_at','下次检查']])if(runtime[name])details.append(node('p',label+'：'+stamp(runtime[name]),'hint'));
-  if(runtime.wait_reason==='minimum_interval'&&runtime.next_eligible_at)details.append(node('p','最早可手动评估：'+stamp(runtime.next_eligible_at),'hint'));
-  if(settings?.timezone)details.append(node('p','日预算时区：'+settings.timezone,'hint'));
+  for(const [name,label]of [['last_attempt_at','最近评估'],['next_check_at','上次保存的检查时间（历史调度值）']])if(runtime[name])details.append(node('p',label+'：'+stamp(runtime[name]),'hint'));
+  if(runtime.wait_reason==='minimum_interval'&&runtime.next_eligible_at&&(!runtime.advance_block_reason||runtime.advance_block_reason==='minimum_interval'))details.append(node('p','最早可手动评估：'+stamp(runtime.next_eligible_at),'hint'));
+  if(runtime.timing?.timezone||settings?.timezone)details.append(node('p','日预算时区：'+(runtime.timing?.timezone||settings.timezone),'hint'));
   if(runtime.last_result?.reason&&!error)details.append(node('p','最近结果：'+String(runtime.last_result.reason).slice(0,400),'hint'));
   if(runtime.review){const review=node('details');review.append(node('summary','查看待复核提议（尚未成为经历）'),node('pre',JSON.stringify(runtime.review,null,2),'life-content'));details.append(review);}
   target.append(details);}

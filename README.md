@@ -1,4 +1,4 @@
-源码已更新到 Asteria 0.77.2，配套通用 Chat 源码为 2.7.18/code96。此轮为源码更新；Releases 中公开 APK 仍为 2.7.1，未发布新的通用安装包。
+源码已更新到 Asteria 0.77.3，配套通用 Chat 源码为 2.7.18/code96。此轮为源码更新；Releases 中公开 APK 仍为 2.7.1，未发布新的通用安装包。
 
 # 星栖 Asteria
 
@@ -19,6 +19,12 @@
 星栖把角色状态、长期记忆、场景互动和日常陪伴整合到 AstrBot 中。你可以在统一管理页面维护角色与资料，也可以通过 Asteria Chat 与角色长期聊天。
 
 
+
+## 0.77.3 · 生活推进时间说明
+
+当今日生活模型额度已用完，或当前范围主动休息时，管理页区分原计划时间与满足当前已知限制后最早可能检查的时间，不再把已经过去的计划显示成即将推进。休息状态明确标注，原始安排、实际失败和今日额度仍可核对。
+
+这是状态说明修正，不会增加额度、重试失败请求或承诺模型服务届时恢复。正常推进仍需满足原有权限、有效会话、模型可用性和资料校验。既有模型、音色、配置和客户端不变；没有新 APK 或桌宠包。
 
 ## 0.77 生活世界与统一体验
 
@@ -209,7 +215,7 @@ https://cdn.jsdelivr.net/gh/tromperie-linyuqiao/astrbot_plugin_asteria@main/mark
 
 
 
-当前主分支源码：**Asteria 0.77.2 / Asteria Chat 2.7.18（code96）**。最近正式 Release 仍是 **Asteria 0.75.17 / Asteria Chat 2.7.1（code79）**，尚未为此次源码更新新增 Release。在 Releases 选择对应版本的源码 ZIP 或公开客户端 APK；旧版文件保留，不代表当前版本。公开客户端不预置服务器，包名与私人 Texas Chat 不同。
+当前主分支源码：**Asteria 0.77.3 / Asteria Chat 2.7.18（code96）**。最近正式 Release 仍是 **Asteria 0.75.17 / Asteria Chat 2.7.1（code79）**，尚未为此次源码更新新增 Release。在 Releases 选择对应版本的源码 ZIP 或公开客户端 APK；旧版文件保留，不代表当前版本。公开客户端不预置服务器，包名与私人 Texas Chat 不同。
 
 
 客户端连接你自己的 AstrBot 服务，复用现有角色、模型与聊天历史。默认不预置服务器或账号。服务端连接配置见 [反向代理示例](deploy/nginx-chat.conf.example)。
