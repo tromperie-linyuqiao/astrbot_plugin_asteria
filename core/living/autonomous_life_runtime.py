@@ -113,6 +113,13 @@ def _last_error(result):
         http_status=status, upstream_code=code)
 
 
+def _manual_retry_after_unavailable(result):
+    # A confirmed upstream 503 may be retried explicitly after changing a
+    # broken route. Never treat timeouts, UNKNOWN or unfinished work this way.
+    return (isinstance(result, dict) and result.get('state') == 'failed'
+        and _integer_code(result.get('http_status'), 100, 599) == 503)
+
+
 def syuan_provider(provider):
     """Check the configured channel, not a user-editable display name or key."""
     config = getattr(provider, 'provider_config', {})
@@ -259,7 +266,8 @@ class AutonomousLifeRuntime:
         elif events >= event_limit: state, reason = 'budget_exhausted', 'event_daily_budget_exhausted'
         elif not providers: state, reason = 'model_unavailable', 'life_model_not_configured'
         blocked_reason = reason if state != 'ready' else None
-        can_advance = blocked_reason is None and wait_reason != 'minimum_interval'
+        retry_failure = _manual_retry_after_unavailable(last_result)
+        can_advance = blocked_reason is None and (wait_reason != 'minimum_interval' or retry_failure)
         automatic_ready = blocked_reason is None and wait_reason is None
         if state == 'ready':
             outcome = last_result.get('state') if isinstance(last_result, dict) else None
@@ -290,7 +298,8 @@ class AutonomousLifeRuntime:
             next_automatic_at_local=datetime.fromtimestamp(next_at,zone).isoformat() if next_at is not None else None)
         return dict(state=state, configured=policy['enabled'], share_enabled=policy['share_enabled'],
             reason=reason, reason_label=STATUS_REASONS[reason], registered=live,
-            can_advance=can_advance, advance_block_reason=blocked_reason or ('minimum_interval' if not can_advance else None),
+            can_advance=can_advance, manual_retry_available=can_advance and retry_failure and wait_reason == 'minimum_interval',
+            advance_block_reason=blocked_reason or ('minimum_interval' if not can_advance else None),
             advance_block_label=STATUS_REASONS.get(blocked_reason or ('minimum_interval' if not can_advance else None)),
             automatic_ready=automatic_ready, wait_reason=wait_reason, next_eligible_at=minimum_at, next_automatic_at=next_at,timing=timing,
             budget=budget, last_error=last_error, error_category=last_error['error_category'] if last_error else None,
@@ -599,9 +608,10 @@ class AutonomousLifeRuntime:
                 if controls['rest'] and controls['rest']['active']:
                     return dict(state='deferred',reason='life_resting',until=controls['rest']['until'],model_called=False)
                 minimum = policy['min_interval_minutes'] * 60
-                # Manual progression cannot bypass cost budget, ownership or
-                # a still-running step. It may only bypass the normal interval.
-                if now < data.get('last_attempt_at', 0) + minimum:
+                # Explicit retry of a confirmed 503 skips only the cooldown;
+                # the same budget, ownership and one-in-flight gates still apply.
+                retry_failure = force and _manual_retry_after_unavailable(data.get('result'))
+                if now < data.get('last_attempt_at', 0) + minimum and not retry_failure:
                     return dict(state='deferred', reason='minimum_interval')
                 if not force and now < data.get('next_check_at', 0):
                     return dict(state='deferred', reason='next_check_not_due')

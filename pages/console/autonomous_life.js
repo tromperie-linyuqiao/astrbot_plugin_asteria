@@ -118,7 +118,8 @@ function drawRuntime(){
   }
   const details=node('details'),summary=node('summary','时间与最近评估详情');details.append(summary);
   for(const [name,label]of [['last_attempt_at','最近评估'],['next_check_at','上次保存的检查时间（历史调度值）']])if(runtime[name])details.append(node('p',label+'：'+stamp(runtime[name]),'hint'));
-  if(runtime.wait_reason==='minimum_interval'&&runtime.next_eligible_at&&(!runtime.advance_block_reason||runtime.advance_block_reason==='minimum_interval'))details.append(node('p','最早可手动评估：'+stamp(runtime.next_eligible_at),'hint'));
+  if(runtime.manual_retry_available)details.append(node('p','上次模型服务明确返回不可用。处理通道后可以手动重试，仍计入今日额度；自动评估继续遵守原间隔。','hint'));
+  else if(runtime.wait_reason==='minimum_interval'&&runtime.next_eligible_at&&(!runtime.advance_block_reason||runtime.advance_block_reason==='minimum_interval'))details.append(node('p','最早可手动评估：'+stamp(runtime.next_eligible_at),'hint'));
   if(runtime.timing?.timezone||settings?.timezone)details.append(node('p','日预算时区：'+(runtime.timing?.timezone||settings.timezone),'hint'));
   if(runtime.last_result?.reason&&!error)details.append(node('p','最近结果：'+String(runtime.last_result.reason).slice(0,400),'hint'));
   if(runtime.review){const review=node('details');review.append(node('summary','查看待复核提议（尚未成为经历）'),node('pre',JSON.stringify(runtime.review,null,2),'life-content'));details.append(review);}
