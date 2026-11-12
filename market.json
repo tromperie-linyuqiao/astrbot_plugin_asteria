@@ -10,7 +10,7 @@
   "tromperie-linyuqiao/astrbot_plugin_asteria": {
     "author": "tromperie-linyuqiao",
     "name": "astrbot_plugin_asteria",
-    "version": "0.77.4",
+    "version": "0.77.5",
     "repo": "https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria",
     "display_name": "星栖 Asteria",
     "short_desc": "AstrBot 角色陪伴插件，整合记忆、状态、互动与日程。",

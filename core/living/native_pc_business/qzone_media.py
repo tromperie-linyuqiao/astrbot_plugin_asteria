@@ -395,7 +395,7 @@ class QzoneMediaMixin:
         )
 
     @classmethod
-    def _qzone_remote_media_url_allowed(cls, source: str) -> bool:
+    async def _qzone_remote_media_url_allowed(cls, source: str) -> bool:
         parsed = urlparse(str(source or "").strip())
         if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
             return False
@@ -408,18 +408,18 @@ class QzoneMediaMixin:
         except ValueError:
             pass
         try:
-            infos = socket.getaddrinfo(host.rstrip("."), None, type=socket.SOCK_STREAM)
+            infos = await asyncio.get_running_loop().getaddrinfo(host.rstrip("."), None, type=socket.SOCK_STREAM)
         except OSError:
             return False
         addresses = {item[4][0] for item in infos if item and item[4]}
         return bool(addresses) and not any(cls._qzone_is_unsafe_media_host(address) for address in addresses)
 
     @classmethod
-    def _qzone_safe_redirect_url(cls, current_url: str, location: str) -> str:
+    async def _qzone_safe_redirect_url(cls, current_url: str, location: str) -> str:
         if not location:
             return ""
         target = urljoin(current_url, location)
-        return target if cls._qzone_remote_media_url_allowed(target) else ""
+        return target if await cls._qzone_remote_media_url_allowed(target) else ""
 
     async def _qzone_load_image_bytes(
         self,
@@ -455,7 +455,7 @@ class QzoneMediaMixin:
             image_type, content_type = self._qzone_guess_image_type(str(path), data)
             return data, path.name or f"image.{image_type}", content_type
         if re.match(r"^https?://", text, flags=re.I):
-            if not self._qzone_remote_media_url_allowed(text):
+            if not await self._qzone_remote_media_url_allowed(text):
                 raise QzoneIntegrationError("图片读取失败", "图片 URL 指向本机、内网或不可安全解析的地址")
             timeout = aiohttp.ClientTimeout(total=30)
             headers = {
@@ -469,7 +469,7 @@ class QzoneMediaMixin:
                     async with session.get(current_url, allow_redirects=False) as response:
                         if response.status in {301, 302, 303, 307, 308}:
                             location = response.headers.get("Location") or response.headers.get("location") or ""
-                            redirected = self._qzone_safe_redirect_url(current_url, location)
+                            redirected = await self._qzone_safe_redirect_url(current_url, location)
                             if not redirected:
                                 raise QzoneIntegrationError("图片读取失败", "图片重定向目标不安全，已拒绝下载")
                             current_url = redirected
