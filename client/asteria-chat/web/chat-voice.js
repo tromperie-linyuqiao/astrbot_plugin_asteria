@@ -229,7 +229,7 @@ window.ChatVoice = (() => {
       const value=draft.value+(draft.value?'\n':'')+data.text;if(value.length>(draft.maxLength>0?draft.maxLength:16000))throw Error('识别后草稿过长，原草稿未覆盖。');draft.value=value;saveDraft();draft.dispatchEvent(new Event('input',{bubbles:true}));draft.focus();showNotice('已加入语音识别文字，可修改后发送。');
     }catch(e){if(target===scope())showNotice(errorText(e));}finally{if(recognitionOwner===target){recognizing=false;recognitionOwner='';}}
   }
-  document.addEventListener('DOMContentLoaded',()=>{setup();const entry=button('声音与语音输入',open,'menu-item');entry.id='menu-voice';document.getElementById('more-menu').append(entry);const input=button('语音转文字',recognize,'attachment-picker');document.querySelector('[data-compose-pane="attachments"]').prepend(input);document.getElementById('voice-button').setAttribute('aria-label','语音识别后编辑草稿');document.getElementById('voice-button').title='语音转文字';},{once:true});
+  document.addEventListener('DOMContentLoaded',()=>{setup();const entry=button('声音与语音输入',open,'menu-item');entry.id='menu-voice';document.getElementById('more-menu').append(entry);document.getElementById('voice-button').setAttribute('aria-label','语音识别后编辑草稿');document.getElementById('voice-button').title='语音转文字';},{once:true});
   window.addEventListener('pagehide',stop);
   return {phase:()=>playback,open,closeActive,scopeChanged,receive,speak,recognize,speechText,prepareCall,speakCallReply,cancelCallReply};
 })();

@@ -52,7 +52,7 @@ window.ChatCall = (() => {
     if(key!==renderedTurns){renderedTurns=key;turnsBox.replaceChildren();for(const item of history.slice(-24)){const row=node('article',undefined,'call-turn'),stateText=node('small',item.status),text=node('p',item.text);row.dataset.sequence=item.sequence;row.append(stateText,text,button('复制到草稿',()=>copyToDraft(item)));turnsBox.append(row);}}
   }
   function copyToDraft(item){if(owner!==scope()){say('当前角色已变化，这段文字没有写入新聊天。');return;}const draft=$('draft'),next=draft.value+(draft.value?'\n':'')+item.text;if(next.length>draft.maxLength){say('草稿空间不足，原文字保持不变。');return;}draft.value=next;draft.dispatchEvent(new Event('input',{bubbles:true}));say('已复制到当前草稿，可自行编辑发送。');}
-  async function open(){setup();scopeChanged();if(!available()){showNotice('先打开当前角色的聊天，再使用电话模式。');return;}hideMoreMenu();if(!dialog.open)dialog.showModal();paint();
+  async function open(){setup();scopeChanged();if(!available()){showNotice('先打开当前角色的聊天，再使用电话模式。');return;}hideMoreMenu();window.ChatComposer?.closePanel();$('draft').blur();if(!dialog.open)dialog.showModal();paint();
     try{const value=await command('status');modelReady=value.model_ready===true;if(value.active){if(!callId){callId=value.call_id;owner=scope();}receive(value);}else if(!active)say(modelReady?'离线模型已就绪。点击开始后，停顿分句会自动发送。':'请先导入离线语音模型。');paint();}catch(e){say(errorText(e));}
   }
   async function importModel(){if(active||busy)return;busy=true;paint();const target=scope();try{const data=responseData(await nativeAsync('importCallModel',[state.activeId],600000));if(target!==scope())return;if(data.cancelled){say('已取消导入，没有开始收音。');return;}if(data.ok!==true||data.model_ready!==true)throw Error(data.message||'模型导入未完成。');modelReady=true;say('离线模型已就绪，可以开始通话。');}catch(e){if(target===scope())say(errorText(e));}finally{busy=false;paint();}}
@@ -131,7 +131,7 @@ window.ChatCall = (() => {
     }catch(e){say(errorText(e));}finally{interrupting=false;paint();}
   }
   function setOutputActive(value){if(current()&&active)void command('output',{output:!!value}).then(receive).catch(()=>{});}
-  document.addEventListener('DOMContentLoaded',()=>{setup();const entry=button('电话模式',open,'menu-item');entry.id='menu-phone-call';$('more-menu').append(entry);const quick=button('电话',open,'call-entry');quick.id='call-entry';quick.title='持续收音，停顿后自动发送';document.querySelector('.composer-tool-row').append(quick);paint();},{once:true});
+  document.addEventListener('DOMContentLoaded',()=>{setup();const entry=button('电话模式',open,'menu-item');entry.id='menu-phone-call';$('more-menu').append(entry);$('call-entry').addEventListener('click',open);paint();},{once:true});
   window.addEventListener('pagehide',end);
   return {open,end,receive,scopeChanged,stateChanged,setOutputActive,takeTurn,voiceStateChanged:paint};
 })();

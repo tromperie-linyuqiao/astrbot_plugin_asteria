@@ -21,8 +21,8 @@ import zipfile
 
 APP = Path(__file__).resolve().parent
 ROOT = APP.parents[1]
-VERSION = "2.7.19"
-VERSION_CODE = 97
+VERSION = "2.7.20"
+VERSION_CODE = 98
 VERSION_SCHEMA = 2
 # Exact permissions for authenticated chat, reply monitoring and explicitly
 # enabled phone perception. Any additional permission fails the build.
