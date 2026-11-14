@@ -9,7 +9,7 @@ window.ChatSettingsHub = (() => {
     ['interaction', '动作与互动', '动作类型、身体部位与常用组合'],
     ['voice', '声音与语音', '云端试听、朗读与语音输入'],
     ['agenda', '日程与重要日期', '课程、提醒、生日与纪念日'],
-    ['perception', '手机感知', '手机状态、音乐与上报权限'],
+    ['perception', '手机感知与桌宠', '桌宠、手机状态与上报权限'],
     ['expression', '表情素材与偏好', '共享素材、双方偏好与表达方式'],
     ['models', '模型与路由', '本会话模型与继承来源'],
     ['notifications', '通知与安静时段', '消息中心、系统权限与提醒偏好'],
@@ -22,7 +22,7 @@ window.ChatSettingsHub = (() => {
     'rename-button':'role', 'menu-session-preferences':'role', 'menu-life':'life', 'menu-personal-space':'life',
     'menu-voice':'voice', 'menu-interactions':'interaction', 'menu-model-route':'models',
     'menu-notification-center':'notifications', 'menu-delivery-center':'notifications',
-    'menu-connection-center':'connection', 'menu-perception':'perception',
+    'menu-connection-center':'connection', 'menu-perception':'perception', 'menu-mobile-pet':'perception',
     'mobile-settings':'connection', 'refresh-chat':'connection',
     'menu-export':'advanced', 'menu-delete':'advanced'
   };

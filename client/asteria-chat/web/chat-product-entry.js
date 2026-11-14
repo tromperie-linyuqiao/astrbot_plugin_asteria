@@ -8,7 +8,8 @@ document.addEventListener('DOMContentLoaded', () => {
     ['menu-memory-search', '查找相关记忆', () => window.ChatMessageMemory?.openSearch()],
     ['menu-delivery-center', '主动消息送达中心', () => window.ChatDeliveryCenter?.openDelivery()],
     ['menu-session-preferences', '本会话偏好', () => window.ChatSessionPreferences?.open()],
-    ['menu-connection-center', '连接与缓存状态', () => window.ChatDeliveryCenter?.openConnection()]
+    ['menu-connection-center', '连接与缓存状态', () => window.ChatDeliveryCenter?.openConnection()],
+    ['menu-mobile-pet', '手机桌宠', () => window.ChatMobilePet.open()]
   ]) {
     const button = document.createElement('button'); button.type = 'button'; button.id = id;
     button.className = 'menu-item'; button.textContent = label;

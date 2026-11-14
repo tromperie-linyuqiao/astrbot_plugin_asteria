@@ -152,6 +152,12 @@ public final class PhonePerceptionCollector {
         } catch (Exception unavailable) { return false; }
     }
 
+    static boolean isForegroundPackage(Context context, String target) {
+        if (!validPackage(target)) return false;
+        JSONObject observation = foreground(context);
+        return observation != null && target.equals(observation.optString("foreground_package"));
+    }
+
     private static JSONObject foreground(Context context) {
         if (!usagePermissionGranted(context)) return null;
         try {

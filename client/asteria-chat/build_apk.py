@@ -21,8 +21,8 @@ import zipfile
 
 APP = Path(__file__).resolve().parent
 ROOT = APP.parents[1]
-VERSION = "2.7.18"
-VERSION_CODE = 96
+VERSION = "2.7.19"
+VERSION_CODE = 97
 VERSION_SCHEMA = 2
 # Exact permissions for authenticated chat, reply monitoring and explicitly
 # enabled phone perception. Any additional permission fails the build.
@@ -37,6 +37,7 @@ EXPECTED_PERMISSIONS = [
     "uses-permission: name='android.permission.RECORD_AUDIO'",
     "uses-permission: name='android.permission.FOREGROUND_SERVICE_MICROPHONE'",
     "uses-permission: name='android.permission.WAKE_LOCK'",
+    "uses-permission: name='android.permission.SYSTEM_ALERT_WINDOW'",
 ]
 DEFAULT_SERVER = ""
 DEFAULT_CERT_SHA256 = ""

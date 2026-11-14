@@ -212,6 +212,7 @@ public final class MainActivity extends Activity {
         super.onResume();
         if (destroyed.get()) return;
         foreground.set(true);
+        MobilePetService.appVisibility(true);
         if (bridge != null) synchronized (bridge.lock) {
             ReplyWatchService.setVisibleAccount(bridge.server, bridge.token, bridge.visibleSession);
         }
@@ -226,6 +227,7 @@ public final class MainActivity extends Activity {
     @Override protected void onPause() {
         if(voice!=null)voice.background();
         foreground.set(false);
+        MobilePetService.appVisibility(false);
         ReplyWatchService.setAppForeground(false);
         notifyForegroundChanged();
         if (web != null && !destroyed.get() && !PhoneCallService.running()) web.onPause();
@@ -251,12 +253,17 @@ public final class MainActivity extends Activity {
     }
 
     private void captureReplyIntent(Intent intent) {
+        if (MobilePetService.petIntent(intent) && !MobilePetService.ownsIntent(intent)) return;
         if (intent != null && intent.hasExtra("reply_watch_scope")) pendingReplyIntent = new Intent(intent);
     }
 
     private void dispatchPendingReply() {
         if (!trusted() || web == null || bridge == null || pendingReplyIntent == null || replyAccountSwitching) return;
         final Intent selected = pendingReplyIntent;
+        if (MobilePetService.petIntent(selected) && !MobilePetService.ownsIntent(selected)) {
+            pendingReplyIntent = null;
+            return;
+        }
         final String session;
         final String sourceServer, sourceUser;
         final long sourceEpoch;
@@ -267,6 +274,7 @@ public final class MainActivity extends Activity {
             sourceEpoch = bridge.epoch;
         }
         if (session == null) {
+            if (MobilePetService.petIntent(selected)) { pendingReplyIntent = null; return; }
             final String accountId = selected.getStringExtra("reply_watch_scope");
             final ReplyWatchAccounts.Record account = ReplyWatchAccounts.find(this, accountId);
             if (account == null || !account.server.equals(selected.getStringExtra("reply_watch_server"))
@@ -380,6 +388,7 @@ public final class MainActivity extends Activity {
                 if (picker != null) throw new IllegalStateException("picker_in_progress");
                 vault.save(selected.server, selected.token);
                 PhonePerceptionService.stop(MainActivity.this, "server_changed");
+                MobilePetService.stop(MainActivity.this);
                 epoch++;
                 runOnUiThread(() -> {if(voice!=null)voice.stop();PhoneCallService.end();}); server = selected.server; token = selected.token; visibleSession = selected.session;
             }
@@ -454,6 +463,7 @@ public final class MainActivity extends Activity {
                 synchronized (lock) {
                     requireCurrent(auth);
                     NotificationIdentity.save(MainActivity.this, ReplyWatchService.scope(auth.server, auth.token, sessionId), name, avatarDataUrl);
+                    MobilePetService.keepOnly(MainActivity.this, ReplyWatchService.scope(auth.server, auth.token, sessionId));
                     synchronized (lock) { visibleSession = sessionId; }
                     ReplyWatchService.setVisibleAccount(auth.server, auth.token, sessionId);
                 }
@@ -549,6 +559,97 @@ public final class MainActivity extends Activity {
                 return json("ok", true, "settings_opening", true, "target", channel ? "channel" : "app").toString();
             } catch (RuntimeException unavailable) {
                 return json("ok", false, "error", "notification_settings_unavailable").toString();
+            }
+        }
+
+        @JavascriptInterface public String mobilePetStatus(String sessionId) {
+            if (!trusted()) return json("ok", false).toString();
+            android.content.SharedPreferences prefs = MobilePetService.settings(MainActivity.this);
+            boolean running = false, pending = false;
+            synchronized (lock) {
+                if (ApiPolicy.jwt(token) && sessionId != null && sessionId.equals(visibleSession)) {
+                    String scope = ReplyWatchService.scope(server, token, sessionId);
+                    running = MobilePetService.enabled(scope);
+                    pending = !running && MobilePetService.requested(scope);
+                }
+            }
+            return json("ok", true, "running", running, "pending", pending, "overlay", MobilePetService.canDraw(MainActivity.this),
+                    "notifications", MobilePetService.notificationAvailable(MainActivity.this),
+                    "usage", PhonePerceptionCollector.usagePermissionGranted(MainActivity.this),
+                    "mode", prefs.getInt("mode", MobilePetService.COMPANION),
+                    "game_package", prefs.getString("game_package", "")).toString();
+        }
+
+        @JavascriptInterface public void mobilePetConversationChanged(String sessionId) {
+            if (!trusted()) return;
+            synchronized (lock) {
+                if (!ApiPolicy.jwt(token) || sessionId == null || sessionId.isEmpty()) return;
+                try {
+                    AttachmentPolicy.session(sessionId);
+                    MobilePetService.keepOnly(MainActivity.this, ReplyWatchService.scope(server, token, sessionId));
+                } catch (IllegalArgumentException invalid) { /* A pending/invalid conversation cannot bind a pet. */ }
+            }
+        }
+
+        @JavascriptInterface public String mobilePetPermission(String kind) {
+            if (!trusted() || !foreground.get()) return json("ok", false).toString();
+            final Intent intent;
+            if ("overlay".equals(kind)) intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName()));
+            else if ("usage".equals(kind)) intent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
+            else if ("notifications".equals(kind)) intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+            else return json("ok", false).toString();
+            runOnUiThread(() -> {
+                if (!trusted() || !foreground.get()) return;
+                try { startActivity(intent); }
+                catch (RuntimeException unavailable) {
+                    Toast.makeText(MainActivity.this, "请在手机系统设置中查找相应权限。", Toast.LENGTH_LONG).show();
+                }
+            });
+            return json("ok", true).toString();
+        }
+
+        @JavascriptInterface public void mobilePetControl(String requestId, String sessionId, String action,
+                int mode, String gamePackage) {
+            if (!trusted() || !foreground.get()) return;
+            if ("stop".equals(action)) {
+                MobilePetService.stop(MainActivity.this);
+                deliver(requestId, 200, json("ok", true, "running", false));
+                return;
+            }
+            try {
+                requireId(requestId);
+                final String session = AttachmentPolicy.session(sessionId);
+                final AuthState auth = attachmentAuth();
+                if (!"start".equals(action) || mode < MobilePetService.COMPANION || mode > MobilePetService.FOLLOW)
+                    throw new IllegalArgumentException("invalid_mode");
+                if (mode == MobilePetService.FOLLOW && !PhonePerceptionCollector.validPackage(gamePackage))
+                    throw new IllegalArgumentException("invalid_game_package");
+                runOnUiThread(() -> {
+                    try {
+                        synchronized (lock) {
+                            requireCurrent(auth);
+                            if (!foreground.get() || !session.equals(visibleSession))
+                                throw new IllegalStateException("conversation_changed");
+                            if (!MobilePetService.canDraw(MainActivity.this) || !MobilePetService.notificationAvailable(MainActivity.this))
+                                throw new IllegalStateException("permissions_required");
+                            if (mode == MobilePetService.FOLLOW && !PhonePerceptionCollector.usagePermissionGranted(MainActivity.this))
+                                throw new IllegalStateException("usage_required");
+                            android.content.SharedPreferences.Editor preferences = MobilePetService.settings(MainActivity.this).edit()
+                                    .putInt("mode", mode);
+                            if (mode == MobilePetService.FOLLOW) preferences.putString("game_package", gamePackage);
+                            preferences.apply();
+                            MobilePetService.start(MainActivity.this, ReplyWatchService.scope(auth.server, auth.token, session),
+                                    auth.server, session);
+                        }
+                        deliver(requestId, 200, json("ok", true, "requested", true));
+                    } catch (Exception unavailable) {
+                        deliver(requestId, 400, error("mobile_pet_unavailable", "桌宠未开启。请检查权限和当前会话后再试。"));
+                    }
+                });
+            } catch (Exception unavailable) {
+                deliver(requestId, 400, error("mobile_pet_unavailable", "请先打开要绑定的会话，并核对所选模式。"));
             }
         }
 
@@ -774,6 +875,7 @@ public final class MainActivity extends Activity {
                 synchronized (lock) {
                     if (!next.equals(server)) {
                         PhonePerceptionService.stop(MainActivity.this, "server_changed");
+                        MobilePetService.stop(MainActivity.this);
                         // Keep explicitly enabled accounts listening while the visible server changes.
                         epoch++;
                 runOnUiThread(() -> {if(voice!=null)voice.stop();PhoneCallService.end();});
@@ -795,6 +897,7 @@ public final class MainActivity extends Activity {
             synchronized (lock) {
                 try {
                     PhonePerceptionService.stop(MainActivity.this, "logged_out");
+                    MobilePetService.stop(MainActivity.this);
                     ReplyWatchService.stopAccount(MainActivity.this, server, token, "logged_out");
                 } catch (RuntimeException failure) {
                     // Keep the account identity so an explicit retry can remove its saved watches.
@@ -861,7 +964,7 @@ public final class MainActivity extends Activity {
                 final String target, bearer;
                 final long generation;
                 synchronized (lock) {
-                    if (login) { PhonePerceptionService.stop(MainActivity.this, "authentication_changed"); /* Other saved accounts keep listening during explicit login. */ epoch++;
+                    if (login) { PhonePerceptionService.stop(MainActivity.this, "authentication_changed"); MobilePetService.stop(MainActivity.this); /* Other saved accounts keep listening during explicit login. */ epoch++;
                 runOnUiThread(() -> {if(voice!=null)voice.stop();PhoneCallService.end();}); token = null; vault.clear(); }
                     target = server;
                     bearer = token;
@@ -1331,7 +1434,7 @@ public final class MainActivity extends Activity {
         private void attachmentUnauthorized(AuthState auth, int status) {
             synchronized (lock) {
                 requireCurrent(auth);
-                if (status == 401) { PhonePerceptionService.stop(MainActivity.this, "login_expired"); ReplyWatchService.stopAccount(MainActivity.this, server, token, "login_expired"); epoch++;
+                if (status == 401) { PhonePerceptionService.stop(MainActivity.this, "login_expired"); MobilePetService.stop(MainActivity.this); ReplyWatchService.stopAccount(MainActivity.this, server, token, "login_expired"); epoch++;
                 runOnUiThread(() -> {if(voice!=null)voice.stop();PhoneCallService.end();}); token = null; vault.clear(); }
             }
         }
@@ -1569,6 +1672,7 @@ public final class MainActivity extends Activity {
                         ((JSONObject) result).put("auth_persisted", persisted);
                     } else if (status == 401) {
                         PhonePerceptionService.stop(MainActivity.this, "login_expired");
+                        MobilePetService.stop(MainActivity.this);
                         ReplyWatchService.stopAccount(MainActivity.this, server, token, "login_expired");
                         epoch++;
                 runOnUiThread(() -> {if(voice!=null)voice.stop();PhoneCallService.end();});

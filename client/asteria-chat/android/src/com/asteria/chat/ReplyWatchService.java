@@ -1071,6 +1071,7 @@ public final class ReplyWatchService extends Service {
                 postNotice(selected, value, preferences, manager);
                 rememberDisposition(selected, value.id, "posted");
                 posted.add(value.id);
+                MobilePetService.onReply(selected.scope, value.id);
             }
             trimNotices(manager, selected.scope);
             // A corrected saved row updates only a still-present notice. It

@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <queries>
         <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
@@ -33,6 +34,11 @@
             android:foregroundServiceType="dataSync" android:stopWithTask="false" />
         <service android:name=".PhoneCallService" android:exported="false"
             android:foregroundServiceType="microphone" android:stopWithTask="true" />
+        <service android:name=".MobilePetService" android:exported="false"
+            android:foregroundServiceType="specialUse" android:stopWithTask="true">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled character overlay with an ongoing notification and visible stop controls" />
+        </service>
         <service android:name=".PhonePerceptionService" android:exported="false"
             android:foregroundServiceType="specialUse" android:stopWithTask="false">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"

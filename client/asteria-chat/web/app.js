@@ -1252,6 +1252,7 @@ function hideMoreMenu() {
   if (button) button.setAttribute('aria-expanded', 'false');
 }
 function renderChrome() {
+  window.ChatMobilePet?.scopeChanged();
   if (phonePerceptionPanel) {
     phonePerceptionPanel.scopeChanged();
     const current = state.authenticated && state.server && state.username && state.activeId
@@ -2670,6 +2671,6 @@ window.AsteriaChatUI = Object.freeze({
     if (window.ChatComposer) window.ChatComposer.openConversation(id, target);
     return true;
   },
-  foregroundChanged: () => { foregroundRecovery.signal(); syncViewport(); if (phonePerceptionPanel) phonePerceptionPanel.foregroundChanged(); if (window.ChatNotificationStatus) window.ChatNotificationStatus.refresh(); window.ChatImageJobs?.foregroundChanged(); },
-  back: () => window.ChatConnections?.closeContacts?.() || window.ChatVoice?.closeActive() || window.ChatPersonalSpace?.closeActive() || window.ChatLife?.closeActive() || window.ChatImageJobs?.closeActive() || window.ChatNotificationCenter?.closeActive() || window.ChatModelRoute?.closeActive() || window.ChatSettingsHub?.closeActive() || window.ChatDeliveryCenter?.closeActive() || window.ChatMessageMemory?.closeActive?.() || window.ChatSessionPreferences?.closeActive?.() || window.ChatComposer && window.ChatComposer.closeActive() || closeMessageSearch() || cancelRenameTitle() || cancelConversationExport() });
+  foregroundChanged: () => { foregroundRecovery.signal(); syncViewport(); if (phonePerceptionPanel) phonePerceptionPanel.foregroundChanged(); if (window.ChatNotificationStatus) window.ChatNotificationStatus.refresh(); window.ChatImageJobs?.foregroundChanged(); window.ChatMobilePet?.refresh(); },
+  back: () => window.ChatMobilePet?.close() || window.ChatConnections?.closeContacts?.() || window.ChatVoice?.closeActive() || window.ChatPersonalSpace?.closeActive() || window.ChatLife?.closeActive() || window.ChatImageJobs?.closeActive() || window.ChatNotificationCenter?.closeActive() || window.ChatModelRoute?.closeActive() || window.ChatSettingsHub?.closeActive() || window.ChatDeliveryCenter?.closeActive() || window.ChatMessageMemory?.closeActive?.() || window.ChatSessionPreferences?.closeActive?.() || window.ChatComposer && window.ChatComposer.closeActive() || closeMessageSearch() || cancelRenameTitle() || cancelConversationExport() });
 document.addEventListener('DOMContentLoaded', init, { once: true });
