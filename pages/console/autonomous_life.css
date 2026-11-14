@@ -14,3 +14,16 @@
 /* Per-scope retained entity counts; details do not imply Journal write capacity. */
 .life-capacity>summary{cursor:pointer}.life-capacity-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0}.life-capacity-card{min-width:0;border:1px solid var(--line);border-radius:10px;padding:12px;overflow-wrap:anywhere}.life-capacity-card h4{font-size:13px;margin:0 0 6px}.life-capacity-card strong{font-size:13px;font-variant-numeric:tabular-nums}.life-capacity-card p{line-height:1.7}
 @media(max-width:620px){.life-capacity-grid{grid-template-columns:minmax(0,1fr)}}
+
+.life-runtime-compact{display:flex;align-items:center;flex-wrap:wrap;gap:6px 16px;margin:10px 0;padding:8px 12px;border:1px solid var(--line);border-radius:10px}
+.life-runtime-compact strong{font-size:13px}.life-runtime-compact strong[data-state=failed],.life-runtime-compact strong[data-state=needs_review]{color:var(--red)}
+.life-runtime-compact .life-latest-link{font-size:12px;padding:4px 8px;max-width:100%;white-space:normal;text-align:left}
+.life-runtime-details>summary{cursor:pointer;color:var(--muted);font-size:13px}
+.life-world-group{margin-top:16px;padding:12px 14px;border:1px solid var(--line);border-radius:12px}
+.life-world-group h4{margin:0 0 4px}.life-world-group .life-world-node:last-child{border-bottom:0}
+.life-back-to-records{display:none}
+@media(max-width:760px){
+ .life-columns:not(.life-detail-open)>[data-life-detail],.life-columns.life-detail-open>div,.life-columns.life-detail-open .life-toolbar{display:none}
+ .life-columns.life-detail-open .life-back-to-records{display:inline-block}
+ .life-columns.life-detail-open [data-life-detail]{min-width:0}
+}

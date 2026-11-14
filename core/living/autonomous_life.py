@@ -495,16 +495,28 @@ class AutonomousLife:
             raise ValueError('bounded life page required')
         if type(include_archived) is not bool or type(include_invalid) is not bool:raise ValueError('exact life list flags required')
         if character_id is not None:_id(character_id)
-        rows=[];cache={}
+        rows=[];cache={};terms=_terms(query) if query else ()
         for row in self.journal.list(_NS[kind],scope,limit=_LIMIT[kind]+1):
             record=self._project(scope,row,cache)
             if (not include_archived and record['archived'] or not include_invalid and record['invalid_dependencies']
                     or status is not None and record['fields'].get('status')!=status
                     or character_id is not None and character_id not in record['fields'].get('character_ids',[])):
                 continue
-            text=' '.join(str(record['fields'].get(key,'')) for key in ('title','content','name','description','relationship','detail'))
-            if query and not any(term in text.casefold() for term in _terms(query)):continue
+            fields=record['fields']
+            if query:
+                values=[fields.get(key,'') for key in ('title','content','name','description','relationship','detail')]
+                for identity in fields.get('character_ids',[]):
+                    cache_key=('row','character',identity)
+                    if cache_key not in cache:
+                        cache[cache_key]=self._row('character',scope,identity)
+                    person=cache[cache_key]
+                    if person is not None and not person['data']['archived']:
+                        values.append(person['data']['fields']['name'])
+                text=' '.join(str(value) for value in values).casefold()
+                if not any(term in text for term in terms):continue
             rows.append(record)
+        if kind=='event':
+            rows.sort(key=lambda record:(-record['fields']['occurred_at'],record['id']))
         self._scope(scope)
         return dict(records=rows[offset:offset+limit],total=len(rows),limit=limit,offset=offset,evidence_kind=EVIDENCE)
 
@@ -617,6 +629,24 @@ class AutonomousLife:
             if event_id is None or row['data'].get('event_id')==event_id]
         self._scope(scope)
         return dict(records=records[:limit],total=len(records))
+
+    def share_history_view(self,scope,*,event_id=None,limit=20):
+        scope=self._scope(scope)
+        history=self.shares(scope,event_id=event_id,limit=limit)
+        events={}
+        for receipt in history['records']:
+            identity=receipt['event_id']
+            if identity not in events:
+                current=self._row('event',scope,identity)
+                if current is None:
+                    events[identity]=None
+                else:
+                    event=current['data']
+                    events[identity]=dict(title=event['fields']['title'],revision=current['revision'],
+                        version=event['version'],archived=event['archived'])
+            receipt['current_event']=events[identity]
+        self._scope(scope)
+        return history
 
     def record_share(self,scope,identity,*,task_id,state='confirmed',expected_revision=None,event_version=None,detail=''):
         scope=self._scope(scope,'share');task_id=_text(task_id,128);detail=_text(detail,400,empty=True)

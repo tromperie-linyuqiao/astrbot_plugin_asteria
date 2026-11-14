@@ -246,7 +246,7 @@ class NativeAutonomousLifeWebApi:
             if result is None: raise KeyError('life record absent')
             return result
         if route == 'shares':
-            return service.shares(scope, event_id=data.get('event_id'), limit=_integer(data.get('limit', 30), 'limit', 1, 100))
+            return service.share_history_view(scope, event_id=data.get('event_id'), limit=_integer(data.get('limit', 30), 'limit', 1, 100))
         if route == 'history':
             kind = data.get('kind')
             if kind not in KINDS: raise _InvalidRequest('资料类型无效')

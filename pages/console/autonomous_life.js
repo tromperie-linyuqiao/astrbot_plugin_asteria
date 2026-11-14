@@ -16,9 +16,27 @@ const stamp=value=>typeof value==='number'&&Number.isFinite(value)?new Date(valu
 let queuedOpen=null,historyView=null;
 let scope=null,section='event',selected=null,records=[],total=0,offset=0,serial=0,busy=false;
 let settings=null,overview=null,people=[],events=[],draftKind=null,draftRecord=null,listState='unread';
+let settingsCurrent=false, overviewCurrent=false;
 const pending=new Map();
 root.innerHTML=`<section class="panel autonomous-life"><div class="panel-head"><div><h2>生活档案</h2><p class="hint">角色在虚构世界中的经历、熟人与未完事项。它们与真实聊天、手机感知分别保存。</p></div><button type="button" data-life-refresh>刷新与核对</button></div><p data-life-status role="status" aria-live="polite"></p><div data-life-runtime class="life-runtime"></div><div class="life-tabs" role="tablist"><button data-life-tab="event" role="tab">近期经历</button><button data-life-tab="character" role="tab">人物</button><button data-life-tab="thread" role="tab">开放事项</button><button data-life-tab="shares" role="tab">分享记录</button><button data-life-tab="settings" role="tab">推进设置</button></div><div data-life-records><form data-life-search class="life-toolbar"><label>查找<input data-life-query maxlength="200" placeholder="标题、人物或经历关键词"></label><button type="submit">搜索</button><label class="life-check"><input data-life-archived type="checkbox">含归档</label><label class="life-check"><input data-life-invalid type="checkbox">含待复核</label><button type="button" data-life-new>新增</button></form><div class="life-columns"><div><div data-life-list></div><div class="actions"><button data-life-prev type="button">上一页</button><span data-life-range></span><button data-life-next type="button">下一页</button></div></div><section data-life-detail><p class="empty">选择一项查看关联与修正历史。</p></section></div></div><section data-life-settings hidden><form data-life-policy><div data-life-policy-fields class="life-policy-grid"></div><div class="actions"><button type="submit" class="primary">保存推进设置</button><button data-life-models type="button">设置后台模型</button><button data-life-advance type="button">现在评估一次生活推进</button></div><p class="hint">后台推进独立于即时聊天；预算与静默日判断由服务器执行。分享只是候选，发送仍遵守原有主动陪伴权限、频率与可打扰时段。</p><p class="hint">“现在评估”可能使用已经配置的后台模型，且需要真实会话授权；不会重放停机期间的日记。</p></form></section><div class="actions"><button data-life-release type="button" hidden>已核对，结束本次等待</button></div></section><section class="panel autonomous-life" data-life-editor hidden><div class="panel-head"><h2 data-life-editor-title></h2><button data-life-cancel type="button">取消编辑</button></div><form data-life-form><div data-life-fields class="life-edit-grid"></div><label>维护原因<input data-life-reason maxlength="400" required></label><div class="actions"><button class="primary" type="submit">保存并回读</button></div></form><p class="hint">修正会保留原版本。依赖旧版本的记录需要复核后才能重新进入普通检索，不会改写真实聊天。</p></section>`;
 const $=name=>root.querySelector('[data-life-'+name+']');
+const runtimeDetails=node('details',undefined,'life-runtime-details');
+const runtimeContent=$('runtime'), runtimeCompact=node('div',undefined,'life-runtime-compact');
+runtimeDetails.append(node('summary','运行详情与行动节奏'));
+runtimeContent.before(runtimeCompact,runtimeDetails);runtimeDetails.append(runtimeContent);
+const detailPanel=$('detail'), columns=detailPanel.parentElement;
+const backToRecords=button('返回列表',()=>showRecordPane(false));
+function showRecordPane(open){
+ const wasOpen=columns.classList.contains('life-detail-open');
+ columns.classList.toggle('life-detail-open',open);
+ if(open&&!wasOpen&&window.matchMedia('(max-width:760px)').matches){
+  backToRecords.focus();
+ }else if(!open&&window.matchMedia('(max-width:760px)').matches){
+  const target=$('list').querySelector('[data-selected=true]')||$('list').querySelector('button')||$('query');
+  if(target&&!target.hidden)target.focus();
+ }
+}
+backToRecords.className='life-back-to-records';
 $('models').textContent='全局后台任务配置';
 const same=target=>key(target)===key(scope)&&key(target)===key(getScope());
 const message=(text,error=false)=>{$('status').textContent=text;$('status').dataset.error=String(error);};
@@ -28,7 +46,7 @@ const impactRead=node('button','查看这次修正会影响哪些资料');impact
 const impactResult=node('div');impactResult.setAttribute('role','status');impact.append(impactRead,impactResult);$('editor').querySelector('form').before(impact);
 impactRead.addEventListener('click',()=>readCorrectionImpact());
 function advanceBlock(){
- if(!overview?.runtime)return '读取当前推进状态后才能评估。';
+ if(!overviewCurrent||!settingsCurrent||!overview?.runtime)return '读取当前推进状态和设置后才能评估。';
  const policy=settings?.settings;
  if(policy?.max_model_calls_per_day===0)return '模型调用预算为 0，当前不会发起模型请求；预算不会自动恢复。';
  if(policy?.max_events_per_day===0)return '新经历预算为 0，当前不会发起生活评估。';
@@ -47,6 +65,8 @@ function controls(){
  $('cancel').disabled=busy||pending.has(key(scope));
  $('prev').disabled=busy||section==='shares'||offset===0;$('next').disabled=busy||section==='shares'||offset+records.length>=total;
  $('models').disabled=busy;$('new').hidden=!labels[section];
+ $('policy').querySelector('button[type=submit]').disabled=blocked||!settingsCurrent;
+ for(const button of runtimeDetails.querySelectorAll('[data-life-action-control]'))button.disabled=blocked||!overviewCurrent;
  const reason=advanceBlock();$('advance').disabled=blocked||!!reason;$('advance').title=reason;
  advanceHint.textContent=reason||'可以手动评估一次；仍受日预算与最短间隔约束，路由存在不代表上游可用。';
 }
@@ -56,7 +76,7 @@ async function call(method,path,body,target=scope){
  if(value?.ok!==true||value.backend!=='autonomous_life'||key(value.scope)!==key(target))throw Error('生活档案返回范围或格式不匹配。');
  return value;
 }
-function button(label,action,parent){const b=node('button',label);b.type='button';b.addEventListener('click',action);parent.append(b);return b;}
+function button(label,action,parent){const b=node('button',label);b.type='button';b.addEventListener('click',action);if(parent)parent.append(b);return b;}
 const capacityNames={event:'经历',character:'人物',thread:'开放事项',space:'私人空间',item:'私人物品',interest:'兴趣',exploration:'探索记录',collection:'个人收藏'};
 function drawCapacity(parent,capacity){
  const details=node('details',undefined,'life-capacity');details.dataset.lifeCapacity='true';
@@ -80,11 +100,20 @@ function drawCapacity(parent,capacity){
  parent.append(details);
 }
 function drawRuntime(){
- const target=$('runtime');target.replaceChildren();
- if(!overview)return;
+ const target=$('runtime');target.replaceChildren();runtimeCompact.replaceChildren();
+ if(!overview){runtimeCompact.append(node('span','推进状态尚未读取','hint'));return;}
  const counts=overview.result?.counts||{};
- target.append(node('p','当前档案：'+Object.entries(counts).filter(([,v])=>typeof v==='number').map(([k,v])=>({events:'经历',characters:'人物',threads:'开放事项',shares:'分享'}[k]||k)+' '+v).join(' · '),'hint'));
  const runtime=overview.runtime;
+ const compactState=node('strong',overviewCurrent?(runtimeStates[runtime?.state]||'推进状态待核对'):'推进状态待重新读取');
+ compactState.dataset.state=runtime?.state||'unavailable';runtimeCompact.append(compactState);
+ for(const [id,label] of [['events','经历'],['open_threads','未完事项']]){
+  if(Number.isSafeInteger(counts[id]))runtimeCompact.append(node('span',label+' '+counts[id],'hint'));
+ }
+ const latest=overview.result?.events?.[0];
+ if(overviewCurrent&&latest?.id){
+  const recent=button('最新经历 · '+title(latest),()=>openLinkedRecord('event',latest.id),runtimeCompact);
+  recent.className='life-latest-link';recent.dataset.lifeRead='true';
+ }
  if(runtime){
   const banner=node('div',undefined,'life-runtime-banner');banner.dataset.state=runtime.state||'unavailable';banner.dataset.lifeRuntimeBanner='true';
   banner.append(node('strong',runtimeStates[runtime.state]||'推进状态待核对'),node('p',runtime.reason_label||'请查看当前预算与最近评估结果。'));
@@ -110,7 +139,7 @@ function drawRuntime(){
    const controlsBox=node('section',undefined,'life-choice-controls');controlsBox.dataset.lifeChoiceControls='true';
    controlsBox.append(node('h3','自主行动节奏'),node('p',choice.rest?.active?'正在休息，至 '+stamp(choice.rest.until)+'。':'当前没有手动休息安排。','hint'));
    const actions=node('div',undefined,'actions');
-   button(choice.rest?.active?'结束休息，恢复原计划':'休息两小时',()=>changeAction(choice.rest?.active?'restart':'rest'),actions);
+   button(choice.rest?.active?'结束休息，恢复原计划':'休息两小时',()=>changeAction(choice.rest?.active?'restart':'rest'),actions).dataset.lifeActionControl='true';
    controlsBox.append(actions,node('p','只调整当前角色的行动安排；不增加预算，不清除待核对结果，也不会立即调用模型或发送消息。','hint'));
    const recent=Array.isArray(choice.recent_actions)?choice.recent_actions.slice(0,5):[];
    if(recent.length){const history=node('details');history.append(node('summary','最近行动调整'));for(const row of recent)history.append(node('p',({rest:'休息',defer:'延后事项',restart:'恢复计划'}[row.action]||'行动调整')+' · '+stamp(row.at)+(row.reason?' · '+row.reason:''),'hint'));controlsBox.append(history);}
@@ -127,13 +156,16 @@ function drawRuntime(){
  drawCapacity(target,overview.result?.capacity);
 }
 function title(record){return record.fields?.title||record.fields?.name||record.id;}
+const shareStates={candidate:'候选，尚未发送',queued:'已入队，等待处理',sent:'发送器已执行',confirmed:'已有投递确认',failed:'发送失败',unknown:'结果待核对',dismissed:'已搁置'};
+const shareDetails={candidate:'候选仍需经过原投递规则。',queued:'已入队，送达待原发送器确认。',confirmed:'原发送器已确认投递。',unknown:'请核对原记录，避免重复发送。',failed:'请在任务与自动化中核对失败原因。',dismissed:'此版本的分享已搁置。'};
 function drawList(){
  const target=$('list');target.replaceChildren();
  if(listState==='error')target.append(node('p',records.length?'本次未能读取，以下是上次已读取的记录；当前状态尚未确认。':'未能读取当前资料，不能据此判断没有记录。请查看上方错误并手动刷新。','life-warning'));
  for(const record of records){const b=node('button',undefined,'life-card');b.type='button';b.dataset.lifeRead='true';b.dataset.selected=String(selected?.id===record.id);
   if(section==='shares'){
-   b.append(node('strong','经历 '+record.event_id),node('small','投递状态：'+({candidate:'候选，尚未发送',queued:'已入队',sent:'发送器已执行',confirmed:'已有投递确认',failed:'发送失败',unknown:'结果待核对'}[record.state]||record.state)+' · '+stamp(record.at)));
-   b.addEventListener('click',()=>{switchTab('event',false);detail('event',record.event_id);});
+   b.append(node('strong',record.current_event?.title||events.find(row=>row.id===record.event_id)?.fields?.title||'原经历待核对'),
+    node('small',(shareStates[record.state]||'状态待核对')+' · '+stamp(record.at)));
+   b.addEventListener('click',()=>drawShare(record));
   }else{
    const f=record.fields||{};b.append(node('strong',title(record)),node('small',(states[f.status||f.kind]||'虚构资料')+(record.archived?' · 已归档':'')+(record.valid===false?' · 关联待复核':'')),node('small',stamp(f.occurred_at||record.updated_at)));
    b.addEventListener('click',()=>detail(section,record.id));
@@ -141,6 +173,21 @@ function drawList(){
  }
  if(!records.length&&listState!=='error')target.append(node('p',!scope?'先选择完整会话。':listState==='ready'?'当前筛选下还没有记录。私人空间、兴趣与聊天记忆分别保存，不会自动补成生活经历。':listState==='loading'?'正在读取当前资料…':'尚未读取当前资料，请选择分类或刷新。','empty'));
  $('range').textContent=listState!=='ready'?(listState==='error'?'本次未确认':'等待读取'):total?(section==='shares'?`最近 ${records.length} 项 / 共 ${total} 项`:`${offset+1}–${offset+records.length} / ${total}`):'0 项';controls();
+}
+function drawShare(record){
+ const target=$('detail');target.replaceChildren(backToRecords);
+ target.append(node('h3',record.current_event?.title||events.find(row=>row.id===record.event_id)?.fields?.title||'原经历待核对'),
+  node('p',shareStates[record.state]||'状态待核对'),node('p',shareDetails[record.state]||'查看原任务核对投递结果。','hint'));
+ if(Number.isSafeInteger(record.event_version)){
+  const changed=Number.isSafeInteger(record.current_event?.version)&&record.current_event.version!==record.event_version;
+  target.append(node('p','分享记录对应经历版本 '+record.event_version+(changed?' · 原经历之后已修正':'')+(record.current_event?.archived?' · 原经历已归档':''),'hint'));
+ }
+ const receipt=node('details');receipt.append(node('summary','查看原投递记录'),node('p',stamp(record.at),'hint'));
+ if(record.detail)receipt.append(node('p',record.detail,'life-content'));
+ if(record.task_id)receipt.append(node('code',record.task_id));
+ target.append(receipt);
+ button('查看当前经历',()=>{switchTab('event',false);void detail('event',record.event_id);},target).dataset.lifeRead='true';
+ controls();showRecordPane(true);
 }
 function references(parent,label,ids,kind){if(!ids?.length)return;const box=node('div',undefined,'life-references');box.append(node('strong',label));for(const id of ids){const row=(kind==='event'?events:people).find(item=>item.id===id);button(row?title(row):id,()=>{switchTab(kind,false);detail(kind,id);},box).dataset.lifeRead='true';}parent.append(box);}
 function startHistory(data,host,recordKind,record){
@@ -185,6 +232,7 @@ async function loadHistory(reset){
 
 function drawDetail(history){
  const target=$('detail');target.replaceChildren();if(!selected){target.append(node('p','选择一项查看关联与修正历史。','empty'));return;}
+ target.append(backToRecords);
  const record=selected,f=record.fields||{};
  target.append(node('h3',title(record)),node('p','虚构角色生活 · 修订 '+record.revision+' · '+stamp(record.updated_at),'hint'));
  if(record.valid===false)target.append(node('p','关联来源已经变化，这条记录暂不进入普通检索。请核对人物和前序经历后保存修正。','life-warning'));
@@ -200,7 +248,7 @@ function drawDetail(history){
   button(deferred?'继续这件事':'这件事延后一天',()=>changeAction(deferred?'restart':'defer',record),actions);
  }
  const h=node('details');h.append(node('summary','修正历史'));
- const host=node('div');h.append(host);target.append(h);startHistory(history,host,section,record);controls();
+ const host=node('div');h.append(host);target.append(h);startHistory(history,host,section,record);controls();showRecordPane(true);
 }
 
 const worldNames={event:'经历',character:'人物',thread:'事项',interest:'兴趣',exploration:'探索',collection:'收藏',space:'空间',item:'物件'};
@@ -212,15 +260,29 @@ async function worldline(id){
  try{
   const value=await call('GET','worldline',{...target,event_id:id},target);if(token!==serial||!same(target))return;
   const graph=value.result;if(graph?.event_id!==id||!Array.isArray(graph.nodes)||!Array.isArray(graph.edges))throw Error('世界线数据未对应所选经历。');
-  const box=$('detail');box.replaceChildren();box.append(node('h3','世界线与有来源的变化'),node('p','只连接已有资料中的明确关系，不因时间相近推断因果。','hint'));
+  const box=$('detail');box.replaceChildren(backToRecords);showRecordPane(true);box.append(node('h3','世界线与有来源的变化'));
   button('返回经历',()=>detail('event',id),box).dataset.lifeRead='true';
   const nodes=new Map(graph.nodes.map(row=>[row.id,row]));
-  for(const row of graph.nodes){
-   const item=node('section',undefined,'life-world-node');button((worldNames[row.kind]||'资料')+' · '+row.title,()=>worldOpen(row),item).dataset.lifeRead='true';
-   if(row.summary)item.append(node('p',row.summary,'life-content'));
-   if(row.valid===false||row.archived)item.append(node('p','来源已变化或归档 · 待复核，不作为有效前情','life-warning'));
-   for(const edge of graph.edges.filter(e=>e.from===row.id)){const other=nodes.get(edge.to);if(other)item.append(node('p',(worldEdges[edge.relation]||'关联')+' → '+other.title+(edge.valid===false?'（待复核）':''),'hint'));}
-   box.append(item);
+  const before=new Set(),after=new Set();
+  for(const edge of graph.edges)if(edge.relation==='continues'){
+   if(edge.to===id)before.add(edge.from);
+   if(edge.from===id)after.add(edge.to);
+  }
+  const groups=[['前序经历',[]],['当前经历',[]],['后续经历',[]],['相关人物与资料',[]]];
+  for(const row of graph.nodes)groups[row.id===id?1:before.has(row.id)?0:after.has(row.id)?2:3][1].push(row);
+  for(const [label,rows] of groups){
+   if(!rows.length)continue;
+   const group=node('section',undefined,'life-world-group');group.append(node('h4',label));
+   for(const row of rows){
+    const item=node('section',undefined,'life-world-node');
+    button((worldNames[row.kind]||'资料')+' · '+row.title,()=>worldOpen(row),item).dataset.lifeRead='true';
+    if(row.occurred_at||Number.isSafeInteger(row.revision))item.append(node('p',[row.occurred_at?stamp(row.occurred_at):'',Number.isSafeInteger(row.revision)?'修订 '+row.revision:''].filter(Boolean).join(' · '),'hint'));
+    if(row.summary)item.append(node('p',row.summary,'life-content'));
+    if(row.valid===false||row.archived)item.append(node('p','来源已变化或归档 · 待复核，不作为有效前情','life-warning'));
+    for(const edge of graph.edges.filter(e=>e.from===row.id)){const other=nodes.get(edge.to);if(other)item.append(node('p',(worldEdges[edge.relation]||'关联')+' → '+other.title+(edge.valid===false?'（待复核）':''),'hint'));}
+    group.append(item);
+   }
+   box.append(group);
   }
   const growth=node('section',undefined,'life-world-growth');growth.append(node('h4','有来源的变化'));
   for(const row of graph.growth||[]){const item=node('section',undefined,'life-world-node');item.append(node('strong',row.title),node('p',({relationship:'人物关系',attention:'关注变化',status:'状态',findings:'探索发现',next_direction:'下一方向'}[row.field]||row.field)+'：'+worldValue(row.before)+' → '+worldValue(row.after),'life-content'));
@@ -234,8 +296,15 @@ async function worldline(id){
 }
 async function detail(kind,id){
  if(busy||!scope)return;const target={...scope},token=++serial;busy=true;controls();
- try{const [value,history]=await Promise.all([call('GET',kind,{...target,id},target),call('GET','history',{...target,kind,id,limit:20},target)]);
-  if(token!==serial||!same(target))return;selected=value.result;section=kind;drawDetail(history.result);drawList();
+ try{
+  const history=call('GET','history',{...target,kind,id,limit:20},target).then(value=>value.result,()=>null);
+  const value=await call('GET',kind,{...target,id},target);
+  if(token!==serial||!same(target))return;selected=value.result;section=kind;drawDetail(null);drawList();
+  void history.then(result=>{
+   if(token!==serial||!same(target)||selected?.id!==id||!historyView?.host.isConnected)return;
+   if(result)startHistory(result,historyView.host,kind,selected);
+   else{historyView.error='修正历史暂不可用。';paintHistory(historyView);}
+  });
  }catch(error){if(token===serial&&same(target))message(error.publicMessage||error.message,true);}finally{if(token===serial&&same(target)){busy=false;controls();drainOpen();}}
 }
 const policyFields=[['enabled','开启后台生活推进','check'],['share_enabled','允许形成主动分享候选','check'],['quiet_day_allowed','允许没有新经历的平静日','check'],['interval_minutes','正常评估间隔（分钟）','number'],['min_interval_minutes','最短评估间隔（分钟）','number'],['max_model_calls_per_day','每日模型调用上限','number'],['max_events_per_day','每日新经历上限','number'],['max_shares_per_day','每日分享上限','number']];
@@ -252,25 +321,42 @@ function drawPolicy(){const target=$('policy-fields');target.replaceChildren();f
  const topics=node('label','不主动分享的话题（每行一项，最多 16 项，每项 60 字）'),text=node('textarea');text.dataset.policy='muted_topics';text.value=(settings?.settings?.muted_topics||[]).join('\n');text.maxLength=975;topics.append(text);target.append(topics);controls();}
 async function load(){
  if(busy)return;scope=getScope();if(!scope){records=[];total=0;drawList();message('先在上方选择完整会话。');return;}
- const target={...scope},token=++serial;busy=true;listState='loading';drawList();controls();message('正在读取当前生活档案…');
+ const target={...scope},token=++serial;busy=true;settingsCurrent=overviewCurrent=false;
+ listState='loading';drawList();controls();message('正在读取当前生活档案…');
  try{
   const query={...target,query:$('query').value.trim(),include_archived:$('archived').checked,include_invalid:$('invalid').checked,offset,limit:30};
   const path=section==='settings'?'settings':section==='shares'?'shares':plurals[section];
-  const policyRead=call('GET','settings',target,target);
+  const currentScope=()=>token===serial&&same(target);
   const selectedId=selected?.id;
-  const [current,summary,policy,refsP,refsE,detailRead,historyRead]=await Promise.all([
-   section==='settings'?policyRead:call('GET',path,section==='shares'?{...target,limit:100}:query,target),
-   call('GET','overview',target,target),policyRead,
-   call('GET','characters',{...target,limit:100},target),call('GET','events',{...target,limit:100},target),
-   selectedId&&labels[section]?call('GET',section,{...target,id:selectedId},target):null,
-   selectedId&&labels[section]?call('GET','history',{...target,kind:section,id:selectedId,limit:20},target):null]);
-  if(token!==serial||!same(target))return;
-  listState='ready';overview=summary;settings=policy.result;people=refsP.result.records||[];events=refsE.result.records||[];
-  if(section!=='settings'){records=current.result.records||[];total=current.result.total??records.length;}
-  if(detailRead){selected=detailRead.result;drawDetail(historyRead.result);}
-  if(pending.has(key(target)))pending.get(key(target)).checked=true;
-  drawRuntime();drawPolicy();drawList();
-  message(pending.has(key(target))?'已读取服务器当前记录，请核对原操作是否生效；不会自动重发。':'已读取当前有效资料；读取没有调用模型。');
+  const hasDetail=!!(selectedId&&labels[section]);
+  let mainOK=false,detailOK=!hasDetail,historyResult=null,partial=false;
+  const optional=(name,params,apply)=>call('GET',name,params,target).then(value=>{
+   if(!currentScope())return;apply(value);
+  }).catch(()=>{if(currentScope())partial=true;});
+  const summaryRead=optional('overview',target,value=>{overview=value;overviewCurrent=true;drawRuntime();});
+  const policyRead=optional('settings',target,value=>{settings=value.result;settingsCurrent=true;});
+  const detailRead=hasDetail?optional(section,{...target,id:selectedId},value=>{selected=value.result;detailOK=true;drawDetail(historyResult);}):null;
+  const historyRead=hasDetail?optional('history',{...target,kind:section,id:selectedId,limit:20},value=>{historyResult=value.result;if(detailOK)drawDetail(historyResult);}):null;
+  const main=section==='settings'?policyRead.then(()=>{mainOK=settingsCurrent;}):call('GET',path,section==='shares'?{...target,limit:100}:query,target).then(value=>{
+   if(!currentScope())return;
+   records=value.result.records||[];total=value.result.total??records.length;listState='ready';mainOK=true;drawList();
+   message('已读取当前分类。');
+  });
+  const auxiliary=Promise.all([summaryRead,policyRead,detailRead,historyRead]);
+  await main;
+  if(!currentScope())return;
+  if(!mainOK)throw Error('推进设置暂不可读取，请刷新核对。');
+  listState='ready';drawList();
+  const settle=()=>{
+   if(!currentScope())return;
+   drawRuntime();drawPolicy();drawList();
+   const awaiting=pending.get(key(target));
+   if(awaiting&&overviewCurrent&&settingsCurrent&&detailOK&&!partial)awaiting.checked=true;
+   if(awaiting)message(awaiting.checked?'已读取服务器当前记录，请核对原操作是否生效；不会自动重发。':'部分原记录暂不可核对；不会自动重发。',!awaiting.checked);
+   else message(partial?'当前分类已读取，部分状态或详情暂不可用。':'已读取当前有效资料；读取没有调用模型。');
+  };
+  if(section==='settings'||pending.has(key(target))) {await auxiliary;settle();}
+  else void auxiliary.then(settle);
  }catch(error){if(token===serial&&same(target)){listState='error';drawList();message(error.publicMessage||error.message,true);}}finally{if(token===serial&&same(target)){busy=false;controls();drainOpen();}}
 }
 function input(name,label,type,value,options){
@@ -292,8 +378,19 @@ function changeAction(action,record=null){
  if(action==='rest')body.minutes=120;if(action==='defer')body.minutes=1440;
  void mutate('actions/control',body);
 }
-function editor(kind,record=null){
- if(busy||pending.has(key(scope)))return;draftKind=kind;draftRecord=record;const f=record?.fields||{};
+async function editor(kind,record=null){
+ if(busy||!scope||pending.has(key(scope)))return;
+ const target={...scope},token=++serial;busy=true;controls();
+ try{
+  const [peopleRead,eventsRead]=await Promise.all([
+   kind!=='character'?call('GET','characters',{...target,limit:100},target):null,
+   call('GET','events',{...target,limit:100},target)]);
+  if(token!==serial||!same(target))return;
+  if(peopleRead)people=peopleRead.result.records||[];
+  events=eventsRead.result.records||[];
+ }catch(error){if(token===serial&&same(target))message('暂时无法读取编辑所需的关联资料。请刷新后再试。',true);return;}
+ finally{if(token===serial&&same(target)){busy=false;controls();}}
+ draftKind=kind;draftRecord=record;const f=record?.fields||{};
  impact.hidden=kind!=='event'||!record;impactResult.replaceChildren();
  $('fields').replaceChildren();$('editor-title').textContent=(record?'修正':'新增')+labels[kind];$('reason').value='';$('reason').required=!!record;$('reason').parentElement.hidden=!record;
  if(kind==='event'){
@@ -350,7 +447,7 @@ function switchTab(value,fetch=true){
  if(busy)return;section=value;offset=0;selected=null;draftRecord=null;records=[];total=0;listState='unread';$('editor').hidden=true;
  $('records').hidden=value==='settings';$('settings').hidden=value!=='settings';$('search').hidden=value==='shares';
  for(const tab of root.querySelectorAll('[data-life-tab]'))tab.setAttribute('aria-selected',String(tab.dataset.lifeTab===value));
- drawList();drawDetail();global.dispatchEvent(new CustomEvent('tls-admin-sectionchange',{detail:{view:'autonomous_life',section:value}}));if(fetch)load();
+ columns.classList.remove('life-detail-open');drawList();drawDetail();global.dispatchEvent(new CustomEvent('tls-admin-sectionchange',{detail:{view:'autonomous_life',section:value}}));if(fetch)load();
 }
 for(const tab of root.querySelectorAll('[data-life-tab]'))tab.addEventListener('click',()=>switchTab(tab.dataset.lifeTab));
 $('refresh').addEventListener('click',load);$('search').addEventListener('submit',event=>{event.preventDefault();offset=0;load();});
@@ -366,8 +463,8 @@ $('form').addEventListener('submit',event=>{event.preventDefault();try{
  if(draftRecord)mutate(draftKind+'/'+(draftKind==='event'?'correct':'update'),{id:draftRecord.id,expected_revision:draftRecord.revision,changes:fields,reason});
  else mutate(draftKind+'/create',{request_id:uuid(),fields});
  }catch(error){message(error.message,true);}});
-$('policy').addEventListener('submit',event=>{event.preventDefault();if(!settings)return;const changes={};for(const element of root.querySelectorAll('[data-policy]'))changes[element.dataset.policy]=element.dataset.policy==='muted_topics'?element.value.split('\n').map(v=>v.trim()).filter(Boolean):element.tagName==='SELECT'?element.value:element.type==='checkbox'?element.checked:Number(element.value);if(changes.muted_topics.length>16||changes.muted_topics.some(v=>v.length>60)){message('不主动分享的话题最多 16 项，每项最多 60 字。',true);return;}if(changes.model_fallback_provider_id&&!changes.model_provider_id){message('选择独立的备选模型前，请先选择当前角色的首选模型；两项都留空才会继承后台任务配置。',true);return;}if(changes.model_provider_id&&changes.model_provider_id===changes.model_fallback_provider_id){message('首选和备选请选择不同模型，或将备选留空。',true);return;}mutate('settings/save',{expected_revision:settings.revision,changes});});
-function scopeChanged(){listState='unread';queuedOpen=null;scope=getScope();serial++;busy=false;selected=null;draftRecord=null;records=[];total=0;offset=0;settings=null;overview=null;people=[];events=[];$('editor').hidden=true;drawRuntime();drawPolicy();drawList();drawDetail();message(scope?'请选择分类或刷新读取当前生活档案。':'先选择完整会话。');}
+$('policy').addEventListener('submit',event=>{event.preventDefault();if(!settingsCurrent||!settings)return;const changes={};for(const element of root.querySelectorAll('[data-policy]'))changes[element.dataset.policy]=element.dataset.policy==='muted_topics'?element.value.split('\n').map(v=>v.trim()).filter(Boolean):element.tagName==='SELECT'?element.value:element.type==='checkbox'?element.checked:Number(element.value);if(changes.muted_topics.length>16||changes.muted_topics.some(v=>v.length>60)){message('不主动分享的话题最多 16 项，每项最多 60 字。',true);return;}if(changes.model_fallback_provider_id&&!changes.model_provider_id){message('选择独立的备选模型前，请先选择当前角色的首选模型；两项都留空才会继承后台任务配置。',true);return;}if(changes.model_provider_id&&changes.model_provider_id===changes.model_fallback_provider_id){message('首选和备选请选择不同模型，或将备选留空。',true);return;}mutate('settings/save',{expected_revision:settings.revision,changes});});
+function scopeChanged(){listState='unread';queuedOpen=null;scope=getScope();serial++;busy=false;selected=null;draftRecord=null;records=[];total=0;offset=0;settings=null;overview=null;settingsCurrent=overviewCurrent=false;people=[];events=[];columns.classList.remove('life-detail-open');$('editor').hidden=true;drawRuntime();drawPolicy();drawList();drawDetail();message(scope?'请选择分类或刷新读取当前生活档案。':'先选择完整会话。');}
 function openLinkedRecord(kind,id){
  if(!labels[kind]||typeof id!=='string'||!getScope())return;
  if(busy){queuedOpen={kind,id,scope:key(getScope())};return;}
