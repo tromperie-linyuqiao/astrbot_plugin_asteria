@@ -28,7 +28,7 @@
 .experience-caption,#experience-status{font-size:11px;color:var(--muted);line-height:1.8}.experience-actions{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin:18px 0 6px}
 .experience-search{display:flex;gap:8px}.experience-search input{min-width:0;flex:1}.history-search-result{display:block;width:100%;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;border-bottom:1px solid var(--line);padding:14px 0;color:var(--text-soft);font-size:12px;line-height:1.8}
 #experience-status.error{color:var(--danger,#b55b51)}.search-arrival .message-bubble{outline:2px solid var(--accent);outline-offset:3px}
-@media(max-width:600px){.experience-dialog{border-radius:20px 20px 0 0;width:100%;max-width:100%;margin:auto 0 0;border-bottom:0}.experience-body{padding:16px 20px 24px;max-height:calc(var(--app-height,100dvh) - 175px)}.experience-heading{padding:18px 20px 12px}.message-tools{opacity:.75}.shared-expression-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.composer-drawer{overscroll-behavior:contain}.compose-add-text{font-size:10px}.composition-label{padding:5px 3px}}
+@media(max-width:600px){.experience-dialog{border-radius:20px 20px 0 0;width:100%;max-width:100%;margin:auto 0 0;border-bottom:0}.experience-body{padding:16px 20px 24px;max-height:calc(var(--app-height,100dvh) - 175px)}.experience-heading{padding:18px 20px 12px}.message-tools{opacity:.75}.composer-drawer{overscroll-behavior:contain}.compose-add-text{font-size:10px}.composition-label{padding:5px 3px}}
 @media(prefers-reduced-motion:reduce){.message-tools{transition:none}}
 
 /* Long-term Bot connection: no blank-chat action and no destructive primary row. */
@@ -80,10 +80,13 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .composer #send-button{flex:0 0 44px;width:44px;height:44px;min-height:44px;border-radius:10px;order:1}
 :root[data-theme="black"] .composer #send-button:disabled{color:var(--muted)}
 .composer-main-row > #attach-button{width:44px;height:46px;border:1px solid var(--line);border-radius:13px;background:var(--surface-raised)}
-.composer-quick-tools{display:flex;align-items:stretch;flex-wrap:wrap;gap:0 2px}
-.composer-quick-tools .composer-button{display:flex;order:0;align-items:center;justify-content:center;gap:5px;width:auto;max-width:100%;height:auto;min-height:44px;padding:2px 9px;border-radius:9px;font-size:.75rem;line-height:1.25;text-align:left}
+.composer-quick-tools{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:stretch;gap:2px}
+.composer-quick-tools .composer-button{display:flex;order:0;align-items:center;justify-content:center;gap:5px;width:auto;max-width:100%;height:auto;min-height:44px;padding:2px 6px;border-radius:9px;font-size:.75rem;line-height:1.25;text-align:left}
 .composer-quick-tools .composer-button svg{width:17px;height:17px;flex:none}
-.composer-quick-tools #sticker-button{order:0}
+.composer-quick-tools #call-entry{justify-self:start}
+.composer-quick-tools #touch-button{justify-self:center}
+.composer-quick-tools #sticker-button{order:0;justify-self:end}
+.composer-quick-tools .composer-button span{min-width:0;overflow-wrap:anywhere}
 .composer-quick-tools .composer-button[aria-expanded="true"],.composer-main-row > #attach-button[aria-expanded="true"]{background:var(--accent-soft);color:var(--accent-strong)}
 .composer-quick-tools .composer-button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .message-avatar{width:44px;height:44px;border-radius:15px;margin-top:0;flex:none}.message-avatar img{width:100%;height:100%;object-fit:cover}

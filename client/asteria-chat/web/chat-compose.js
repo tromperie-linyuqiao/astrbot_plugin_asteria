@@ -205,7 +205,9 @@ window.ChatComposer = (() => {
     const room=Math.max(0,drawer.getBoundingClientRect().height+log.getBoundingClientRect().height-overflow);
     // Transcript padding cannot flex away. Exclude it from the tray's budget.
     const capacity=Math.max(0,room-(parseFloat(logStyle.paddingTop)||0)-(parseFloat(logStyle.paddingBottom)||0));
-    const preferred = Math.min(model.expandedPanel ? 440 : 248, height * (model.expandedPanel ? .54 : .30));
+    const expressionPanel = model.panel === 'expressions';
+    const preferred = Math.min(model.expandedPanel ? 440 : expressionPanel ? 292 : 248,
+      height * (model.expandedPanel ? .54 : expressionPanel ? .35 : .30));
     const pane=[...drawer.children].find(child=>child.matches('[data-compose-pane]')&&!child.hidden);
     const paneStyle=pane&&getComputedStyle(pane),drawerStyle=getComputedStyle(drawer);
     const fixed=[...drawer.children].filter(child=>!child.hidden&&!child.matches('[data-compose-pane]'))
