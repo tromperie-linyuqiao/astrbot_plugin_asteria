@@ -12,6 +12,7 @@ from .delivery_sender import BeforeDispatchError
 from .models import canonical
 
 NAMESPACE = 'tls.chat.direct_delivery'
+COMPANION_SOURCE_CATEGORIES = ('knowledge', 'memory', 'fictional_life', 'perception')
 
 
 def key_for(task):
@@ -21,6 +22,16 @@ def key_for(task):
 def notice_for_task(task):
     """Presentation provenance from the existing durable lane, never from text."""
     from .reminders import LANE
+    from .chat_companion_mode import LANE as COMPANION_LANE
+    if task.get('delivery_lane') == COMPANION_LANE:
+        scope = task['scope']
+        if scope['platform'] == scope['bot_id'] == 'webchat':
+            sources = [kind for kind in COMPANION_SOURCE_CATEGORIES if kind in task.get('companion_sources', ())]
+            notice = dict(schema=1, kind='proactive', mode='companion', sources=sources)
+            composition = task.get('companion_composition')
+            if composition in ('local', 'model'):
+                notice['composition'] = composition
+            return notice
     return dict(schema=1, kind='reminder' if task.get('delivery_lane') == LANE else 'proactive')
 
 
@@ -74,7 +85,7 @@ class ChatDeliveryAdapter:
         target = self._target(task)
         return dict(chain=chain, target=target)
 
-    async def send(self, task, prepared):
+    async def send(self, task, prepared, *, before_store=None):
         target = prepared['target']
         if target is None:
             return await self.original.send(task, prepared['chain'])
@@ -125,6 +136,8 @@ class ChatDeliveryAdapter:
             if generated:
                 refs['tls_generated_image']=generated
                 if generated['source']=='user_request':refs['tls_notice']=dict(schema=1,kind='reply')
+            if before_store is not None and not await before_store():
+                raise BeforeDispatchError('chat_companion_state_changed')
             saved=await database.insert_platform_message_history(platform_id='webchat', user_id=target['session_id'],
                 content=dict(type='bot', message=parts, refs=refs),
                 sender_id='bot', sender_name='bot')

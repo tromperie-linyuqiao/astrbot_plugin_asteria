@@ -29,7 +29,7 @@
         ? value : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     })();
   </script>
-<link rel="stylesheet" href="./workspace/workspace.css?v=asteria-workspace-0757" />
+<link rel="stylesheet" href="./workspace/workspace.css?v=asteria-companion-079" />
 </head>
 <body>
 <header id="asteriaWorkspaceHeader"></header>
@@ -38,11 +38,12 @@
       <div class="aw-companion-portrait"><img id="dailyOutfitLogo" class="daily-outfit-logo" alt="今日穿搭照片" /><span aria-hidden="true">✧</span></div>
 
       <div class="folio-meta">
-        <div class="folio-eyebrow">角色 · 日常 · 交流</div>
         <h1 class="folio-title">角色与陪伴</h1>
-        <p id="subtitle">读取运行态中...</p>
-        <div class="folio-rule"></div>
-        <div class="folio-stats" id="stats"></div>
+        <p id="subtitle" role="status">读取运行状态…</p>
+        <details class="folio-status-details">
+          <summary>运行摘要</summary>
+          <div class="folio-stats" id="stats"></div>
+        </details>
       </div>
 
       <div class="folio-tools">
@@ -58,7 +59,7 @@
       <details id="nativeCompanionNavigation" class="aw-native-navigation" open>
         <summary id="nativeCompanionNavigationTitle">今日概览</summary>
         <label class="aw-nav-search">查找功能<input id="nativeCompanionSearch" type="search" placeholder="例如：模型、主动、书籍" autocomplete="off" /></label>
-        <nav class="annotations" aria-label="角色与陪伴功能"><section class="aw-nav-group"><h2>日常与角色</h2><button class="tab" data-tab="dashboard" type="button"><span>今日概览</span></button><button class="tab" data-tab="memory" type="button"><span>生活与状态</span></button><button class="tab" data-tab="roleplay" type="button"><span>角色与世界知识</span></button></section><section class="aw-nav-group"><h2>交流与陪伴</h2><button class="tab" data-tab="private" type="button"><span>私聊对象</span></button><button class="tab" data-tab="group" type="button"><span>群聊对象</span></button><button class="tab" data-tab="proactive" type="button"><span>主动陪伴</span></button><button class="tab" data-tab="learning" type="button"><span>学习与偏好</span></button></section><section class="aw-nav-group"><h2>资料与分享</h2><button class="tab" data-tab="bookshelf" type="button"><span>书籍与创作</span></button><button class="tab" data-tab="qzone" type="button"><span>QQ 空间</span></button></section><section class="aw-nav-group"><h2>管理</h2><button class="tab" data-tab="models" type="button"><span>模型分配</span></button><button class="tab" data-tab="tokens" type="button"><span>用量统计</span></button><button class="tab" data-tab="config" type="button"><span>运行配置</span></button><button class="tab" data-tab="troubleshooting" type="button"><span>诊断与恢复</span></button><button class="tab" data-tab="experimental" type="button"><span>实验功能</span></button></section></nav>
+        <nav class="annotations" aria-label="角色与陪伴功能"><section class="aw-nav-group"><h2>日常与角色</h2><button class="tab" data-tab="dashboard" type="button"><span>今日概览</span></button><button class="tab" data-tab="memory" type="button"><span>生活与状态</span></button><button class="tab" data-tab="roleplay" type="button"><span>角色与世界知识</span></button></section><section class="aw-nav-group"><h2>交流与陪伴</h2><button class="tab" data-tab="private" type="button"><span>私聊对象</span></button><button class="tab" data-tab="group" type="button"><span>群聊对象</span></button><button class="tab" data-tab="proactive" type="button"><span>主动陪伴</span></button><button class="tab" data-tab="learning" type="button"><span>学习与偏好</span></button></section><section class="aw-nav-group"><h2>资料与分享</h2><button class="tab" data-tab="bookshelf" type="button"><span>书籍与创作</span></button><button class="tab" data-tab="qzone" type="button"><span>QQ 空间</span></button></section><section class="aw-nav-group"><h2>管理</h2><button class="tab" data-tab="models" type="button"><span>模型分配</span></button><button class="tab" data-tab="tokens" type="button"><span>用量统计</span></button><button class="tab" data-tab="config" type="button"><span>运行配置</span></button><button class="tab" data-tab="image-cache" type="button"><span>图片缓存</span></button><button class="tab" data-tab="troubleshooting" type="button"><span>诊断与恢复</span></button><button class="tab" data-tab="experimental" type="button"><span>实验功能</span></button></section></nav>
         <p class="aw-nav-empty" hidden>没有匹配的功能，请换个关键词。</p>
         <details class="aw-native-note"><summary>能力与来源</summary><p>当前由 TLS 原生服务执行。已迁入的 Private Companion 管理能力与来源声明保留。日程和目标的旧维护入口会引导到现有 TLS 管理页。</p></details>
       </details>
@@ -67,7 +68,7 @@
         <div class="section-head dashboard-overview-head">
           <div>
             <h2>今日概览</h2>
-            <p class="section-desc">日程、状态、主动与记忆集中在这里；配置和诊断按需展开。</p>
+            <p class="section-desc">先查看今天的日程和角色近况。</p>
           </div>
           <div class="actions compact">
             <button id="exportSnapshotBtn" type="button">导出快照</button>
@@ -93,7 +94,7 @@
           <section class="dashboard-life-column dashboard-life-column-main">
             <article class="life-desk-card life-desk-timeline">
               <div class="life-desk-card-head">
-                <div><span class="life-desk-dot"></span><h3>时间轴</h3></div>
+                <div><span class="life-desk-dot"></span><h3>今日日程</h3></div>
                 <div class="life-timeline-head-actions">
                   <small id="dashboardTimelineMeta">读取日程中</small>
                   <button type="button" class="life-desk-link" data-jump-tab="memory">完整日程</button>
@@ -1030,17 +1031,20 @@ QQ空间 = 公开札记
             </div>
           </div>
           <p class="muted">当前查询最多显示300条。这里只维护转述缓存和压缩预览，不是聊天原图备份；删除不会移除聊天原图。</p>
-          <p id="imageCacheActionResult" role="status" aria-live="polite"></p>
-          <div id="imageCacheSummary" class="image-cache-summary"></div>
-          <div class="image-cache-toolbar">
-            <input id="imageCacheFilter" type="search" placeholder="筛选摘要 / hash / provider / 类型" />
-            <select id="imageCacheScope" aria-label="缓存范围">
-              <option value="all">全部范围</option>
-            </select>
-          </div>
-          <div class="image-cache-layout">
-            <div id="imageCacheList" class="image-cache-list"></div>
-            <div id="imageCacheDetail" class="image-cache-detail"></div>
+          <div id="imageCacheWorkspace">
+            <p id="imageCacheActionResult" role="status" aria-live="polite"></p>
+            <div id="imageCacheSummary" class="image-cache-summary"></div>
+            <div class="image-cache-toolbar">
+              <input id="imageCacheFilter" type="search" aria-label="搜索图像缓存" placeholder="搜摘要、类型或缓存键" />
+              <select id="imageCacheScope" aria-label="缓存范围">
+                <option value="all">全部范围</option>
+              </select>
+            </div>
+            <p class="muted" id="imageCacheListStatus" role="status"></p>
+            <div class="image-cache-layout">
+              <div id="imageCacheList" class="image-cache-list"></div>
+              <div id="imageCacheDetail" class="image-cache-detail"></div>
+            </div>
           </div>
         </div>
       </section>

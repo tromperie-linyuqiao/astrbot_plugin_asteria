@@ -4,7 +4,7 @@
 仓库：https://github.com/tromperie-linyuqiao/astrbot_plugin_asteria
 名称：星栖 Asteria
 身份：tromperie-linyuqiao/astrbot_plugin_asteria
-类型：AstrBot插件，附Android客户端源码。
+类型：AstrBot 插件。市场归档不含 Android App 或桌宠。
 标签：AstrBot、astrbot-plugin、伴侣、记忆、感知、Android。
 
 发布需要维护者的AstrBot Cloud账户。没有实际提交编号或审核结果时，不能写“已收录”。

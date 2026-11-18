@@ -15,9 +15,16 @@ export function initNativeMemoryNavigation() {
   const narrow = matchMedia("(max-width:760px)");
   root.open = !narrow.matches;
   narrow.addEventListener("change", () => { root.open = !narrow.matches; });
-  root.querySelectorAll("[data-native-view]").forEach((button) => button.addEventListener("click", () => {
-    if (button.dataset.nativeView === "overview") void returnHome();
-    else void openView(button.dataset.nativeView);
+  let navigationSerial = 0;
+  root.querySelectorAll("[data-native-view]").forEach((button) => button.addEventListener("click", async (event) => {
+    const request = ++navigationSerial;
+    const view = button.dataset.nativeView;
+    const byKeyboard = event.detail === 0 && document.activeElement === button;
+    if (view === "overview") await returnHome();
+    else await openView(view);
+    if (!byKeyboard || request !== navigationSerial || button.getAttribute("aria-current") !== "page") return;
+    if (document.activeElement !== button && document.activeElement !== document.body) return;
+    document.getElementById(view === "overview" ? "standardOverviewTitle" : "workspaceTitle").focus();
   }));
   document.getElementById("nativeMemorySearch").addEventListener("input", (event) => {
     const query = event.target.value.trim().toLocaleLowerCase();

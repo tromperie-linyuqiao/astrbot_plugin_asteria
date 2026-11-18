@@ -58,13 +58,58 @@ def normalize_quiet_hours(value):
     return ','.join(windows)
 
 
-def delivery_quiet_window(value,now):
-    """One shared half-open clock calculation for admission and final dispatch."""
+def _quiet_minute(intervals, local):
+    minute = local.hour * 60 + local.minute
+    return any(start <= minute < end for start, end in intervals)
+
+
+def _zone_transition(first, last, zone):
+    before = datetime.fromtimestamp(first, zone).utcoffset()
+    while last - first > 1:
+        middle = (first + last) // 2
+        if datetime.fromtimestamp(middle, zone).utcoffset() == before:
+            first = middle
+        else:
+            last = middle
+    return last
+
+
+def _zoned_clock_edges(intervals, local):
+    zone = local.tzinfo
+    midnight = local.replace(hour=0, minute=0, second=0, microsecond=0, fold=0)
+    edges = {minute % 1440 for interval in intervals for minute in interval}
+    candidates = set()
+    # A local boundary can occur twice, or be skipped. A clock change that
+    # crosses a boundary is itself a candidate for the first open instant.
+    # A rewind may cross midnight and an offset change can skip a local date.
+    for day in (-1, 0, 1, 2):
+        for minute in edges:
+            wall = midnight + timedelta(days=day, minutes=minute)
+            times = {int(wall.replace(fold=fold).timestamp()) for fold in (0, 1)}
+            for timestamp in times:
+                actual = datetime.fromtimestamp(timestamp, zone)
+                if actual.replace(tzinfo=None) == wall.replace(tzinfo=None):
+                    candidates.add(timestamp)
+            if len(times) == 2:
+                first, last = sorted(times)
+                candidates.add(_zone_transition(first, last, zone))
+    return sorted(candidates)
+
+
+def _zoned_quiet_end(intervals, local, now):
+    if not _quiet_minute(intervals, local):
+        return now
+    return next(timestamp for timestamp in _zoned_clock_edges(intervals, local)
+                if timestamp > now and not _quiet_minute(intervals, datetime.fromtimestamp(timestamp, local.tzinfo)))
+
+
+def delivery_quiet_window(value,now,*,zone=None,forecast_until=None):
+    """Calculate half-open quiet windows in a named zone or the legacy fixed offset."""
     enabled=value.get('quiet_enabled',True)
     if type(enabled) is not bool:raise ValueError('invalid quiet setting')
     offset=value.get('tz_offset_minutes',480)
     if type(offset) is not int or not -840<=offset<=840:raise ValueError('invalid timezone offset')
-    local=datetime.fromtimestamp(number(now,'now'),timezone(timedelta(minutes=offset)))
+    local=datetime.fromtimestamp(number(now,'now'),zone if zone is not None else timezone(timedelta(minutes=offset)))
     def minutes(text):
         if type(text) is not str or re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]',text) is None:
             raise ValueError('invalid quiet time')
@@ -72,7 +117,7 @@ def delivery_quiet_window(value,now):
     start,end=minutes(value.get('quiet_start','02:00')),minutes(value.get('quiet_end','08:00'))
     configured=normalize_quiet_hours(value.get('quiet_hours',''))
     minute=local.hour*60+local.minute
-    if not configured:
+    if not configured and zone is None:
         # Keep the old single-window calculation, including equal endpoints.
         quiet=enabled and (start==end or (start<=minute<end if start<end else minute>=start or minute<end))
         until=now
@@ -81,8 +126,10 @@ def delivery_quiet_window(value,now):
             if until<=now:until+=86400
         return dict(quiet_until=until,quiet_all_day=enabled and start==end)
     intervals=[]
-    for part in configured.split(','):
-        left,right=(minutes(text) for text in part.split('-'))
+    windows = [(start, end)]
+    if configured:
+        windows = [tuple(minutes(text) for text in part.split('-')) for part in configured.split(',')]
+    for left,right in windows:
         if left==right:intervals=[(0,1440)];break
         intervals.extend([(left,right)] if left<right else [(0,right),(left,1440)])
     merged=[]
@@ -91,6 +138,23 @@ def delivery_quiet_window(value,now):
         if merged and left<=merged[-1][1]:merged[-1]=(merged[-1][0],max(right,merged[-1][1]))
         else:merged.append((left,right))
     all_day=enabled and merged==[(0,1440)]
+    if zone is not None:
+        until = now
+        if all_day:
+            # A positive deferral for the scheduler, not a wall-clock end.
+            until = now + 86400
+        elif enabled:
+            until = _zoned_quiet_end(merged, local, now)
+        status = dict(quiet_until=until, quiet_all_day=all_day)
+        if enabled and not all_day and forecast_until is not None and until < forecast_until:
+            after_current = datetime.fromtimestamp(until, zone)
+            start = next((edge for edge in _zoned_clock_edges(merged, after_current)
+                          if until < edge < forecast_until and
+                          _quiet_minute(merged, datetime.fromtimestamp(edge, zone))), None)
+            if start is not None:
+                start_local = datetime.fromtimestamp(start, zone)
+                status.update(next_quiet_from=start, next_quiet_until=_zoned_quiet_end(merged, start_local, start))
+        return status
     until=now
     if enabled:
         midnight=local.replace(hour=0,minute=0,second=0,microsecond=0).timestamp()

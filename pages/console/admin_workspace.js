@@ -96,6 +96,44 @@
   const info = id => descriptions[id] || ENTRY_INFO[id] || [TITLES[id] || id,''];
   const svg = path => {const s=document.createElementNS('http://www.w3.org/2000/svg','svg');s.setAttribute('viewBox','0 0 24 24');s.setAttribute('class','nav-icon');s.setAttribute('aria-hidden','true');const p=document.createElementNS(s.namespaceURI,'path');p.setAttribute('d',path);s.append(p);return s;};
   const button = (label, callback, className='') => {const b=node('button',label,className);b.type='button';b.addEventListener('click',callback);return b;};
+  function bindFeatureSearch(search,field,results,openDestination) {
+    const searchable=Array.from(new Set([...destinations.map(row=>row.id),...areas.flatMap(a=>a.groups.flatMap(g=>g.entries))]));
+    function closeSearch(){results.hidden=true;field.setAttribute('aria-expanded','false');}
+    function searchFeatures(){
+      results.replaceChildren();const query=field.value.trim().toLocaleLowerCase();if(!query){closeSearch();return;}
+      const matches=searchable.map(id=>{
+        const [title,description]=entryInfo(id);
+        const label=title.toLocaleLowerCase();
+        const rank=label===query?0:label.includes(query)?1:description.toLocaleLowerCase().includes(query)?2:3;
+        return {id,title,description,rank};
+      }).filter(match=>match.rank<3).sort((a,b)=>a.rank-b.rank);
+      for(const {id,title,description} of matches){
+        const result=button('',()=>{closeSearch();field.value='';openDestination(id);},'aw-search-result');
+        const copy=node('span',undefined,'aw-result-copy');
+        copy.append(node('strong',title),node('small',description));result.append(copy);
+        const area=areas.find(item=>item.id===VIEW_SECTIONS[destination(id)?.view||id]);
+        if(area)result.append(node('small',area.name,'aw-result-area'));
+        results.append(result);
+      }
+      if(!matches.length)results.append(node('p','没有匹配的功能，试试“记忆”“手机”或“日程”。','empty'));
+      results.hidden=false;field.setAttribute('aria-expanded','true');
+    }
+    field.setAttribute('aria-controls',results.id);field.setAttribute('aria-expanded','false');field.addEventListener('input',searchFeatures);field.addEventListener('focus',()=>{if(field.value)searchFeatures();});
+    field.addEventListener('keydown',event=>{
+      if(event.isComposing||event.keyCode===229)return;
+      if(event.key==='Escape'){event.preventDefault();closeSearch();return;}
+      if(results.hidden)return;
+      const first=results.querySelector('button');
+      if(!first)return;
+      if(event.key==='ArrowDown'){event.preventDefault();first.focus();}
+      if(event.key==='Enter'){event.preventDefault();first.click();}
+    });
+    results.addEventListener('keydown',event=>{const buttons=Array.from(results.querySelectorAll('button')),index=buttons.indexOf(document.activeElement);if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();buttons[(index+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length]?.focus();}if(event.key==='Escape'){event.preventDefault();field.focus();closeSearch();}});
+    search.addEventListener('focusout',event=>{if(!search.contains(event.relatedTarget))closeSearch();});
+    document.addEventListener('click',event=>{if(!search.contains(event.target))closeSearch();});
+    document.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();field.focus();}});
+  }
+
   function start() {
     Object.assign(ENTRY_INFO,descriptions);
     Object.assign(ENTRY_PAGES,{'memory-classic':'memory'});
@@ -115,18 +153,26 @@
     document.querySelectorAll('.secondary-nav').forEach(n=>n.remove());
     for (const area of areas) {
       SECTION_NAMES[area.id]=area.name;SECTION_DEFAULTS[area.id]=area.home;
-      const nav=button('',()=>setView(area.home),'aw-nav-item');nav.dataset.section=area.id;nav.append(svg(area.icon),node('span',area.name));navigation.append(nav);
+      const nav=button('',()=>setView(area.home),'aw-nav-item');
+      nav.dataset.section=area.id;
+      nav.append(svg(area.icon),node('span',area.name));
+      if(area.id==='models')nav.classList.add('aw-nav-group-start');
+      navigation.append(nav);
       if(area.home!=='overview') {
         TITLES[area.home]=area.name;VIEW_SECTIONS[area.home]=area.id;
         const section=node('section',undefined,'view aw-domain-view');section.id='view-'+area.home;section.hidden=true;
         const head=node('div',undefined,'aw-domain-header');head.append(node('p',area.summary,'aw-domain-description'));
-        const scope=node('p','','aw-domain-scope hint');head.append(scope);section.append(head);
+        section.append(head);
         const groups=node('div',undefined,'aw-domain-groups');
         for(const group of area.groups) {
-          const part=node('section',undefined,'aw-domain-group');part.append(node('h3',group.title));const grid=node('div',undefined,'aw-domain-grid');
+          const part=node('section',undefined,'aw-domain-group');part.append(node('h2',group.title));const grid=node('div',undefined,'aw-domain-grid');
           for(const id of group.entries) {
             const [title,description]=info(id),card=button('',()=>openEntry(id),'aw-domain-card');card.dataset.awEntry=id;
-            card.append(node('span',title,'aw-card-title'),node('span',description,'aw-card-description'),node('span',ENTRY_PAGES[id]?'打开完整管理页 ↗':'进入管理 →','aw-card-meta'));grid.append(card);
+            const copy=node('span',undefined,'aw-entry-copy');
+            const arrow=node('span',ENTRY_PAGES[id]?'↗':'›','aw-entry-arrow');
+            arrow.setAttribute('aria-hidden','true');
+            copy.append(node('strong',title,'aw-card-title'),node('span',description,'aw-card-description'));
+            card.append(copy,arrow);grid.append(card);
           }
           part.append(grid);groups.append(part);
         }
@@ -140,12 +186,13 @@
       }
       views.before(sub);
     }
-    const brand=document.querySelector('.brand');brand.replaceChildren();const mark=node('span',undefined,'brand-mark');mark.append(svg('M12 2l2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z'));brand.append(mark,node('span','星栖 Asteria'),node('small','TLS · ADMINISTRATION'));
-    document.querySelector('.eyebrow').textContent='ASTERIA / ADMINISTRATION';
-    document.querySelector('.sidebar-note').textContent='在同一个工作台，照看每一份连接。';
+    const brand=document.querySelector('.brand');brand.replaceChildren();const mark=node('span',undefined,'brand-mark');mark.append(svg('M12 2l2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z'));brand.append(mark,node('span','星栖 Asteria'));
     const top=node('div',undefined,'aw-toolbar'),crumb=node('nav',undefined,'aw-breadcrumb');crumb.id='aw-breadcrumb';crumb.setAttribute('aria-label','当前位置');
     const search=node('div',undefined,'aw-search-wrap'),field=node('input');field.id='aw-search';field.type='search';field.placeholder='查找功能、设置与资料入口';field.setAttribute('aria-label','查找管理功能');field.autocomplete='off';
-    const results=node('div',undefined,'aw-search-results');results.id='aw-search-results';results.hidden=true;results.setAttribute('aria-label','功能搜索结果');search.append(field,results);top.append(crumb,search);document.querySelector('.header').after(top);
+    const results=node('div',undefined,'aw-search-results');results.id='aw-search-results';results.hidden=true;results.setAttribute('aria-label','功能搜索结果');const shortcut=node('kbd',/Mac/.test(navigator.platform)?'⌘ K':'Ctrl K','aw-search-shortcut');
+    shortcut.setAttribute('aria-hidden','true');search.append(field,shortcut,results);
+    top.append(crumb,$('current-scope-bar'),search);
+    $('notice').after(top);
     let currentDestination=null;
     function openDestination(id,remember=true){
       const target=destination(id);
@@ -157,8 +204,10 @@
       currentDestination=target;paint(target.view);restoring=previous;
       if(remember&&location.hash!=='#'+destinationHash(target))history.pushState(null,'','#'+destinationHash(target));
     }
-    const hub=node('section',undefined,'panel aw-workspaces');hub.id='aw-workspaces';hub.setAttribute('aria-label','八个工作区域');
-    const hubHead=node('div',undefined,'panel-head');hubHead.append(node('div',undefined));hubHead.firstChild.append(node('h2','从这里开始'),node('p','按要做的事进入原有资料与管理页面。上方范围决定正在查看哪个角色与会话。','hint'));
+    const hub=node('details',undefined,'aw-workspaces');
+    hub.id='aw-workspaces';
+    hub.append(node('summary','所有工作区域'));
+    const hubHead=node('div',undefined,'panel-head');hubHead.append(node('div',undefined));hubHead.firstChild.append(node('h2','目录'));
     const hubFilter=node('input');hubFilter.type='search';hubFilter.placeholder='筛选工作区域';hubFilter.setAttribute('aria-label','筛选工作区域');hubHead.append(hubFilter);hub.append(hubHead);
     const hubGrid=node('div',undefined,'aw-workspace-grid'),hubEmpty=node('p','没有匹配的工作区域。可试试“人物”“收藏”或清空搜索。','empty');hubEmpty.hidden=true;hubEmpty.setAttribute('role','status');hub.append(hubGrid,hubEmpty);
     for(const area of workspaces){
@@ -168,21 +217,8 @@
       card.append(entries);hubGrid.append(card);
     }
     hubFilter.addEventListener('input',()=>{const query=hubFilter.value.trim().toLocaleLowerCase();let count=0;for(const card of hubGrid.children){card.hidden=!!query&&!card.textContent.toLocaleLowerCase().includes(query);if(!card.hidden)count++;}hubEmpty.hidden=!!count;});
-    const overview=$('view-overview');overview.querySelector('.workbench-grid').after(hub);
-    const searchable=Array.from(new Set([...destinations.map(row=>row.id),...areas.flatMap(a=>a.groups.flatMap(g=>g.entries))]));
-    function closeSearch(){results.hidden=true;field.setAttribute('aria-expanded','false');}
-    function searchFeatures(){
-      results.replaceChildren();const query=field.value.trim().toLocaleLowerCase();if(!query){closeSearch();return;}
-      const matches=searchable.filter(id=>entryInfo(id).join(' ').toLocaleLowerCase().includes(query));
-      for(const id of matches){const [title,description]=entryInfo(id),b=button('',()=>{closeSearch();field.value='';openDestination(id);},'aw-search-result');b.append(node('strong',title),node('small',description));results.append(b);}
-      if(!matches.length)results.append(node('p','没有匹配的功能，试试“记忆”“手机”或“日程”。','empty'));
-      results.hidden=false;field.setAttribute('aria-expanded','true');
-    }
-    field.setAttribute('aria-controls',results.id);field.setAttribute('aria-expanded','false');field.addEventListener('input',searchFeatures);field.addEventListener('focus',()=>{if(field.value)searchFeatures();});
-    field.addEventListener('keydown',event=>{if(event.key==='ArrowDown'){event.preventDefault();results.querySelector('button')?.focus();}if(event.key==='Enter'){const first=results.querySelector('button');if(first){event.preventDefault();first.click();}}if(event.key==='Escape')closeSearch();});
-    results.addEventListener('keydown',event=>{const buttons=Array.from(results.querySelectorAll('button')),index=buttons.indexOf(document.activeElement);if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();buttons[(index+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length]?.focus();}if(event.key==='Escape'){closeSearch();field.focus();}});
-    document.addEventListener('click',event=>{if(!search.contains(event.target))closeSearch();});
-    document.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();field.focus();}});
+    const overview=$('view-overview');overview.append(hub);
+    bindFeatureSearch(search,field,results,openDestination);
 
     const relatedAreas={
       personal_space:['autonomous_life','music_library','assets','personal_goals'],autonomous_life:['personal_space','pc_daily_native','proactive_native','tasks'],
@@ -194,7 +230,7 @@
       personal_goals:['scoped_daily_plan','memo_notes','autonomous_life'],scoped_daily_plan:['personal_goals','tasks']
     };
     const cooperate=node('details',undefined,'aw-cooperate'),cooperateTitle=node('summary','关联区域'),cooperateList=node('div',undefined,'aw-cooperate-links');
-    cooperate.append(cooperateTitle,cooperateList);top.after(cooperate);
+    cooperate.append(cooperateTitle,cooperateList);views.after(cooperate);
     const recentKey='asteria.admin.recent-views.v1';
     let recentViews=[];try{const saved=JSON.parse(localStorage.getItem(recentKey)||'[]');if(Array.isArray(saved))recentViews=saved.filter(id=>typeof id==='string'&&descriptions[id]&&!ENTRY_PAGES[id]).slice(0,5);}catch(_){}
     const recentBox=node('details',undefined,'aw-recent'),recentTitle=node('summary','最近打开'),recentList=node('div');recentBox.append(recentTitle,recentList);navigation.after(recentBox);
@@ -212,7 +248,7 @@
       if(currentDestination?.view===view)crumb.append(node('span','/','aw-crumb-separator'),node('span',currentDestination.title,'aw-crumb-current'));
       if(view!=='overview')crumb.prepend(button('工作区',()=>setView('overview')),node('span','/','aw-crumb-separator'));
       $('page-title').textContent=view===area.home?area.name:info(view)[0];
-      document.querySelectorAll('.aw-domain-scope').forEach(n=>n.textContent=state.scope?'资料操作将使用上方选定的用户、角色和会话。':'可浏览功能入口；管理会话资料前，请在上方选择会话。');
+      crumb.hidden=view==='overview';
       $('current-scope-bar').hidden=['chat_corpus','history','model_routes','config','memory_strategy','workspace_appearance','area-models','area-integrations','area-settings','native_ownership','modules'].includes(view);
       document.body.dataset.awArea=area.id;document.body.dataset.awView=view;paintRelations(view);
     }

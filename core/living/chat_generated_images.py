@@ -16,6 +16,7 @@ from pathlib import Path
 from .models import canonical, private_scope, scope_key
 from .delivery_types import make_task
 from .journal import JournalConflict
+from .native_image_service import UNKNOWN_IMAGE_REASONS
 
 NAMESPACE = 'tls.chat.image_jobs.v1'
 TASKS = 'tls.chat.image_tasks.v1'
@@ -407,7 +408,10 @@ class ChatGeneratedImages:
             scene='这是用户请求的虚构角色插画，不是现实照片。'+d['prompt']if d['purpose']in {'life','roleplay'}else d['prompt']
             result=await image.generate(scope,image_task_id,'daily',scene_description=scene[:1200],explicit_sexual=False,**kwargs)
             if not isinstance(result,dict)or result.get('state')not in {'ready','denied','definite_failure'}:
-                await self._change(scope,row,state='unknown',reason='provider_outcome_unknown');return
+                reason=result.get('reason') if isinstance(result,dict) else None
+                if not isinstance(reason,str) or reason not in UNKNOWN_IMAGE_REASONS:
+                    reason='provider_outcome_unknown'
+                await self._change(scope,row,state='unknown',reason=reason);return
             if result['state']!='ready':await self._change(scope,row,state='definite_failure'if result['state']=='definite_failure'else'blocked',reason=result.get('reason','image_not_generated'));return
             path=Path(result['path']).resolve()
             if path.parent!=image.media_root or path.is_symlink()or not path.is_file():raise ValueError('owned image required')

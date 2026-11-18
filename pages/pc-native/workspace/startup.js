@@ -3,7 +3,7 @@
 
 import {installWorkspaceShell} from './page-runtime.js';
 import {fetchJson,postJson} from './client.js';
-import {renderImageCache} from './image-cache.js';
+import {forgetImageCacheDraft,imageCacheFormValues,keepImageCacheDraft,renderImageCache,selectImageCacheEntry} from './image-cache.js';
 import {checkWorldbookObservation,handleWorldbookGroupAction,handleWorldbookMemberAction,renderGroups,renderUsers,renderWorldbook} from './learning.js';
 import {closeMemoEditor,currentMemoNotes,openMemoEditor,readCreativeOperation,renderBookshelf,renderMemoNotes,saveCreativeOperation,saveSelectedBookshelfReadingState,saveSkillRecord,skillExpFloor,transitionBookshelfPage,updateMemoAction} from './library.js';
 import {renderBookDetailPanel,renderProactiveRecords,renderStorageConfig,selectBookshelfBook,setBookshelfUnlockMessage} from './life.js';
@@ -26,8 +26,16 @@ export function startWorkspace(){
   installWorkspaceShell('companion');
 bindBookshelfCoverPreviewDismissal();
 document.querySelectorAll(".annotations .tab[data-tab]").forEach((button) => {
-  button.addEventListener("click", () => {
-    switchTab(button.dataset.tab);
+  button.addEventListener("click", (event) => {
+    const byKeyboard = event.detail === 0 && document.activeElement === button;
+    const tab = button.dataset.tab;
+    switchTab(tab);
+    if (!byKeyboard || button.getAttribute("aria-current") !== "page") return;
+    const heading = document.getElementById(`panel-${tab}`)?.querySelector(".section-head h2");
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus();
+    }
   });
 });
 document.addEventListener("click", async (event) => {
@@ -432,8 +440,11 @@ document.addEventListener("click", async (event) => {
   }
   const row = element?.closest("[data-image-cache-key]");
   if (row) {
-    state.selectedImageCacheKey = row.dataset.imageCacheKey || "";
-    renderImageCache();
+    selectImageCacheEntry(row.dataset.imageCacheKey || "");
+    return;
+  }
+  if (element?.closest("[data-image-cache-back]")) {
+    selectImageCacheEntry("");
     return;
   }
   const deleteButton = element?.closest("[data-image-cache-delete]");
@@ -441,26 +452,29 @@ document.addEventListener("click", async (event) => {
     const key = deleteButton.dataset.imageCacheDelete || "";
     if (!key) return;
     if (!requireSecondClick(deleteButton, `image-cache:${key}`, "再次点击会删除这条图片缓存")) return;
+    const label = state.imageCacheItems.find(item => item.key === key)?.image_type || key;
+    const reportResult = (message, error) => imageCacheActionResult(key, label, message, error);
     setActionBusy(deleteButton, true);
     try {
       const deleted = await postJson("/image_cache/delete", { key });
       if (deleted?.key !== key || !Number.isInteger(deleted.remaining) || deleted.remaining < 0) {
-        imageCacheActionResult("删除结果未确认，请先刷新列表核对，不要重复提交", true);
+        reportResult("删除结果未确认，请先刷新列表核对，不要重复提交", true);
         return;
       }
       const present = state.imageCacheItems.some(item => item.key === key);
       state.imageCacheItems = state.imageCacheItems.filter(item => item.key !== key);
+      forgetImageCacheDraft(key);
       if (present) state.imageCacheTotal = Math.max(0, state.imageCacheTotal - 1);
       if (state.selectedImageCacheKey === key) state.selectedImageCacheKey = "";
-      renderImageCache();
+      renderImageCache(key);
       try {
-        await loadImageCache();
-        imageCacheActionResult("图片缓存已删除");
+        await loadImageCache(key);
+        reportResult("图片缓存已删除");
       } catch (error) {
-        imageCacheActionResult(`图片缓存已删除；最新列表读取失败，当前列表仅按已确认结果更新：${error.message}`, true);
+        reportResult(`图片缓存已删除；最新列表读取失败，当前列表仅按已确认结果更新：${error.message}`, true);
       }
     } catch (error) {
-      imageCacheActionResult(`删除失败：${error.message}`, true);
+      reportResult(`删除失败：${error.message}`, true);
     } finally {
       setActionBusy(deleteButton, false);
     }
@@ -688,30 +702,28 @@ document.addEventListener("submit", async (event) => {
   if (!form || !form.matches("[data-image-cache-editor]")) return;
   event.preventDefault();
   const key = form.dataset.imageCacheEditor || "";
+  const label = state.imageCacheItems.find(item => item.key === key)?.image_type || key;
+  const reportResult = (message, error) => imageCacheActionResult(key, label, message, error);
   const submit = form.querySelector('button[type="submit"]');
-  const formData = new FormData(form);
+  const values = imageCacheFormValues(form);
   setActionBusy(submit, true);
   try {
-    const updated = await postJson("/image_cache/update", {
-      key,
-      text: formData.get("text"),
-      scope: formData.get("scope"),
-      provider_id: formData.get("provider_id"),
-    });
+    const updated = await postJson("/image_cache/update", {key, ...values});
     if (updated?.key !== key || typeof updated.text !== "string") {
-      imageCacheActionResult("保存结果未确认，请先刷新列表核对，不要重复提交", true);
+      reportResult("保存结果未确认，请先刷新列表核对，不要重复提交", true);
       return;
     }
+    forgetImageCacheDraft(key, values);
     state.imageCacheItems = state.imageCacheItems.map(item => item.key === key ? {...item, ...updated} : item);
-    renderImageCache();
+    renderImageCache(key);
     try {
-      await loadImageCache();
-      imageCacheActionResult("图片缓存已保存");
+      await loadImageCache(key);
+      reportResult("图片缓存已保存");
     } catch (error) {
-      imageCacheActionResult(`图片缓存已保存；最新列表读取失败，当前显示本次确认结果：${error.message}`, true);
+      reportResult(`图片缓存已保存；最新列表读取失败，当前显示本次确认结果：${error.message}`, true);
     }
   } catch (error) {
-    imageCacheActionResult(`保存失败：${error.message}`, true);
+    reportResult(`保存失败：${error.message}`, true);
   } finally {
     setActionBusy(submit, false);
   }
@@ -757,6 +769,10 @@ $("#imageCacheFilter")?.addEventListener("input", (event) => {
   state._imageCacheFilterTimer = window.setTimeout(() => {
     loadImageCache().catch((error) => showToast(`筛选失败：${error.message}`, "error"));
   }, 220);
+});
+$("#imageCacheDetail")?.addEventListener("input", (event) => {
+  const form = event.target.closest("[data-image-cache-editor]");
+  if (form) keepImageCacheDraft(form);
 });
 $("#imageCacheScope")?.addEventListener("change", (event) => {
   state.imageCacheScope = event.target.value || "all";

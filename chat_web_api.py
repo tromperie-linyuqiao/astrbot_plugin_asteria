@@ -27,7 +27,7 @@ from types import SimpleNamespace
 from astrbot.core import sp
 
 from astrbot.api.web import error_response, json_response, request, stream_response, file_response
-from astrbot.dashboard.services.chat_service import ChatServiceError, build_webchat_unified_msg_origin, sanitize_upload_filename
+from astrbot.dashboard.services.chat_service import ChatServiceError, build_webchat_unified_msg_origin, sanitize_upload_filename, serialize_thread
 from astrbot.core.utils.media_utils import detect_image_mime_type_async, MEDIA_MIME_EXTENSIONS
 from astrbot.dashboard.services.persona_service import PersonaServiceError
 from astrbot.dashboard.services.session_management_service import SessionManagementServiceError
@@ -44,21 +44,24 @@ from .core.living.chat_identity import QQ_PLATFORMS, identity_service, linked_me
 from .core.living.chat_notifications import drain_inbox
 from .core.living.chat_devices import ChatDevices
 from .core.living.chat_receipts import ChatReceipts
-from .core.living.chat_sync import saved_after, cursor as sync_cursor
+from .core.living.chat_sync import (HISTORY_WINDOW_LIMIT, cursor as sync_cursor,
+    saved_after, saved_latest_companion, saved_window)
 from .core.living.chat_workspace import ChatWorkspace, actual_app_scope, calendar_view
 from .core.living.journal import JournalConflict
 from .core.living.delivery_store import DeliveryConflict
 from .core.living.native_expression_assets import NativeExpressionAssets
 from .core.living.native_memory import NativeMemoryStore, NativeMemoryConflict
 from .core.living.native_memory_adapter import NativeMemoryAdapter
-from .core.living.models import private_scope
+from .core.living.models import private_scope, scope_key
 
 
 PAGE_API_PREFIX = '/astrbot_plugin_virtual_body/page/chat'
 MAX_MESSAGE_CHARS = 16000
 MAX_BODY_BYTES = 65536
 MAX_FILE_BYTES = 8 * 1024 * 1024
+MAX_HISTORY_WINDOW_BYTES = 3 * 1024 * 1024
 MAX_ATTACHMENTS = 4
+_PERSONA_SESSION_UNREAD = object()
 _MEDIA_TYPES = frozenset({'image', 'file', 'record', 'video'})
 _SEND_FIELDS = frozenset({'session_id', 'message', 'enable_streaming',
                           'selected_provider', 'selected_model', 'files', 'parts', 'client_message_id'})
@@ -100,6 +103,8 @@ class NativeChatWebApi:
                 ('model-route', self.model_route_save, 'POST'),
                 ('search', self.search, 'GET'), ('context', self.chat_context, 'GET'),
                 ('proactive-state', self.proactive_state, 'GET'),
+                ('companion-mode', self.companion_mode_get, 'GET'),
+                ('companion-mode', self.companion_mode_save, 'POST'),
                 ('memory-detail', self.memory_detail, 'GET'), ('memory-correct', self.memory_correct, 'POST'),
                 ('message-memory', self.message_memory_get, 'GET'),
                 ('message-memory', self.message_memory_save, 'POST'),
@@ -149,6 +154,11 @@ class NativeChatWebApi:
             raise _RequestError('AstrBot 聊天服务暂不可用', 503) from exc
         if service is None:
             raise _RequestError('AstrBot 聊天服务暂不可用', 503)
+        host = getattr(getattr(self.plugin, '_presence', None), 'living_host', None)
+        mode = getattr(host, 'chat_companion_mode', None)
+        if mode is not None:
+            mode.bind(service)
+        self._last_bound_chat = service
         return username, service
 
     @staticmethod
@@ -405,19 +415,53 @@ class NativeChatWebApi:
         try:
             username, service = self._bound()
             session_id = _session_id(request.query.get('session_id'))
-            snapshot = await service.get_session(username, session_id)
-            inbox_state = 'not_linked'
-            try:
-                links = identity_service(self.plugin)
-                link = await asyncio.to_thread(links.get, username, session_id)
-                if link and link.get('notifications') is True:
-                    await self._owned_chat(session_id)
-                    if await drain_inbox(self.plugin, service, username, session_id, lock=self._inbox_lock):
-                        snapshot = await service.get_session(username, session_id)
-                    inbox_state = 'enabled'
-            except (RuntimeError, ValueError, OSError, PermissionError, JournalConflict):
-                inbox_state = 'unavailable'
-            persona = await self._configured_persona(service, username, session_id)
+            if 'latest_companion' in request.query:
+                return await self._latest_companion_history(username, service, session_id)
+            window = any(key in request.query for key in ('limit', 'before_id', 'message_id'))
+            before = message = None
+            if window:
+                if (set(request.query.keys()) - {'session_id', 'known_revision', 'limit', 'before_id', 'message_id'}
+                        or 'limit' not in request.query
+                        or 'before_id' in request.query and 'message_id' in request.query):
+                    raise _RequestError('历史分页只接受一个旧消息游标或指定消息编号')
+                limit = sync_cursor(request.query.get('limit'))
+                before = sync_cursor(request.query.get('before_id'), optional=True)
+                message = sync_cursor(request.query.get('message_id'), optional=True)
+                if not 1 <= limit <= HISTORY_WINDOW_LIMIT or before == 0 or message == 0:
+                    raise _RequestError('历史分页批次为1至80条，消息编号应大于零')
+                await self._recheck_owned_session(username, service, session_id)
+            else:
+                snapshot = await service.get_session(username, session_id)
+            inbox_state = 'not_checked' if before is not None or message is not None else 'not_linked'
+            if inbox_state != 'not_checked':
+                try:
+                    links = identity_service(self.plugin)
+                    link = await asyncio.to_thread(links.get, username, session_id)
+                    if link and link.get('notifications') is True:
+                        if not window:
+                            await self._owned_chat(session_id)
+                        if await drain_inbox(self.plugin, service, username, session_id, lock=self._inbox_lock) and not window:
+                            snapshot = await service.get_session(username, session_id)
+                        inbox_state = 'enabled'
+                except (RuntimeError, ValueError, OSError, PermissionError, JournalConflict):
+                    inbox_state = 'unavailable'
+            if window:
+                rows, marker = await saved_window(service.db, session_id, limit=limit, before_id=before, message_id=message)
+                threads = await service.db.get_webchat_threads_by_parent_session(
+                    parent_session_id=session_id, creator=username)
+                snapshot = dict(history=rows, history_window=marker,
+                    threads=[serialize_thread(thread) for thread in threads],
+                    is_running=service.running_convs.get(session_id, False),
+                    active_runs=service.get_active_chat_runs(username, session_id))
+            if window:
+                persona = await self._configured_persona(service, username, session_id)
+            else:
+                try:
+                    session = await service.db.get_platform_session_by_id(session_id)
+                except Exception:
+                    # Platform metadata is optional after the SDK history read.
+                    session = None
+                persona = await self._configured_persona(service, username, session_id, session=session)
             # Existing history remains available if the optional expression
             # service is stopped; normal text/media is still the SDK source.
             try:
@@ -441,18 +485,57 @@ class NativeChatWebApi:
                 device_context = await self._devices_view(username, service, session_id)
             except (RuntimeError, OSError, ValueError):
                 device_context = {'schema': 0}
+            if window:
+                await self._recheck_owned_session(username, service, session_id)
+            binding = {} if window else self._companion_scope_hint(username, session_id, session)
             # A transport revision covers the complete final owned snapshot.
             # Matching it never skips SDK ownership, inbox or typed-state reads.
-            revision = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
-                separators=(',', ':'), allow_nan=False).encode('utf-8')).hexdigest()
+            def encoded(value):
+                return json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                  separators=(',', ':'), allow_nan=False).encode('utf-8')
+            snapshot_bytes = encoded(payload)
+            if window and len(snapshot_bytes) > MAX_HISTORY_WINDOW_BYTES:
+                kept = []
+                remaining = MAX_HISTORY_WINDOW_BYTES - len(encoded(dict(payload, history=[])))
+                for row in reversed(payload['history']):
+                    remaining -= len(encoded(row)) + 1
+                    if remaining < 0:
+                        break
+                    kept.append(row)
+                if not kept:
+                    raise _RequestError('本页消息超过可读取大小', 413)
+                payload['history'] = list(reversed(kept))
+                payload['history_window']['has_older'] = True
+                snapshot_bytes = encoded(payload)
+            revision = hashlib.sha256(snapshot_bytes).hexdigest()
             known = request.query.get('known_revision')
             if (isinstance(known, str) and re.fullmatch(r'[0-9a-f]{64}', known) and known == revision
                     and payload.get('is_running') is not True and not payload.get('active_runs')):
-                return self._ok(dict(not_modified=True, history_revision=revision,
-                    receipt_transport=payload['receipt_transport'], device_context=device_context))
-            return self._ok(dict(payload, history_revision=revision, device_context=device_context))
+                cached = dict(not_modified=True, history_revision=revision,
+                    receipt_transport=payload['receipt_transport'], device_context=device_context, **binding)
+                if window:
+                    cached['history_window'] = payload['history_window']
+                return self._ok(cached)
+            return self._ok(dict(payload, history_revision=revision, device_context=device_context, **binding))
         except (_RequestError, ChatServiceError) as exc:
             return self._error(exc)
+        except (ValueError, OSError, SQLAlchemyError) as exc:
+            return self._expression_error(exc)
+
+    async def _latest_companion_history(self, username, service, session_id):
+        if (set(request.query.keys()) != {'session_id', 'limit', 'latest_companion'}
+                or request.query.get('latest_companion') != '1' or request.query.get('limit') != '1'):
+            raise _RequestError('最新陪伴消息只接受单条历史查询')
+        await self._recheck_owned_session(username, service, session_id)
+        rows = await saved_latest_companion(service.db, session_id)
+        await self._recheck_owned_session(username, service, session_id)
+        if rows:
+            content = rows[0]['content']
+            text = self._record_text(content)
+            rows[0]['content'] = dict(content, message=[dict(type='plain', text=text)] if text else [])
+        return self._ok(dict(session_id=session_id, history=rows,
+            history_window=dict(schema=1, mode='latest_companion', has_older=False, next_before_id=None),
+            proactive_inbox='not_checked'))
 
     async def run_stream(self):
         """Observe one existing SDK generation; never create or replay it."""
@@ -659,13 +742,14 @@ class NativeChatWebApi:
                 except (RuntimeError, OSError, ValueError, KeyError):
                     result = dict(result, expression_state='unavailable')
             # An owner removed/changed while reading cannot receive the result.
-            await self._recheck_owned_session(username, service, session_id)
+            session = await self._recheck_owned_session(username, service, session_id)
             try:
                 device_context = await self._devices_view(username, service, session_id)
             except (RuntimeError, OSError, ValueError):
                 device_context = {'schema': 0}
+            binding = self._companion_scope_hint(username, session_id, session)
             return self._ok(dict(result, session_id=session_id, proactive_inbox=inbox_state,
-                receipt_transport=ChatReceipts.capability(), device_context=device_context))
+                receipt_transport=ChatReceipts.capability(), device_context=device_context, **binding))
         except (_RequestError, ChatServiceError, PermissionError, RuntimeError, OSError,
                 ValueError, KeyError, sqlite3.Error, SQLAlchemyError) as exc:
             return self._expression_error(exc)
@@ -696,6 +780,20 @@ class NativeChatWebApi:
         except (_RequestError, ChatServiceError, ChatExpressionError, JournalConflict,
                 ValueError, RuntimeError, OSError) as exc:
             return self._expression_error(exc)
+
+    def _companion_scope_hint(self, username, session_id, session):
+        if not self._is_owned_private_session(username, session_id, session):
+            return {}
+        presence = getattr(self.plugin, '_presence', None)
+        host = getattr(presence, 'living_host', None)
+        if (getattr(self.plugin, '_stopping', False) or getattr(host, '_closed', True)
+                or getattr(getattr(host, 'runtime', None), 'active', False) is not True):
+            return {}
+        try:
+            scope = actual_app_scope(self.plugin, username, session)
+            return {'companion_scope_revision': scope_key(scope) if scope is not None else None}
+        except (AttributeError, KeyError, TypeError, ValueError, RuntimeError):
+            return {}
 
     async def _devices_view(self, username, service, session_id):
         expressions = self._expressions(service)
@@ -1102,8 +1200,7 @@ class NativeChatWebApi:
         username, service = self._bound()
         snapshot = await service.get_session(username, session_id)
         session = await service.db.get_platform_session_by_id(session_id)
-        if (session is None or session.creator != username or session.session_id != session_id
-                or session.platform_id != 'webchat' or session.is_group != 0):
+        if not self._is_owned_private_session(username, session_id, session):
             raise _RequestError('这个入口只接受自己的私有 APP 会话', 403)
         return username, service, snapshot, session
 
@@ -1113,8 +1210,7 @@ class NativeChatWebApi:
         fresh_username, fresh_service = self._bound()
         if fresh_username != username or fresh_service is not service:
             raise _RequestError('当前连接已变化，请重新读取', 409)
-        if (session is None or session.creator != username or session.session_id != session_id
-                or session.platform_id != 'webchat' or session.is_group != 0):
+        if not self._is_owned_private_session(username, session_id, session):
             raise _RequestError('会话归属已变化，请重新连接', 403)
         return session
 
@@ -1561,6 +1657,41 @@ class NativeChatWebApi:
                 RuntimeError, OSError, ValueError, TypeError, sqlite3.Error) as exc:
             return self._chat_memory_error(exc)
 
+    async def companion_mode_get(self):
+        return await self._companion_mode(write=False)
+
+    async def companion_mode_save(self):
+        return await self._companion_mode(write=True)
+
+    async def _companion_mode(self, *, write):
+        from .core.living.chat_companion_mode import service_for
+        try:
+            if write:
+                body = await self._body(limit=2048)
+                session_id = _session_id(body.get('session_id'))
+            else:
+                query = getattr(request, 'query', None)
+                if query is None or set(query.keys()) != {'session_id'}:
+                    raise _RequestError('陪伴模式只接受当前会话')
+                session_id = _session_id(query['session_id'])
+            username, service = self._bound()
+            session = await self._recheck_owned_session(username, service, session_id)
+            mode = service_for(self.plugin)
+            mode.bind(service)
+            if write:
+                return self._ok(await mode.apply(username, session_id, session, body))
+            return self._ok(await mode.view(username, session_id, session))
+        except (_RequestError, ChatServiceError) as exc:
+            return self._error(exc)
+        except JournalConflict as exc:
+            return self._error(_RequestError(str(exc), 409))
+        except PermissionError as exc:
+            return self._error(_RequestError(str(exc), 403))
+        except (RuntimeError, OSError):
+            return self._error(_RequestError('陪伴模式暂不可用', 503))
+        except ValueError as exc:
+            return self._error(_RequestError(str(exc)))
+
     async def proactive_state(self):
         """Current own-APP diagnostics; never schedule or force a send."""
         try:
@@ -1909,24 +2040,60 @@ class NativeChatWebApi:
     async def search(self):
         try:
             session_id = _session_id(request.query.get('session_id'))
-            _, _, snapshot, _ = await self._owned_chat(session_id)
             query = request.query.get('q', '')
             if not isinstance(query, str) or not query.strip() or len(query) > 200:
                 raise _RequestError('请输入 1 到 200 字的搜索内容')
             query = query.strip()
+            needle = query.casefold()
+            def match(record):
+                if not isinstance(record, dict):
+                    return None
+                text = self._record_text(record.get('content'))
+                found = text.casefold().find(needle)
+                if found < 0:
+                    return None
+                return {'id': record.get('id'), 'message_id': record.get('id'),
+                    'role': 'user' if (record.get('content') or {}).get('type') == 'user' else 'assistant',
+                    'excerpt': text[max(0, found - 70):found + len(query) + 130],
+                    'created_at': record.get('created_at')}
+
+            if request.query.get('scope') == 'saved':
+                if set(request.query.keys()) - {'session_id', 'q', 'scope', 'before_id'}:
+                    raise _RequestError('历史搜索参数无效')
+                before = sync_cursor(request.query.get('before_id'), optional=True)
+                if before == 0:
+                    raise _RequestError('历史搜索游标应大于零')
+                username, service = self._bound()
+                await self._recheck_owned_session(username, service, session_id)
+                values, scanned, more = [], 0, False
+                for _ in range(4):
+                    records, marker = await saved_window(service.db, session_id, limit=HISTORY_WINDOW_LIMIT, before_id=before)
+                    for index, record in enumerate(reversed(records)):
+                        before = int(record['id'])
+                        scanned += 1
+                        more = index < len(records) - 1 or marker['has_older']
+                        item = match(record)
+                        if item is not None:
+                            values.append(dict(item, id=str(before), message_id=str(before)))
+                            if len(values) == 40:
+                                break
+                    if not records:
+                        more = False
+                    if not more or len(values) == 40:
+                        break
+                await self._recheck_owned_session(username, service, session_id)
+                return self._ok(dict(session_id=session_id, query=query, items=values, scanned=scanned,
+                    limit=HISTORY_WINDOW_LIMIT * 4, limited=more, source='owned_astrbot_saved_history',
+                    hidden_reasoning_searched=False, search_window=dict(schema=1, has_older=more,
+                        next_before_id=str(before) if more else None)))
+
+            _, _, snapshot, _ = await self._owned_chat(session_id)
             records = snapshot.get('history', [])
             values = []
             for record in records:
-                if not isinstance(record, dict):
-                    continue
-                text = self._record_text(record.get('content'))
-                found = text.casefold().find(query.casefold())
-                if found < 0:
-                    continue
-                values.append({'id': record.get('id'), 'message_id': record.get('id'),
-                    'role': 'user' if (record.get('content') or {}).get('type') == 'user' else 'assistant',
-                    'excerpt': text[max(0, found - 70):found + len(query) + 130],
-                    'created_at': record.get('created_at')})
+                item = match(record)
+                if item is not None:
+                    values.append(item)
                 if len(values) == 200:
                     break
             return self._ok({'session_id': session_id, 'query': query, 'items': values,
@@ -1935,6 +2102,8 @@ class NativeChatWebApi:
                 'source': 'owned_astrbot_recent_history', 'hidden_reasoning_searched': False})
         except (_RequestError, ChatServiceError) as exc:
             return self._error(exc)
+        except (ValueError, OSError, SQLAlchemyError) as exc:
+            return self._expression_error(exc)
 
     async def chat_context(self):
         try:
@@ -2144,19 +2313,23 @@ class NativeChatWebApi:
         except (_RequestError, ChatServiceError) as exc:
             return self._error(exc)
 
-    async def _configured_persona(self, service, username, session_id):
+    @staticmethod
+    def _is_owned_private_session(username, session_id, session):
+        return (session is not None and session.session_id == session_id and session.creator == username
+                and session.platform_id == 'webchat' and session.is_group == 0)
+
+    async def _configured_persona(self, service, username, session_id, *, session=_PERSONA_SESSION_UNREAD):
         """Optional saved configuration metadata, never an LLM selection proof.
 
         The caller must first complete ChatService.get_session's owner check.
-        Re-read the official platform session before deriving its existing UMO.
+        Use the official platform session before deriving its existing UMO.
         No QQ alias, default-role guess or additional authorization is created.
         """
         unavailable = {'configured_id': None, 'display_name': None, 'status': 'unavailable'}
         try:
-            session = await service.db.get_platform_session_by_id(session_id)
-            if (session is None or session.session_id != session_id
-                    or session.platform_id != 'webchat' or session.creator != username
-                    or session.is_group != 0):
+            if session is _PERSONA_SESSION_UNREAD:
+                session = await service.db.get_platform_session_by_id(session_id)
+            if not self._is_owned_private_session(username, session_id, session):
                 return unavailable
             umo = build_webchat_unified_msg_origin(session)
             values = await sp.get_async(scope='umo', scope_id=umo,
@@ -2272,7 +2445,7 @@ class NativeChatWebApi:
                 life_references=await asyncio.to_thread(resolve_references,self,username,session,body.get('parts'))
                 typed_parts, projected = await asyncio.to_thread(expressions.user_parts,
                     preference_scope, body.get('parts'), message, references=references, attachments=attached,
-                    life_references=life_references)
+                    life_references=life_references, persona_name=persona.get('display_name'))
                 if not typed_parts and not files:
                     raise _RequestError('请添加文字、动作、表情或附件')
                 payload['message'] = projected

@@ -184,6 +184,23 @@ class LivingJournal:
                 (namespace,scope_key(private_scope(scope)),min(max(int(limit),1),1000)))
             return [dict(key=r['key'], **self._record(r)) for r in rows]
 
+    def list_revisions(self, namespace: str, scope: dict, *, limit=100) -> list[tuple[str, int]]:
+        """Return checkpoint revisions in the same order as a full list."""
+        with self._lock:
+            self._ensure_open()
+            rows = self._db.execute(
+                "SELECT key,revision FROM checkpoints WHERE namespace=? AND scope=? ORDER BY updated DESC,key LIMIT ?",
+                (namespace,scope_key(private_scope(scope)),min(max(int(limit),1),1000)))
+            return [(row['key'], row['revision']) for row in rows]
+
+    def companion_mode_records(self) -> list[dict]:
+        """Internal recovery of active App companionship leases in the bounded journal."""
+        with self._lock:
+            self._ensure_open()
+            rows = self._db.execute("SELECT scope,revision,updated,data FROM checkpoints "
+                "WHERE namespace=? AND key=?", ('tls.chat.companion_mode','mode')).fetchall()
+            return [dict(scope_hash=row['scope'], **self._record(row)) for row in rows]
+
     def ownership_records(self) -> list[dict]:
         """Internal coordinator recovery, not a cross-scope plugin read API.
 

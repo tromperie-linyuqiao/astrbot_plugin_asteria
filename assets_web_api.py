@@ -122,19 +122,24 @@ class NativeAssetsWebApi:
             raise PermissionError('native expression assets scope denied')
 
     @staticmethod
-    def _parse(name, data):
+    def _parse(name, data, *, administrative=False):
         if not isinstance(data, dict):
             raise _InvalidRequest('需要 JSON 对象')
         if name in {'list', 'detail', 'preview'}:
             extra = {'limit', 'offset', 'include_deleted'} if name == 'list' else (
                 {'id', 'include_deleted'} if name == 'detail' else {'id', 'expected_revision'})
+            if name == 'list' and administrative:
+                extra.add('q')
             if set(data) - set(SCOPE_FIELDS) - extra:
                 raise _InvalidRequest('图片查询含未知字段')
             scope = _scope({key: data.get(key) for key in SCOPE_FIELDS})
             if name == 'list':
-                return scope, dict(limit=_integer(data.get('limit', 25), 'limit', 1, 100),
+                options = dict(limit=_integer(data.get('limit', 25), 'limit', 1, 100),
                     offset=_integer(data.get('offset', 0), 'offset', 0, 256),
                     include_deleted=_deleted(data.get('include_deleted', False)))
+                if administrative:
+                    options['query'] = _text(data.get('q', ''), '搜索词', 120, blank=True).strip()
+                return scope, options
             result = dict(id=_identity(data.get('id')))
             if name == 'detail': result['include_deleted'] = _deleted(data.get('include_deleted', False))
             else: result['expected_revision'] = _integer(data.get('expected_revision'), 'expected_revision', 1, 2147483647)
@@ -173,7 +178,7 @@ class NativeAssetsWebApi:
         try:
             data = (dict(getattr(request, 'query', None) or {}) if name in {'list', 'detail', 'preview'}
                     else await request.json(default=None))
-            scope, values = self._parse(name, data)
+            scope, values = self._parse(name, data, administrative=administrative)
             resources = self._resources()
             def check():
                 if administrative:
@@ -192,6 +197,10 @@ class NativeAssetsWebApi:
                 # thread safe; its transaction checks must never be bypassed.
                 check()
                 if name == 'list':
+                    if administrative:
+                        limit = values['limit']
+                        rows = service.list(scope, **{**values, 'limit': limit + 1})
+                        return dict(records=[self._row(row) for row in rows[:limit]], has_more=len(rows) > limit)
                     return dict(records=[self._row(row) for row in service.list(scope, **values)])
                 if name == 'detail':
                     return dict(record=self._row(service.get(scope, values['id'], include_deleted=values['include_deleted'])))

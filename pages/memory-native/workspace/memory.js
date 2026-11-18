@@ -202,8 +202,8 @@ export async function openView(view, { preserveBucket = false } = {}) {
   const switchingWorkspaceView = wasWorkspace && state.activeView !== view;
   const scopedRailSwitch = switchingWorkspaceView && Boolean(scopedViewScope(state.activeView)) && Boolean(scopedViewScope(view));
   const enteringPersonalMemory = view === "review" && (!wasWorkspace || state.activeView !== "review");
-  const token = ++asteriaWorkspaceState.workspaceTransitionToken;
   if (wasWorkspace && state.activeView === view) return;
+  const token = ++asteriaWorkspaceState.workspaceTransitionToken;
   if (!wasWorkspace) {
     await playOverviewToWorkspace(view);
     if (token !== asteriaWorkspaceState.workspaceTransitionToken) return;
@@ -215,6 +215,7 @@ export async function openView(view, { preserveBucket = false } = {}) {
     if (token !== asteriaWorkspaceState.workspaceTransitionToken) return;
   }
   if (view !== "review") removeRailMountedScheduleFilm();
+  if (switchingWorkspaceView) clearDetail();
   state.personalEntranceRevealRequested = enteringPersonalMemory;
   state.activeView = view;
   syncNativeMemoryNavigation(view);
@@ -245,6 +246,7 @@ export async function openView(view, { preserveBucket = false } = {}) {
   const loading = loadActiveView();
   requestRailCoverflow();
   await loading;
+  if (token !== asteriaWorkspaceState.workspaceTransitionToken) return;
   if (!wasWorkspace) {
     app.offsetHeight;
     app.classList.add("is-workspace-ready", "is-workspace-settled");
@@ -267,6 +269,7 @@ export async function returnHome() {
   const cinemaMotion = state.overviewLayout === "cinema" && !prefersReducedMotion();
   asteriaWorkspaceState.homeReturnRunning = true;
   asteriaWorkspaceState.workspaceTransitionToken++;
+  clearDetail();
   $("#backHomeBtn").disabled = true;
   if (cinemaMotion) {
     refreshTransitionFace();
@@ -296,24 +299,31 @@ export async function returnHome() {
   asteriaWorkspaceState.homeReturnRunning = false;
 }
 
-export async function loadActiveView() {
+export async function loadActiveView({refreshPortraits = true} = {}) {
+  const view = state.activeView;
+  const bucket = state.activeBucketId;
+  const transition = asteriaWorkspaceState.workspaceTransitionToken;
+  const ticket = ++state.activeViewReadToken;
+  const current = () => ticket === state.activeViewReadToken && view === state.activeView
+    && bucket === state.activeBucketId && transition === asteriaWorkspaceState.workspaceTransitionToken;
   try {
-    if (state.activeView === "objects") {
+    if (view === "objects") {
       await loadContextPanel();
-    } else if (state.activeView === "film") {
-      await loadScopedMemories("#groupMemoryList", "group", "正在读取群聊记忆...", "还没有群聊范围内的记忆。");
-    } else if (state.activeView === "microscope") {
+    } else if (view === "film") {
+      await loadScopedMemories("#groupMemoryList", "group", "正在读取群聊记忆...", "还没有群聊范围内的记忆。", current);
+    } else if (view === "microscope") {
       applyMicroscopeView();
-    } else if (state.activeView === "relations") {
-      await loadUserMemory();
-    } else if (state.activeView === "review") {
+    } else if (view === "relations") {
+      await loadUserMemory(current, refreshPortraits);
+    } else if (view === "review") {
       await loadPersonalMemory();
-    } else if (state.activeView === "maintain") {
-      await loadScopedMemories("#privateMemoryList", "private", "正在读取私聊记忆...", "还没有私聊范围内的记忆。");
-    } else if (state.activeView === "archive") {
+    } else if (view === "maintain") {
+      await loadScopedMemories("#privateMemoryList", "private", "正在读取私聊记忆...", "还没有私聊范围内的记忆。", current);
+    } else if (view === "archive") {
       await loadArchive();
     }
   } catch (error) {
+    if (!current()) return;
     renderViewError(error);
     showToast(error.message || "读取失败", "error");
   }
@@ -446,10 +456,7 @@ export function renderMemoryList(selector, memories, emptyText, windowLimit = 12
   target.className = "row-list memory-browser";
   let page = 0;
   const filter = {status: "", source: "", order: "recent"};
-  const openMemory = async (id) => {
-    await showMemory(id);
-    if (state.activeMemoryId === id) $("#detailDrawer").scrollIntoView({block: "start"});
-  };
+  const openMemory = (row) => showMemory(row.dataset.memoryId, row);
   const sources = [...new Set(memories.map(item => item.source_plugin || ""))];
   const statuses = [...new Set(memories.map(item => item.validity_status || ""))];
   target.innerHTML = `<div class="memory-browser-tools">
@@ -459,7 +466,7 @@ export function renderMemoryList(selector, memories, emptyText, windowLimit = 12
       <label>来源<select data-memory-filter="source"><option value="">全部来源</option>${sources.filter(Boolean).map(value => memoryOption(value, value, "")).join("")}</select></label>
       <label>顺序<select data-memory-filter="order"><option value="recent">最近在前</option><option value="oldest">较早在前</option><option value="importance">重要度优先</option></select></label>
     </div>
-    <p class="memory-browser-count" role="status"></p>
+    <p class="memory-browser-count" role="status" tabindex="-1"></p>
   </div><div class="memory-browser-rows"></div><nav class="memory-browser-pages" aria-label="本批记忆分页"></nav>`;
   const render = () => {
     let rows = memories.filter(item => (!filter.status || item.validity_status === filter.status) && (!filter.source || item.source_plugin === filter.source));
@@ -480,13 +487,21 @@ export function renderMemoryList(selector, memories, emptyText, windowLimit = 12
   };
   target.onclick = (event) => {
     const button = event.target.closest("[data-memory-page]");
-    if (button && target.contains(button)) { page += button.dataset.memoryPage === "next" ? 1 : -1; render(); target.querySelector(".memory-browser-count").scrollIntoView({block: "nearest"}); return; }
+    if (button && target.contains(button)) {
+      page += button.dataset.memoryPage === "next" ? 1 : -1;
+      render();
+      const count = target.querySelector(".memory-browser-count");
+      count.focus({preventScroll: true});
+      count.scrollIntoView({block: "nearest"});
+      return;
+    }
     const row = event.target.closest("[data-memory-id]");
-    if (row && target.contains(row)) openMemory(row.dataset.memoryId);
+    if (row && target.contains(row)) openMemory(row);
   };
   target.onkeydown = (event) => {
     if (!["Enter", " "].includes(event.key) || !event.target.matches("[data-memory-id]")) return;
-    event.preventDefault(); openMemory(event.target.dataset.memoryId);
+    event.preventDefault();
+    openMemory(event.target);
   };
   render();
 }
@@ -515,21 +530,25 @@ export async function selectUserMemoryFilter(filter) {
   const allowed = new Set(['all', 'profile', 'preference', 'relationship', 'explicit', 'private']);
   state.userMemoryFilter = allowed.has(filter) ? filter : 'all';
   syncUserMemoryFilterControls();
-  if (state.activeView === 'relations') await loadUserMemory();
+  if (state.activeView === 'relations') {
+    clearDetail();
+    await loadActiveView({refreshPortraits: false});
+  }
 }
 
-export async function loadScopedMemories(selector, scope, loadingText, emptyText, extra = {}) {
+export async function loadScopedMemories(selector, scope, loadingText, emptyText, current) {
   const target = $(selector);
   if (!target) return;
   target.className = "row-list";
   target.innerHTML = loadingState(loadingText);
-  const { params, incompatible } = scopedMemoryParams(scope, { limit: 120, ...extra });
+  const { params, incompatible } = scopedMemoryParams(scope, { limit: 120 });
   if (incompatible) {
     const label = scope === "group" ? "群聊" : "私聊";
     target.innerHTML = `<div class="empty-state">当前观察对象不属于${escapeHtml(label)}范围。请选择${escapeHtml(label)}对象或切回全部。</div>`;
     return;
   }
   const data = await apiGet(`/memories?${params.toString()}`);
+  if (!current()) return;
   renderMemoryList(selector, data.memories || [], emptyText);
 }
 

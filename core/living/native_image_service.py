@@ -36,6 +36,11 @@ _TASK = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.:-]{0,127}\Z')
 _NAI = re.compile(r'^(?:novelai/)?nai-diffusion(?:-|$)', re.I)
 _MAX_IMAGE = 10 * 1024 * 1024
 _MAX_RESPONSE = 16 * 1024 * 1024
+UNKNOWN_IMAGE_REASONS = frozenset({
+    'provider_timeout', 'provider_server_error', 'provider_response_unsupported',
+    'provider_response_invalid', 'provider_image_unreadable', 'provider_image_download_failed',
+    'transport_outcome_unknown',
+})
 _SCENES = {
     'care': 'Quiet supportive company, calm attentive expression, comfortable everyday surroundings.',
     'night': 'Quiet evening company, subdued lighting, relaxed portrait, restful atmosphere.',
@@ -150,6 +155,10 @@ class ImageTransportFailure(Exception):
         super().__init__('image_transport_definite' if definite else 'image_transport_unknown')
 
 
+class _ImagePayloadError(ValueError):
+    """A fixed diagnostic, never the response body or returned URL."""
+
+
 class _PublicResolver(aiohttp.abc.AbstractResolver):
     def __init__(self):
         self._resolver = aiohttp.resolver.ThreadedResolver()
@@ -183,7 +192,9 @@ class _AioHTTPTransport:
                     return ImageHTTPResponse(response.status, b''.join(chunks))
         except aiohttp.ClientConnectorError:
             raise ImageTransportFailure(definite=True) from None
-        except (aiohttp.ClientError, TimeoutError):
+        except TimeoutError:
+            raise TimeoutError('image_transport_timeout') from None
+        except aiohttp.ClientError:
             raise ImageTransportFailure() from None
         finally:
             # aiohttp marks an explicitly provided resolver as not connector-
@@ -282,26 +293,30 @@ class NativeImageService:
 
     async def _image_bytes(self, response):
         if not isinstance(response, ImageHTTPResponse) or type(response.status) is not int or not isinstance(response.body, bytes):
-            raise ValueError('invalid_response')
-        if len(response.body) > _MAX_RESPONSE: raise ValueError('response_too_large')
-        data = json.loads(response.body)
+            raise _ImagePayloadError('provider_response_invalid')
+        if len(response.body) > _MAX_RESPONSE: raise _ImagePayloadError('provider_response_invalid')
+        try: data = json.loads(response.body)
+        except (ValueError, UnicodeError): raise _ImagePayloadError('provider_response_invalid') from None
         items = data.get('data') if isinstance(data, dict) else None
         if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
-            raise ValueError('single_image_required')
+            raise _ImagePayloadError('provider_response_invalid')
         item = items[0]; encoded = item.get('b64_json'); url = item.get('url')
-        if bool(encoded) == bool(url): raise ValueError('single_image_source_required')
+        if bool(encoded) == bool(url): raise _ImagePayloadError('provider_response_invalid')
         if encoded:
             if not isinstance(encoded, str) or len(encoded) > (_MAX_IMAGE + 2) // 3 * 4:
-                raise ValueError('image_too_large')
+                raise _ImagePayloadError('provider_image_unreadable')
             try: content = base64.b64decode(encoded, validate=True)
-            except (ValueError, binascii.Error): raise ValueError('invalid_image_base64') from None
+            except (ValueError, binascii.Error): raise _ImagePayloadError('provider_image_unreadable') from None
         else:
-            target = _image_url(url, download=True)
-            reply = await self._transport.download(target, timeout=self.config.timeout_seconds, max_bytes=_MAX_IMAGE)
+            try:
+                target = _image_url(url, download=True)
+                reply = await self._transport.download(target, timeout=self.config.timeout_seconds, max_bytes=_MAX_IMAGE)
+            except (ValueError, ImageTransportFailure, TimeoutError):
+                raise _ImagePayloadError('provider_image_download_failed') from None
             if (not isinstance(reply, ImageHTTPResponse) or reply.status != 200
-                    or not isinstance(reply.body, bytes)): raise ValueError('image_download_failed')
+                    or not isinstance(reply.body, bytes)): raise _ImagePayloadError('provider_image_download_failed')
             content = reply.body
-        if not 1 <= len(content) <= _MAX_IMAGE: raise ValueError('image_too_large')
+        if not 1 <= len(content) <= _MAX_IMAGE: raise _ImagePayloadError('provider_image_unreadable')
         try:
             with Image.open(BytesIO(content)) as picture:
                 fmt = picture.format
@@ -309,7 +324,7 @@ class NativeImageService:
                         or not all(1 <= n <= 4096 for n in picture.size)
                         or picture.width * picture.height > 16777216): raise ValueError
                 picture.verify()
-        except Exception: raise ValueError('invalid_image') from None
+        except Exception: raise _ImagePayloadError('provider_image_unreadable') from None
         return content, {'PNG': '.png', 'JPEG': '.jpg', 'WEBP': '.webp'}[fmt]
 
     async def generate(self, scope, task_id, topic, *, explicit_sexual=False, scene_description='', request_authorize=None):
@@ -364,11 +379,15 @@ class NativeImageService:
                 headers={'Authorization': 'Bearer ' + self.config.api_key, 'Content-Type': 'application/json'},
                 payload=payload, timeout=self.config.timeout_seconds, max_bytes=_MAX_RESPONSE)
             if not isinstance(response, ImageHTTPResponse) or type(response.status) is not int:
-                raise ValueError('invalid_response')
+                raise _ImagePayloadError('provider_response_invalid')
             if 400 <= response.status < 500 and response.status != 408:
-                self._finish(ref, 'definite_failure', 'provider_rejected')
-                return self._result(ref, 'definite_failure', 'provider_rejected')
-            if response.status != 200: raise ValueError('provider_outcome_unknown')
+                reason = {401: 'provider_authentication', 403: 'provider_access_denied',
+                          429: 'provider_rate_limited'}.get(response.status, 'provider_rejected')
+                self._finish(ref, 'definite_failure', reason)
+                return self._result(ref, 'definite_failure', reason)
+            if response.status == 408: raise _ImagePayloadError('provider_timeout')
+            if response.status >= 500: raise _ImagePayloadError('provider_server_error')
+            if response.status != 200: raise _ImagePayloadError('provider_response_unsupported')
             generation_accepted = True
             content, suffix = await self._image_bytes(response)
             if not allowed():
@@ -395,6 +414,10 @@ class NativeImageService:
         except asyncio.CancelledError:
             self._finish(ref, 'unknown', 'cancelled')
             raise
+        except (_ImagePayloadError, TimeoutError) as error:
+            reason = str(error) if isinstance(error, _ImagePayloadError) else 'provider_timeout'
+            self._finish(ref, 'unknown', reason)
+            return self._result(ref, 'unknown', reason)
         except ImageTransportFailure as error:
             definite = error.definite and not generation_accepted
             state = 'definite_failure' if definite else 'unknown'

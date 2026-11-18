@@ -19,8 +19,10 @@
   const title = record => record?.fields?.name || record?.fields?.title || record?.id || '未命名记录';
   const pending = new Map();
   let scope = null, kind = 'space', selected = null, records = [], total = 0, offset = 0, serial = 0, busy = false;
-  let listState = 'unread', queuedSection = null, historyView = null;
+  let listState = 'unread', queuedNavigation = null, linkedListRead = null, historyView = null;
+  let catalogOrigin = null;
   let overview = null, draft = null, lifeReference = null, actionControls = null, refs = {space:[], interest:[], event:[], character:[]};
+  const unconfirmedSummary = new Set();
   let review = null, reviewTotal = null, picker = {type:'music',sources:[],source:null,records:[],total:0,offset:0,selected:null};
   root.innerHTML = `<section class="panel personal-space"><div class="panel-head"><div><p class="ps-eyebrow">角色的生活一隅</p><h2>个人空间与兴趣</h2><p class="hint">整理她居住的地方、留下的物件，以及愿意继续了解的事。</p></div><button type="button" data-ps-refresh>刷新与核对</button></div><p class="ps-boundary">这里保存角色的虚构生活。泰拉正典、现实公开资料、原创虚构与模型推测分别标明来源；收藏不会证明真实听过、读过或到访。</p><p data-ps-status class="ps-status" role="status" aria-live="polite"></p><div data-ps-counts class="ps-counts"></div><section data-ps-decision class="ps-decision" aria-label="生活选择预览"></section><div class="ps-tabs" role="tablist" aria-label="个人生活资料">${Object.entries(labels).map(([id,label]) => `<button type="button" role="tab" id="ps-tab-${id}" aria-controls="ps-records" data-ps-tab="${id}" aria-selected="false">${label}</button>`).join('')}</div><section id="ps-records" role="tabpanel"><form data-ps-search class="ps-toolbar"><label>查找<input data-ps-query type="search" maxlength="200" placeholder="名称、说明或兴趣关键词"></label><button type="submit">搜索</button><button type="button" data-ps-new class="primary">新增私人空间</button><div class="ps-filters"><label><input type="checkbox" data-ps-archived>含归档与已删除</label><label><input type="checkbox" data-ps-invalid>含待复核</label></div></form><div class="ps-columns"><section class="ps-catalog" aria-label="资料列表"><div data-ps-list></div><div class="actions ps-pager"><button type="button" data-ps-prev>上一页</button><span data-ps-range></span><button type="button" data-ps-next>下一页</button></div></section><aside class="ps-side"><section data-ps-detail class="ps-detail" aria-label="资料详情"></section><section data-ps-reference class="ps-reference" hidden aria-label="关联生活资料"></section><section data-ps-editor class="ps-editor" hidden aria-label="独立资料编辑器"><div class="panel-head"><h3 data-ps-editor-title></h3><button data-ps-cancel type="button">取消编辑</button></div><p data-ps-editor-identity class="hint"></p><form data-ps-form><div data-ps-fields class="ps-edit-grid"></div><label data-ps-reason-wrap>维护原因<input data-ps-reason maxlength="400"></label><div class="actions"><button class="primary" type="submit">保存并回读</button></div></form><p class="hint ps-edit-note">保存会保留历史版本与来源。切换右侧详情不会改变当前编辑对象。</p></section></aside></div></section><div class="actions"><button data-ps-release type="button" hidden>已核对，结束本次等待</button></div></section>`;
   const $ = name => root.querySelector('[data-ps-' + name + ']');
@@ -54,6 +56,13 @@
   }
   const same = target => key(target) === key(scope) && key(target) === key(currentScope());
   const action = (parent, label, callback, className = '') => {const button = node('button', label, className); button.type = 'button'; button.addEventListener('click', callback); parent.append(button); return button;};
+  const revisionPanel = node('div',undefined,'ps-maintenance-copy'), revisionStatus = node('p');
+  revisionStatus.setAttribute('role','status');
+  const latestButton = action(revisionPanel,'核对最新版本',readDraftRevision);
+  const revisionChoices = node('div',undefined,'actions');
+  const acceptLatest = action(revisionChoices,'采用服务器的冲突字段',()=>resolveDraftRevision(true));
+  const keepDraft = action(revisionChoices,'保留我的冲突修改',()=>resolveDraftRevision(false));
+  revisionPanel.prepend(revisionStatus);revisionPanel.append(revisionChoices);$('form').before(revisionPanel);
   function controls() {
     const uncertain = pending.has(key(scope)), blocked = busy || !scope || uncertain;
     for (const element of root.querySelectorAll('input,select,textarea,button')) element.disabled = blocked;
@@ -65,6 +74,13 @@
     $('next').disabled = busy || !scope || offset + records.length >= total;
     $('release').hidden = !uncertain;
     $('release').disabled = busy || !pending.get(key(scope))?.checked;
+    const hasConflicts = !!draft?.conflicts?.length;
+    $('form').querySelector('[type=submit]').disabled = blocked || draft?.needsRead === true || draft?.needsRevision === true || hasConflicts;
+    revisionPanel.hidden = !draft?.revisionStatus;
+    revisionStatus.textContent = draft?.revisionStatus || '';
+    latestButton.hidden = draft?.needsRevision !== true;
+    revisionChoices.hidden = !hasConflicts;
+    latestButton.disabled = acceptLatest.disabled = keepDraft.disabled = blocked;
     for (const element of root.querySelectorAll('[data-ps-immutable]')) element.disabled = true;
     for (const element of root.querySelectorAll('[data-ps-resource-read]')) element.disabled = busy || !scope;
     $('resource-prev').disabled = busy || !scope || !picker.source || picker.offset === 0;
@@ -107,6 +123,8 @@
   function drawVisual() {
     const parent=$('visual');parent.replaceChildren();const data=overview?.visual;
     if(listState==='error')parent.append(node('p',data?'本次未能读取，以下画卷来自上次读取；当前资料尚未确认。':'未能读取当前私人档案，不能据此判断没有资料。','ps-warning'));
+    else if(unconfirmedSummary.has('overview'))parent.append(node('p',data?'生活画卷暂时未能更新。以下是当前会话上次读取的画卷。':'生活画卷暂时不可用。仍可进入“资料维护”浏览已读取的记录。','ps-warning'));
+    if(!data&&unconfirmedSummary.has('overview'))return;
     if(!data){parent.append(node('p',scope?'读取资料后，空间、收藏与兴趣会在这里连起来。':'请先选择上方的角色与会话。','empty'));return;}
     const head=node('div',undefined,'ps-visual-heading');head.append(node('div','私人数字档案','ps-eyebrow'),node('h3','把生活中留下的东西，放在一起'));
     head.append(node('p',data.last_updated_at?'最近资料更新 · '+stamp(data.last_updated_at):'尚未建立私人资料，可以从一个空间或一项明确的收藏开始。','hint'));parent.append(head);
@@ -157,6 +175,7 @@
     const header = node('div', undefined, 'ps-decision-head'); header.append(node('h3', '下一步，想把时间留给什么'));
     action(header, '重新预览', preview).dataset.psPreview = 'true'; parent.append(header);
     parent.append(node('p', '只读取当前资料并按规则预览；不会调用模型、推进剧情、保存经历或发送消息。', 'hint'));
+    if(decision===overview?.decision&&unconfirmedSummary.has('overview'))parent.append(node('p',decision?'以下是当前会话上次读取的生活选择。':'生活选择暂时不可用，可单独重新预览。','hint'));
     if (!decision) {parent.append(node('p', scope ? '读取当前资料后显示生活选择。' : '选定会话后，查看她已有的兴趣与可做的事。', 'ps-decision-copy')); return;}
     const reason = decision.reason_label || decision.explanation || decision.reason || decision.message;
     const choice = decision.choice || decision.selected || decision.candidate;
@@ -184,11 +203,46 @@
     }
     if (!reason && !choice && !candidates.length) parent.append(node('p', '当前没有适合继续的候选，可以留出一段平静的时间。', 'ps-decision-copy'));
   }
+  function currentCatalog(origin) {
+    return catalogOrigin === origin && origin.scope === key(scope)
+      && origin.tab === kind && displayMode === 'catalog' && !root.closest('[hidden]');
+  }
+  function catalogButton(origin) {
+    return [...$('list').querySelectorAll('.ps-card')].find(card =>
+      card.dataset.recordId === origin.id && card.dataset.recordKind === origin.recordKind);
+  }
+  function returnToCatalog(origin) {
+    if (!currentCatalog(origin)) return;
+    const target = catalogButton(origin) || $('query');
+    target.focus({preventScroll:true});
+    target.scrollIntoView({block:'nearest'});
+  }
+  async function openCatalogRecord(record, event) {
+    const opener = event.currentTarget;
+    const origin = {scope:key(scope),tab:kind,id:record.id,recordKind:kind === 'review' ? record.kind : kind};
+    catalogOrigin = origin;
+    const opened = kind === 'review'
+      ? await openReview(origin.recordKind, origin.id)
+      : await openRecord(origin.recordKind, origin.id);
+    if (!currentCatalog(origin) || ![document.body, opener].includes(document.activeElement)) return;
+    const narrow = global.matchMedia('(max-width: 680px)').matches;
+    const heading = opened && $('record-title');
+    if (!heading || (!narrow && event.detail !== 0)) {
+      catalogButton(origin)?.focus({preventScroll:true});
+      return;
+    }
+    heading.focus({preventScroll:true});
+    (narrow ? $('detail') : heading).scrollIntoView({block:narrow ? 'start' : 'nearest'});
+  }
+
   function drawList() {
     const parent = $('list'); parent.replaceChildren();
-    if(listState==='error')parent.append(node('p',records.length?'本次未能读取，以下是上次已读取的记录；当前资料尚未确认。':'未能读取当前资料，不能据此判断没有记录。请查看上方错误并手动刷新。','ps-warning'));
+    if(listState==='error')parent.append(node('p',records.length?'本次未能读取，以下是上次已读取的记录；当前资料尚未确认。':'未能读取当前资料列表，请使用上方的刷新按钮重试。','ps-warning'));
     for (const record of records) {
-      const f = record.fields || {}, card = action(parent, '', () => kind === 'review' ? openReview(record.kind,record.id) : openRecord(kind, record.id), 'ps-card'); card.dataset.psRead = 'true';
+      const f = record.fields || {}, card = action(parent, '', event => openCatalogRecord(record, event), 'ps-card');
+      card.dataset.psRead = 'true';
+      card.dataset.recordId = record.id;
+      card.dataset.recordKind = kind === 'review' ? record.kind : kind;
       card.dataset.selected = String(selected?.id === record.id && selected?.kind === (kind==='review'?record.kind:kind));
       const badge = node('span', record.deleted ? '已删除' : record.archived ? '已归档' : record.valid === false ? '待复核' : statusLabels[f.status] || (kind === 'exploration' ? sourceLabels[f.source_kind] || '虚构探索' : '虚构生活'), 'ps-badge');
       card.append(badge, node('strong', title(record)));
@@ -267,7 +321,7 @@
       const result=await call('GET','personal/resources',{...target,resource_type:picker.type,source_scope:JSON.stringify(source),query:$('resource-query').value.trim(),limit:12,offset:picker.offset},target);
       if(token!==serial||!same(target))return;picker.records=result.records||[];picker.total=result.total??picker.records.length;drawResourceList();
     }catch(error){if(token===serial&&same(target)){picker.records=[];picker.total=0;drawResourceList();message(error.publicMessage||error.message,true);}}
-    finally{if(token===serial&&same(target)){busy=false;controls();drainSection();}}
+    finally{if(token===serial&&same(target)){busy=false;controls();drainNavigation();}}
   }
   function openPicker() {
     if(busy||!scope||pending.has(key(scope)))return;
@@ -296,9 +350,9 @@
     if(busy||!scope||!labels[recordKind])return;
     const target={...scope},token=++serial;busy=true;controls();
     try{const result=await call('GET','personal/review-preview',{...target,kind:recordKind,id},target);if(token!==serial||!same(target))return;
-      review={...result,scope:target,kind:recordKind,id};selected={...result.record,kind:recordKind};if(draft?.reviewToken){draft.reviewToken=null;$('form').querySelector('[type=submit]').hidden=false;$('reason-wrap').hidden=false;}$('review-confirmed').checked=false;$('review-edit').checked=false;$('review-reason').value='';drawDetail();drawReview();
+      review={...result,scope:target,kind:recordKind,id};selected={...result.record,kind:recordKind};if(draft?.reviewToken){draft.reviewToken=null;$('form').querySelector('[type=submit]').hidden=false;$('reason-wrap').hidden=false;}$('review-confirmed').checked=false;$('review-edit').checked=false;$('review-reason').value='';drawDetail();drawReview();return true;
     }catch(error){if(token===serial&&same(target)){review=null;drawReview();message(error.publicMessage||error.message,true);}}
-    finally{if(token===serial&&same(target)){busy=false;controls();drainSection();}}
+    finally{if(token===serial&&same(target)){busy=false;controls();drainNavigation();}}
   }
   function readFailed(error){listState='error';archiveState.textContent='本次档案读取未完成，不能按空资料处理；请手动刷新。';drawList();drawVisual();message(error.publicMessage||error.message,true);}
   async function loadReviews() {
@@ -308,7 +362,7 @@
       listState='ready';records=result.records||[];total=result.total??records.length;reviewTotal=total;if(overview)overview.review_count=total;if(pending.has(key(target)))pending.get(key(target)).checked=true;
       selected=null;review=null;drawCounts();drawList();drawDetail();drawReview();message(pending.has(key(target))?'已回读待复核资料，请先核对原操作是否生效。':'已读取需要人工核对的来源关联；没有自动确认或重写。');
     }catch(error){if(token===serial&&same(target))readFailed(error);}
-    finally{if(token===serial&&same(target)){busy=false;controls();drainSection();}}
+    finally{if(token===serial&&same(target)){busy=false;controls();drainNavigation();}}
   }
   function sourceDetails(parent, record) {
     const section = node('section', undefined, 'ps-provenance');
@@ -332,51 +386,68 @@
     if (!sources.length && record.kind === 'exploration') section.append(node('p', '尚未附上外部资料；已标注的内容依据仍需按来源核对。', 'hint'));
     parent.append(section);
   }
-function startHistory(data,host,recordKind,record){
- const rows=Array.isArray(data)?data:data?.records||data?.history||[];
- const paged=Number.isSafeInteger(data?.current_revision)&&Number.isSafeInteger(data?.offset)&&Number.isSafeInteger(data?.limit)&&Number.isSafeInteger(data?.total);
- historyView={host,kind:recordKind,id:record.id,rows,paged,revision:data?.current_revision,total:data?.total??rows.length,next:paged?data.offset+data.limit:rows.length,loading:false,error:'',stale:paged&&data.current_revision!==record.revision};
- paintHistory(historyView);
+function startHistory(versions,host,recordKind,record){
+ const view={host,kind:recordKind,id:record.id,recordRevision:record.revision,rows:[],paged:false,loaded:false,loading:false,error:'',stale:false};
+ historyView=view;paintHistory(view);
+ versions.addEventListener('toggle',()=>{
+  if(versions.open&&historyView===view&&!view.loaded&&!view.error&&!view.stale)void loadHistory(true);
+ });
 }
 function paintHistory(view){
  const host=view.host,opened=new Set([...host.querySelectorAll('[data-history-row][open]')].map(row=>row.dataset.historyRow));host.replaceChildren();
- host.append(node('p',view.paged?'已显示 '+view.rows.length+' / '+view.total+' 条旧版本 · 基于修订 '+view.revision:'已显示 '+view.rows.length+' 条旧版本；当前服务未提供分页信息，不能确认已读取全部历史。','hint'));
+ host.setAttribute('aria-busy',String(view.loading));
+ if(view.loaded)host.append(node('p',view.paged?'已显示 '+view.rows.length+' / '+view.total+' 条旧版本 · 基于修订 '+view.revision:'已显示 '+view.rows.length+' 条旧版本；当前服务未提供分页信息，不能确认已读取全部历史。','hint'));
  for(const row of view.rows){
   const entry=node('details');entry.dataset.historyRow=String(row.revision??row.version);entry.open=opened.has(entry.dataset.historyRow);
   entry.append(node('summary','版本 '+(row.version??row.revision??'')+' · '+stamp(row.replaced_at||row.at||row.updated_at)),node('p',row.reason||'资料维护','hint'));
   const old=row.snapshot?.fields||row.fields;if(old){const values=node('dl',undefined,'ps-facts');for(const name of ['name','description','status','goal','findings','questions','explored'])fact(values,fieldLabels[name],statusLabels[old[name]]||old[name]);entry.append(values);}
   host.append(entry);
  }
- if(!view.rows.length)host.append(node('p','尚无可显示的修正记录。','hint'));
- if(view.stale)host.append(node('p','资料已发生修正；已读历史保留，请从最新版本重新读取后继续。','ps-warning'));
+ if(view.loaded&&!view.rows.length)host.append(node('p','尚无可显示的修正记录。','hint'));
+ if(view.stale)host.append(node('p','资料已发生修正；请刷新资料详情后再读取历史。','ps-warning'));
  if(view.error)host.append(node('p',view.error+' 已读历史和编辑草稿保留。','ps-warning'));
  const actions=node('div',undefined,'actions');
  if(view.paged&&!view.stale&&view.next<view.total)action(actions,'查看更多旧版本',()=>loadHistory(false));
- if(view.stale||view.error||!view.paged)action(actions,'从最新版本重新读取',()=>loadHistory(true));
+ if(view.stale)action(actions,'刷新资料详情',()=>openRecord(view.kind,view.id));
+ else if(view.error||view.loaded&&!view.paged)action(actions,'从最新版本重新读取',()=>loadHistory(true));
+ else if(!view.loaded&&!view.loading)action(actions,'读取修正历史',()=>loadHistory(true));
  for(const button of actions.querySelectorAll('button')){button.dataset.historyRead='true';button.disabled=view.loading||busy||!scope;}
  if(view.loading)actions.append(node('span','正在读取旧版本…','hint'));host.append(actions);
 }
 async function loadHistory(reset){
  const view=historyView;if(busy||!scope||!view||view.loading||!view.host.isConnected)return;
- const target={...scope},token=serial,requestedOffset=reset?0:view.next;
+ const target={...scope},requestedOffset=reset?0:view.next;
  const query={...target,kind:view.kind,id:view.id,limit:20,offset:requestedOffset};if(!reset)query.expected_revision=view.revision;
  view.loading=true;view.error='';paintHistory(view);
- const current=()=>historyView===view&&token===serial&&same(target)&&selected?.id===view.id&&view.host.isConnected;
+ const current=()=>historyView===view&&same(target)&&selected?.id===view.id&&selected?.kind===view.kind&&view.host.isConnected;
  try{
   const result=await call('GET','personal/history',query,target);if(!current())return;
   const paged=Number.isSafeInteger(result?.current_revision)&&Number.isSafeInteger(result?.offset)&&Number.isSafeInteger(result?.limit)&&Number.isSafeInteger(result?.total);
+  if(paged&&result.current_revision!==view.recordRevision){view.stale=true;return;}
   if(!Array.isArray(result?.records)||!reset&&(!paged||result.offset!==requestedOffset||result.current_revision!==view.revision))throw Error('历史分页未对应当前记录，请重新读取。');
   if(paged&&(result.offset!==requestedOffset||result.limit!==20))throw Error('历史分页范围不匹配。');
-  view.rows=reset?result.records:view.rows.concat(result.records);view.paged=paged;view.revision=result.current_revision;view.total=result.total??view.rows.length;view.next=paged?result.offset+result.limit:view.rows.length;view.stale=false;
- }catch(error){if(current()){view.stale=Number(error.status)===409;view.error=view.stale?'翻页期间资料发生了变化。':error.publicMessage||error.message;}}
+  view.rows=reset?result.records:view.rows.concat(result.records);view.loaded=true;view.paged=paged;view.revision=result.current_revision;view.total=result.total??view.rows.length;view.next=paged?result.offset+result.limit:view.rows.length;view.stale=false;
+ }catch(error){if(current()){view.stale=Number(error.status)===409;if(!view.stale)view.error=error.publicMessage||error.message;}}
  finally{if(current()){view.loading=false;paintHistory(view);}}
 }
 
-  function drawDetail(history = []) {
-    const parent = $('detail'); parent.replaceChildren();
+  function drawDetail() {
+    const parent = $('detail'); parent.replaceChildren(); historyView = null;
     if (!selected) {parent.append(node('p', '选择一项，查看她的生活细节、关联和修正历史。', 'empty')); return;}
     const record = selected, f = record.fields || {}, recordKind = record.kind || kind;
-    parent.append(node('p', labels[recordKind] + ' · 虚构角色生活', 'ps-eyebrow'), node('h3', title(record)), node('p', '修订 ' + record.revision + ' · ' + stamp(record.updated_at), 'hint'));
+    const origin = catalogOrigin;
+    if (origin && currentCatalog(origin) && origin.id === record.id && origin.recordKind === recordKind) {
+      const back = action(parent, '返回资料列表', () => returnToCatalog(origin), 'ps-detail-return');
+      back.dataset.psRead = 'true';
+    }
+    const heading = node('h3', title(record));
+    heading.tabIndex = -1;
+    heading.dataset.psRecordTitle = 'true';
+    parent.append(node('p', labels[recordKind] + ' · 虚构角色生活', 'ps-eyebrow'), heading, node('p', '修订 ' + record.revision + ' · ' + stamp(record.updated_at), 'hint'));
+    if(record.readError){
+      parent.append(node('p','本次未能确认详情，以下是上次读取。重新读取成功后才能维护这条记录。','ps-warning'));
+      action(parent,'重新读取这条记录',()=>openRecord(recordKind,record.id)).dataset.psRead='true';
+    }
     if (record.deleted) parent.append(node('p', '此记录已软删除，保留版本历史。恢复后仍需核对关联来源。', 'ps-warning'));
     else if (record.archived) parent.append(node('p', '此记录已归档，不进入普通生活选择。', 'hint'));
     if (record.valid === false) parent.append(node('p', '关联待复核：' + (Array.isArray(record.invalid_reasons) ? record.invalid_reasons.join('；') : '来源或关联版本已变化。'), 'ps-warning'));
@@ -397,12 +468,14 @@ async function loadHistory(reset){
       action(parent, '打开' + categoryLabels[f.category] + '资料库核对', () => typeof setView === 'function' && setView(f.category === 'music' ? 'music_library' : 'assets')).dataset.psRead = 'true';
     }
     const actions = node('div', undefined, 'actions');
-    if (!record.deleted) action(actions, '编辑' + labels[recordKind], () => editor(recordKind, record));
+    if (!record.readError && !record.deleted) action(actions, '编辑' + labels[recordKind], () => editor(recordKind, record));
     if (record.valid === false) action(actions,'查看关联变化与复核',()=>openReview(recordKind,record.id)).dataset.psRead='true';
-    action(actions, record.deleted ? '恢复已删除记录' : record.archived ? '恢复归档' : '归档', () => maintenance(record.deleted || record.archived ? 'restore' : 'archive', record));
-    if (!record.deleted) action(actions, '软删除', () => maintenance('delete', record), 'danger');
-    parent.append(actions);
-    if(['interest','exploration'].includes(recordKind)&&!record.deleted&&!record.archived&&record.valid!==false&&['active','planned','paused'].includes(f.status)&&Number.isSafeInteger(actionControls?.revision)){
+    if(!record.readError){
+      action(actions, record.deleted ? '恢复已删除记录' : record.archived ? '恢复归档' : '归档', () => maintenance(record.deleted || record.archived ? 'restore' : 'archive', record));
+      if (!record.deleted) action(actions, '软删除', () => maintenance('delete', record), 'danger');
+    }
+    if(actions.children.length)parent.append(actions);
+    if(!record.readError&&['interest','exploration'].includes(recordKind)&&!record.deleted&&!record.archived&&record.valid!==false&&['active','planned','paused'].includes(f.status)&&Number.isSafeInteger(actionControls?.revision)){
       const deferred=(actionControls.deferred||[]).find(row=>row.kind===recordKind&&row.id===record.id&&row.active!==false&&row.valid!==false&&!row.stale&&row.until>Date.now()/1000);
       if(deferred)parent.append(node('p','暂缓至 '+stamp(deferred.until)+'，仍保留已有发现和来源。','hint'));
       const resume=!!deferred||f.status==='paused';
@@ -410,7 +483,7 @@ async function loadHistory(reset){
     }
     const versions = node('details', undefined, 'ps-history'); versions.append(node('summary', '修正历史与记录编号'));
     versions.append(node('code', record.id));
-    const host=node('div');versions.append(host);parent.append(versions);startHistory(history,host,recordKind,record);controls();
+    const host=node('div');versions.append(host);parent.append(versions);startHistory(versions,host,recordKind,record);controls();
   }
   async function openLife(refKind, id) {
     if (busy || !scope) return;
@@ -425,57 +498,128 @@ async function loadHistory(reset){
       parent.append(node('p', '虚构生活档案 · ' + record.id, 'hint'));
       if (typeof global.TLSAutonomousLifePanel?.openRecord === 'function') action(parent, '在生活档案中维护', () => {setView('autonomous_life'); global.TLSAutonomousLifePanel.openRecord(refKind, id);}).dataset.psRead = 'true';
     } catch (error) {if (token === serial && same(target)) message(error.publicMessage || error.message, true);}
-    finally {if (token === serial && same(target)) {busy = false; controls();drainSection();}}
+    finally {if (token === serial && same(target)) {busy = false; controls();drainNavigation();}}
+  }
+  async function readRecord(recordKind, id, target) {
+    const record = await call('GET', 'personal/record', {...target, kind:recordKind, id}, target);
+    if (record?.id !== id || record.kind && record.kind !== recordKind) throw Error('资料详情未对应所选记录。');
+    return {...record, kind:recordKind};
+  }
+  function updateDetail(record, confirmed) {
+    selected = confirmed ? record : {...record, readError:true};
+    if(draft?.kind!==record.kind||draft.record?.id!==record.id)return;
+    draft.needsRead = !confirmed;
+    $('editor-identity').textContent = '正在编辑：' + title(draft.record) + ' · 修订 ' + draft.record.revision
+      + (confirmed ? '' : ' · 详情尚未确认，草稿已保留');
   }
   async function openRecord(recordKind, id) {
-    if (busy || !scope || !labels[recordKind]) return;
+    if (!scope || !labels[recordKind]) return;
+    if (busy) {
+      queuedNavigation = {kind:recordKind,id,scope:key(scope)};
+      return;
+    }
     showMode('catalog');
-    if (kind !== recordKind) {kind = recordKind; offset = 0; paintTabs(); records = []; total = 0;}
+    if (kind !== recordKind) {
+      kind = recordKind; offset = 0; records = []; total = 0; linkedListRead = null; listState = 'unread'; paintTabs();
+    }
     const target = {...scope}, token = ++serial; busy = true; controls();
+    if (selected?.id !== id || selected?.kind !== recordKind) {
+      selected = null;
+      drawDetail();
+    }
+    if (listState !== 'ready' && !linkedListRead) void loadLinkedList(target);
     try {
-      const [record, history, list] = await Promise.all([
-        call('GET', 'personal/record', {...target, kind:recordKind, id}, target),
-        call('GET', 'personal/history', {...target, kind:recordKind, id, limit:20}, target),
-        call('GET', 'personal/records', listQuery(target), target)
-      ]);
+      const record = await readRecord(recordKind, id, target);
       if (token !== serial || !same(target)) return;
-      selected = {...record, kind:recordKind}; records = list.records || []; total = list.total ?? records.length; drawList(); drawDetail(history);
-    } catch (error) {if (token === serial && same(target)) message(error.publicMessage || error.message, true);}
-    finally {if (token === serial && same(target)) {busy = false; controls();drainSection();}}
+      updateDetail(record,true); drawList(); drawDetail();
+      if(!pending.has(key(target)))message('已读取所选资料。');
+      return true;
+    } catch (error) {
+      if (token !== serial || !same(target)) return;
+      if(selected){updateDetail(selected,false);drawDetail();}
+      message(error.publicMessage || error.message, true);
+    }
+    finally {if (token === serial && same(target)) {busy = false; controls();drainNavigation();}}
   }
   const listQuery = target => ({...target, kind, status:['interest','exploration'].includes(kind)?$('state').value:'', category:kind==='collection'?$('category').value:'',sort:$('sort').value, query:$('query').value.trim(), include_archived:$('archived').checked, include_invalid:$('invalid').checked, limit:24, offset});
+  async function loadLinkedList(target) {
+    const query = listQuery(target);
+    linkedListRead = query; listState = 'loading'; drawList();
+    const current = () => linkedListRead === query && kind === query.kind && same(target);
+    try {
+      const list = await call('GET', 'personal/records', query, target);
+      if (!current()) return;
+      records = list.records || []; total = list.total ?? records.length; listState = 'ready';
+    } catch {
+      if (current()) listState = 'error';
+    } finally {
+      if (current()) {linkedListRead = null; drawList();}
+    }
+  }
   async function load(refreshSummary = false) {
     if (busy) return;
     if (key(scope) !== key(currentScope())) scopeChanged();
     if (!scope) {controls(); return;}
+    linkedListRead=null;
     if(kind==='review'){await loadReviews();return;}
-    const target = {...scope}, token = ++serial, selectedId = selected?.id;
-    const fetchSummary=refreshSummary===true||!overview||Date.now()-summaryAt>60000; busy = true;listState='loading';drawList(); controls();message('正在读取当前会话的个人生活资料…');
+    const target = {...scope}, token = ++serial, priorDetail = selected, uncertain = pending.get(key(target));
+    const fetchSummary=refreshSummary===true||!summaryAt||Date.now()-summaryAt>60000; busy = true;listState='loading';drawList(); controls();message('正在读取当前会话的个人生活资料…');
+    if(uncertain)uncertain.checked=false;
     try {
-      const [list, summary, spaces, interests, events, people, selectedRead, history] = await Promise.all([
-        call('GET','personal/records',listQuery(target),target), fetchSummary?call('GET','personal/overview',target,target):overview,
-        fetchSummary?call('GET','personal/records',{...target,kind:'space',limit:100,offset:0},target):{records:refs.space},
-        fetchSummary?call('GET','personal/records',{...target,kind:'interest',limit:100,offset:0},target):{records:refs.interest},
-        fetchSummary?call('GET','events',{...target,limit:100},target):{records:refs.event}, fetchSummary?call('GET','characters',{...target,limit:100},target):{records:refs.character},
-        selectedId ? call('GET','personal/record',{...target,kind,id:selectedId},target) : null,
-        selectedId ? call('GET','personal/history',{...target,kind,id:selectedId,limit:20},target) : null
+      const supplements = fetchSummary ? [
+        ['overview', call('GET','personal/overview',target,target)],
+        ['space', call('GET','personal/records',{...target,kind:'space',limit:100,offset:0},target)],
+        ['interest', call('GET','personal/records',{...target,kind:'interest',limit:100,offset:0},target)],
+        ['event', call('GET','events',{...target,limit:100},target)],
+        ['character', call('GET','characters',{...target,limit:100},target)],
+      ] : [];
+      const [list, summaryReads, detailRead] = await Promise.all([
+        call('GET','personal/records',listQuery(target),target),
+        Promise.allSettled(supplements.map(([,read])=>read)),
+        Promise.allSettled(priorDetail ? [readRecord(priorDetail.kind,priorDetail.id,target)] : []).then(reads=>reads[0]),
       ]);
       if (token !== serial || !same(target)) return;
-      listState='ready';archiveState.textContent='私人档案已接通，可查看和维护现有资料。';records = list.records || []; total = list.total ?? records.length; overview = summary;if(fetchSummary)summaryAt=Date.now();
-      refs = {space:spaces.records || [], interest:interests.records || [], event:events.records || [], character:people.records || []};
-      if (selectedRead) selected = {...selectedRead, kind};
-      if (pending.has(key(target))) pending.get(key(target)).checked = true;
-      drawCounts(); drawDecision(); drawVisual(); drawList(); drawDetail(history || []);
-      message(pending.has(key(target)) ? '已回读服务器资料。请核对原操作是否生效；不会自动重发。' : '已读取当前会话的个人生活资料。读取没有调用模型。');
-    } catch (error) {if (token === serial && same(target)) readFailed(error);}
-    finally {if (token === serial && same(target)) {busy = false; controls();drainSection();}}
+      records = list.records || []; total = list.total ?? records.length;
+      listState='ready';archiveState.textContent='私人档案已接通，可查看已读取的资料。';
+      if(fetchSummary)summaryAt=Date.now();
+      for(const [index,read] of summaryReads.entries()){
+        const [section] = supplements[index];
+        if(read.status==='rejected'){
+          unconfirmedSummary.add(section);
+          if(section==='overview'){
+            actionControls=null; executionState.textContent='本次自动推进状态未能读取。'; availability.dataset.execution='unknown';
+          }
+          continue;
+        }
+        unconfirmedSummary.delete(section);
+        if(section==='overview')overview=read.value;
+        else refs[section]=read.value.records || [];
+      }
+      if(detailRead)updateDetail(detailRead.status==='fulfilled' ? detailRead.value : priorDetail, detailRead.status==='fulfilled');
+      const unconfirmed = [];
+      if(unconfirmedSummary.has('overview'))unconfirmed.push('生活概览');
+      if(unconfirmedSummary.size>Number(unconfirmedSummary.has('overview')))unconfirmed.push('关联资料');
+      if(detailRead?.status==='rejected')unconfirmed.push('当前详情');
+      if(uncertain&&!unconfirmed.length&&fetchSummary)uncertain.checked=true;
+      drawCounts(); drawDecision(); drawVisual(); drawList(); drawDetail();
+      if(unconfirmed.length)message('资料列表已读取，部分内容本次未确认（' + unconfirmed.join('、') + '）。'
+        + (unconfirmedSummary.has('overview') && overview ? ' 分类总数来自上次读取。' : '')
+        + (uncertain ? ' 请重新刷新与核对。不会自动重发。' : ' 可继续浏览已读取的记录。'),true);
+      else if(uncertain)message(uncertain.checked ? '已回读服务器资料。请核对原操作是否生效；不会自动重发。' : '请使用“刷新与核对”确认原操作。不会自动重发。');
+      else message('已读取当前会话的个人生活资料。读取没有调用模型。');
+    } catch (error) {
+      if (token !== serial || !same(target)) return;
+      if(priorDetail){updateDetail(priorDetail,false);drawDetail();}
+      readFailed(error);
+    }
+    finally {if (token === serial && same(target)) {busy = false; controls();drainNavigation();}}
   }
   async function preview() {
     if (busy || !scope) return;
     const target = {...scope}, token = ++serial; busy = true; controls();
     try {const result = await call('GET','personal/decision',target,target); if (token === serial && same(target)) {drawDecision(result); message('已预览当前生活选择；没有推进生活或发送消息。');}}
     catch (error) {if (token === serial && same(target)) message(error.publicMessage || error.message,true);}
-    finally {if (token === serial && same(target)) {busy = false; controls();drainSection();}}
+    finally {if (token === serial && same(target)) {busy = false; controls();drainNavigation();}}
   }
   function input(name, label, type, value, options = []) {
     const wrap = node('label', label, type === 'checkbox' ? 'ps-check' : ''), element = node(type === 'textarea' ? 'textarea' : ['select','multiple'].includes(type) ? 'select' : 'input');
@@ -513,10 +657,16 @@ async function loadHistory(reset){
   }
   function editor(recordKind, record = null) {
     if (busy || !scope || pending.has(key(scope))) return;
-    draft = {kind:recordKind, record:record ? structuredClone(record) : null, scope:{...scope}, operation:null}; const f = record?.fields || {};
-    $('fields').replaceChildren(); $('form').querySelector('[type=submit]').hidden=false; $('editor-title').textContent = (record ? '编辑' : '新增') + labels[recordKind];
+    draft = {kind:recordKind, record:record ? structuredClone(record) : null, scope:{...scope}, operation:null};
+    $('form').querySelector('[type=submit]').hidden=false; $('editor-title').textContent = (record ? '编辑' : '新增') + labels[recordKind];
     $('editor-identity').textContent = record ? '正在编辑：' + title(record) + ' · 修订 ' + record.revision : '新增内容属于上方选定的角色与会话。';
     $('reason').value = ''; $('reason').required = !!record; $('reason-wrap').hidden = !record;
+    drawEditFields(recordKind,record);
+    draft.base = readFields(false);
+    $('editor').hidden = false; controls(); $('editor').scrollIntoView({block:'nearest'}); $('fields').querySelector('input')?.focus({preventScroll:true});
+  }
+  function drawEditFields(recordKind,record) {
+    const f = record?.fields || {};$('fields').replaceChildren();
     input('name','名称','text',f.name); input('description','说明（角色的虚构生活）','textarea',f.description);
     if (recordKind === 'space') {input('environment','环境','textarea',f.environment); input('area','区域','text',f.area);}
     if (recordKind === 'item') {
@@ -546,25 +696,83 @@ async function loadHistory(reset){
     input('event_ids','来源经历（可多选）','multiple',f.event_ids || [],refOptions('event',f.event_ids));
     input('character_ids','相关人物（可多选）','multiple',f.character_ids || [],refOptions('character',f.character_ids));
     if (!record) {input('_source_ref','录入依据或资料引用（可选）','text','');}
-    $('editor').hidden = false; controls(); $('editor').scrollIntoView({block:'nearest'}); $('fields').querySelector('input')?.focus({preventScroll:true});
   }
   function maintenance(operation, record) {
     editor(record.kind || kind,record); if (!draft) return; draft.operation = operation;
     $('fields').replaceChildren(node('p',operation === 'delete' ? '软删除后，这条资料会退出普通检索与生活选择，历史仍保留。可在“含归档与已删除”中核对并恢复。' : operation === 'restore' ? '恢复后将重新核对关联与来源；失效资料仍需要维护。' : '归档后保留详情与历史，暂不参与普通生活选择。','ps-maintenance-copy'));
     $('editor-title').textContent = ({archive:'归档',restore:'恢复',delete:'软删除'}[operation]) + labels[draft.kind]; $('reason').focus();
   }
-  function readFields() {
+  function readFields(validate = true) {
     const fields = {};
     for (const element of $('fields').querySelectorAll('[data-ps-field]')) {
       const name = element.dataset.psField;
       fields[name] = element.multiple ? [...element.selectedOptions].map(option => option.value) : element.type === 'checkbox' ? element.checked : element.type === 'datetime-local' ? element.value ? Date.parse(element.value) / 1000 : null : element.dataset.psLines ? element.value.split('\n').map(value => value.trim()).filter(Boolean) : element.value.trim();
     }
     if ($('fields').querySelector('[data-ps-sources]')) fields.sources = [...$('fields').querySelectorAll('[data-ps-source-row]')].map(row => Object.fromEntries([...row.querySelectorAll('[data-ps-source-field]')].map(element => [element.dataset.psSourceField,element.value.trim()]))).filter(source => source.title || source.url);
+    if (!validate) return fields;
     for (const source of fields.sources || []) if (source.url && !safeURL(source.url)) throw Error('参考资料链接需要使用 http 或 https。');
     for (const name of ['event_ids','character_ids']) if (fields[name]?.length > 8) throw Error('关联经历或人物最多选择 8 项。');
     for (const name of ['questions','explored','findings']) if (fields[name]?.length > 12 || fields[name]?.some(value=>value.length > 400)) throw Error('问题与发现最多 12 项，每项最多 400 字。');
     if (fields.origin === 'user_gift' && (!fields.giver || !fields.gifted_at || !fields.message_ref)) throw Error('用户赠礼需要填写赠送者、赠送时间和原消息引用。');
     return fields;
+  }
+  function fillDraftFields(values) {
+    for(const element of $('fields').querySelectorAll('[data-ps-field]')){
+      const name=element.dataset.psField;
+      if(!Object.hasOwn(values,name))continue;
+      const value=values[name];
+      if(element.multiple){
+        for(const id of value)if(![...element.options].some(option=>option.value===id)){
+          const option=node('option',id+'（当前列表外）');option.value=id;element.append(option);
+        }
+        for(const option of element.options)option.selected=value.includes(option.value);
+      }else if(element.type==='checkbox')element.checked=value;
+      else if(element.type==='datetime-local'&&value){
+        const date=new Date(value*1000);
+        date.setMinutes(date.getMinutes()-date.getTimezoneOffset());
+        element.value=date.toISOString().slice(0,16);
+      }else element.value=Array.isArray(value)?value.join('\n'):value??'';
+    }
+    if(Object.hasOwn(values,'sources')){
+      $('fields').querySelector('[data-ps-sources]')?.remove();
+      sourcesEditor(values.sources);
+    }
+  }
+  async function readDraftRevision(){
+    const editing=draft;
+    if(busy||!editing?.record||!editing.needsRevision||pending.has(key(scope))||!same(editing.scope))return;
+    const target={...scope},token=++serial,original=editing.record,expected=original.revision;
+    const previous=editing.base,local=editing.operation?{}:global.TLSRecordEdits.changes(readFields(false),previous);
+    const current=()=>token===serial&&draft===editing&&same(target);
+    busy=true;editing.revisionStatus='正在读取这条资料的新版本。';controls();
+    try{
+      const latest=await readRecord(editing.kind,original.id,target);
+      if(!current())return;
+      if(!Number.isInteger(latest.revision)||latest.revision<=expected)throw Error('服务器尚未返回更新版本。');
+      if(latest.deleted&&editing.operation!=='restore')throw Error('这项资料已被软删除，请先核对归档。');
+      editing.record=latest;
+      if(!editing.operation){
+        drawEditFields(editing.kind,latest);editing.base=readFields(false);
+        editing.conflicts=global.TLSRecordEdits.conflicts(local,previous,editing.base);
+        fillDraftFields(local);
+      }
+      editing.needsRead=editing.needsRevision=false;
+      if(selected?.id===latest.id){updateDetail(latest,true);drawDetail();}
+      else $('editor-identity').textContent='正在编辑：'+title(latest)+' · 修订 '+latest.revision;
+      const display=field=>Array.isArray(editing.base[field])
+        ?editing.base[field].map(value=>typeof value==='object'?value.title||value.url:String(value)).join('、')
+        :String(editing.base[field]??'');
+      editing.revisionStatus=editing.conflicts?.length
+        ? '两端修改了相同字段。服务器当前值：'+editing.conflicts.map(field=>(fieldLabels[field]||field)+'：'+display(field)).join('；')
+        : '已读回最新版本。请核对内容，再次确认这项操作。';
+    }catch(error){
+      if(current())editing.revisionStatus=(error.publicMessage||error.message)+' 草稿已保留。';
+    }finally{if(current()){busy=false;controls();drainNavigation();}}
+  }
+  function resolveDraftRevision(useServer){
+    if(busy||!draft?.conflicts?.length)return;
+    if(useServer)fillDraftFields(Object.fromEntries(draft.conflicts.map(field=>[field,draft.base[field]])));
+    draft.conflicts=[];draft.revisionStatus='冲突已核对。请重新检查后保存。';controls();
   }
   async function mutate(path, body, edit) {
     if (busy || !scope || pending.has(key(scope)) || !same(edit.scope)) return;
@@ -577,7 +785,13 @@ async function loadHistory(reset){
       if(path==='review-confirm'){review=null;$('review').hidden=true;$('review-confirmed').checked=false;}
     } catch (error) {
       if (token === serial && same(target)) {failure = error.publicMessage || error.message; if (!error.outcomeUnknown && [400,401,403,404,409,413].includes(Number(error.status))) pending.delete(key(target));
-        if(!error.outcomeUnknown&&Number(error.status)===409){if(path==='review-confirm'&&review){review.can_confirm=false;$('review-confirmed').checked=false;review.blocked_reasons=['来源或记录版本已变化，请重新读取变化后再人工确认。'];drawReview();}if(path==='collect'){picker.selected=null;$('collect-form').hidden=true;$('resource-preview').replaceChildren(node('p','资料版本已变化，请重新搜索并选择当前条目。','ps-warning'));}}
+        if(!error.outcomeUnknown&&Number(error.status)===409){
+          if(draft===edit&&edit.record&&body.id===edit.record.id){
+            edit.needsRevision=true;edit.revisionStatus='服务器版本已变化，本次没有提交。输入仍保留，请核对最新版本。';
+          }
+          if(path==='review-confirm'&&review){review.can_confirm=false;$('review-confirmed').checked=false;review.blocked_reasons=['来源或记录版本已变化，请重新读取变化后再人工确认。'];drawReview();}
+          if(path==='collect'){picker.selected=null;$('collect-form').hidden=true;$('resource-preview').replaceChildren(node('p','资料版本已变化，请重新搜索并选择当前条目。','ps-warning'));}
+        }
       }
     } finally {
       if (token === serial && same(target)) {busy = false; controls(); await load(true); if (failure) message(failure + (pending.has(key(target)) ? ' 请先核对服务器资料，不会自动重发。' : ''),true);}
@@ -602,26 +816,37 @@ async function loadHistory(reset){
   function switchKind(value) {
     if (busy || !labels[value]&&value!=='review') return;
     showMode('catalog');
+    catalogOrigin = null;
     kind = value;listState='unread'; selected = null; records = []; total = 0; offset = 0; lifeReference = null; $('reference').hidden = true;
     review=null;$('review').hidden=true;$('picker').hidden=true;
     if(draft?.reviewToken){draft.reviewToken=null;$('form').querySelector('[type=submit]').hidden=false;$('reason-wrap').hidden=false;}
     paintTabs(); drawList(); drawDetail();global.dispatchEvent(new CustomEvent('tls-admin-sectionchange',{detail:{view:'personal_space',section:value}})); load();
   }
   function scopeChanged() {
-    queuedSection=null;actionControls=null;listState='unread';serial++; busy = false; scope = currentScope(); selected = null; records = []; total = 0; offset = 0; overview = null; draft = null; lifeReference = null;review=null;reviewTotal=null;
+    catalogOrigin = null;
+    queuedNavigation=null;linkedListRead=null;actionControls=null;listState='unread';serial++; busy = false; scope = currentScope(); selected = null; records = []; total = 0; offset = 0; overview = null; draft = null; lifeReference = null;review=null;reviewTotal=null;
     picker={type:'music',sources:[],source:null,records:[],total:0,offset:0,selected:null};$('picker').hidden=true;$('review').hidden=true;$('review-confirmed').checked=false;$('review-edit').checked=false;
     refs = {space:[],interest:[],event:[],character:[]}; $('editor').hidden = true; $('reference').hidden = true;
     $('query').value = ''; $('archived').checked = false; $('invalid').checked = false;
     $('state').value='';$('category').value='';$('sort').value='updated';
     archiveState.textContent = scope ? '正在等待当前会话的档案读取。' : '选择会话后读取私人档案。';
     executionState.textContent = '自动推进状态尚未读取。'; availability.dataset.execution = 'unknown';
-    summaryAt=0;drawCounts(); drawDecision(); drawVisual(); drawList(); drawDetail(); message(scope ? '范围已切换，刷新后读取当前角色的个人生活。' : '先在上方选择完整的用户、角色与会话。'); controls();
+    summaryAt=0;unconfirmedSummary.clear();drawCounts(); drawDecision(); drawVisual(); drawList(); drawDetail(); message(scope ? '范围已切换，刷新后读取当前角色的个人生活。' : '先在上方选择完整的用户、角色与会话。'); controls();
   }
   for (const tab of root.querySelectorAll('[data-ps-tab]')) {
     tab.addEventListener('click',()=>switchKind(tab.dataset.psTab));
     tab.addEventListener('keydown',event=>{if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key) || busy) return; event.preventDefault(); const tabs = [...root.querySelectorAll('[data-ps-tab]')], index = tabs.indexOf(tab), next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs.at(-1) : tabs[(index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length]; next.focus(); switchKind(next.dataset.psTab);});
   }
-  $('refresh').addEventListener('click',()=>load(true)); $('search').addEventListener('submit',event=>{event.preventDefault(); offset = 0; load();});
+  $('refresh').addEventListener('click',()=>load(true));
+  $('search').addEventListener('submit',async event=>{
+    event.preventDefault();
+    const control = document.activeElement, target = scope;
+    const restoreFocus = $('search').contains(control);
+    offset = 0;
+    await load();
+    if (restoreFocus && same(target) && document.activeElement === document.body
+      && !control.disabled && !root.closest('[hidden]')) control.focus({preventScroll:true});
+  });
   for (const filter of ['archived','invalid']) $(filter).addEventListener('change',()=>{offset = 0; load();});
   $('prev').addEventListener('click',()=>{offset = Math.max(0,offset - 24); load();}); $('next').addEventListener('click',()=>{offset += 24; load();});
   $('new').addEventListener('click',()=>editor(kind)); $('cancel').addEventListener('click',()=>{if(draft?.reviewToken)$('review-edit').checked=false;draft = null; $('editor').hidden = true;});
@@ -639,24 +864,31 @@ async function loadHistory(reset){
   $('form').addEventListener('submit',event=>{
     event.preventDefault(); if (!draft || !same(draft.scope)) return;
     try {
+      if(draft.needsRead||draft.needsRevision||draft.conflicts?.length)throw Error('资料详情尚未核对，请先核对这条记录。草稿已保留。');
       if(draft.reviewToken)throw Error('请在来源对照区勾选人工确认、填写复核原因，再提交复核。');
       const reason = $('reason').value.trim(); if (draft.record && !reason) throw Error('请说明维护原因。');
       if (draft.operation) {mutate(draft.operation,{kind:draft.kind,id:draft.record.id,expected_revision:draft.record.revision,reason},draft); return;}
       const fields = readFields(), sourceRef = fields._source_ref; delete fields._source_ref;
-      if (draft.record) mutate('update',{kind:draft.kind,id:draft.record.id,expected_revision:draft.record.revision,changes:fields,reason},draft);
+      if (draft.record) {
+        const changes=global.TLSRecordEdits.changes(fields,draft.base);
+        if(!Object.keys(changes).length){draft.revisionStatus='内容未变化，无需保存。';controls();return;}
+        mutate('update',{kind:draft.kind,id:draft.record.id,expected_revision:draft.record.revision,changes,reason},draft);
+      }
       else {const uuid = global.TLSBrowserCompat?.uuid?.() || global.crypto?.randomUUID?.(); if (!uuid) throw Error('当前浏览器无法生成请求标识，请刷新后再操作。'); mutate('create',{kind:draft.kind,request_id:'personal-ui-' + uuid,fields,source:{kind:'operator',ref:sourceRef || 'personal-space-console'}},draft);}
     } catch (error) {message(error.message,true);}
   });
   function openSection(value){
     if(!labels[value]&&value!=='review')return false;
     if(draft&&kind!==value){message('当前编辑内容仍保留。请先保存或取消，再切换工作区域。',true);return false;}
-    if(busy){queuedSection={kind:value,scope:key(currentScope())};return true;}
+    if(busy){queuedNavigation={kind:value,scope:key(scope)};return true;}
     if(kind===value){showMode('catalog');if(listState==='unread')void load();return true;}
     switchKind(value);return true;
   }
-  function drainSection(){
-    const request=queuedSection;queuedSection=null;
-    if(request&&request.scope===key(currentScope())&&state.view==='personal_space')openSection(request.kind);
+  function drainNavigation(){
+    const request=queuedNavigation;queuedNavigation=null;
+    if(!request||request.scope!==key(currentScope())||state.view!=='personal_space')return;
+    if(request.id===undefined)openSection(request.kind);
+    else void openRecord(request.kind,request.id);
   }
   global.TLSPersonalSpacePanel = {activate:()=>load(true),scopeChanged,openRecord,openSection}; paintTabs(); scopeChanged();showMode('visual');
 })(window);

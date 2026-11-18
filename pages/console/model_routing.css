@@ -1,1 +1,21 @@
-.model-routing fieldset{border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}.model-routing legend{font-weight:600;padding:0 6px}.model-routing label{min-width:0}.model-routing [role=status]{margin:12px 0;overflow-wrap:anywhere}.model-routing [data-error=true]{color:var(--red)}.model-routing table{width:100%;border-collapse:collapse;font-size:12px}.model-routing th,.model-routing td{text-align:left;border-bottom:1px solid var(--line);padding:8px}.model-routing [data-model-usage]{overflow:auto}.model-routing [data-model-recent] p{padding:8px 0;border-bottom:1px solid var(--line);font-size:12px;overflow-wrap:anywhere}@media(max-width:680px){.model-routing fieldset{grid-template-columns:1fr}.model-routing table{min-width:510px}}
+/* Keep task fields mounted so closing a section retains the user's draft. */
+.model-routing .model-task { border-top: 1px solid var(--aw-line-soft); }
+.content .model-task > summary { min-height: 44px; padding: 10px 4px; color: var(--text); font-size: 14px; }
+.content .model-task[open] > summary { margin-bottom: 0; color: var(--blue); }
+.model-routing fieldset { border: 0; padding: 3px 4px 13px; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 0; }
+.model-routing label { min-width: 0; }
+.model-routing select { width: 100%; }
+.model-routing [role=status] { margin: 12px 0; overflow-wrap: anywhere; }
+.model-routing [data-error=true] { color: var(--red); }
+.model-routing-note { margin-top: 16px; border-top: 1px solid var(--aw-line-soft); }
+.model-routing table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: auto; }
+.model-routing th, .model-routing td { text-align: left; border-bottom: 1px solid var(--line); padding: 10px 9px; }
+.model-routing thead th { background: var(--surface); color: var(--muted); font-weight: 550; }
+.model-routing tbody th { font-weight: 500; }
+.model-routing td { font-variant-numeric: tabular-nums; }
+.model-routing [data-model-usage] { overflow: auto; margin-top: 12px; }
+.model-routing [data-model-recent] p { padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }
+@media(max-width:680px) {
+  .model-routing fieldset { grid-template-columns: minmax(0,1fr); }
+  .model-routing table { min-width: 510px; }
+}

@@ -55,6 +55,7 @@ def validate(root, archive):
         for name in members:
             p = PurePosixPath(name)
             assert not p.is_absolute() and '..' not in p.parts and '\\' not in name, 'Unsafe archive path'
+            assert p.parts[0] != 'client', f'Client source does not belong in the plugin ZIP: {name}'
             assert not forbidden.intersection(p.parts), f'Private/build directory in ZIP: {name}'
             assert not name.endswith(('.apk', '.db', '.sqlite3', '.p12', '.jks', '.keystore')), f'Unexpected runtime/binary material: {name}'
             assert '.private.' not in name and '.dpapi.' not in name, f'Private artifact in ZIP: {name}'

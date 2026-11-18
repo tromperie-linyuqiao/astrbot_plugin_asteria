@@ -628,7 +628,10 @@ class AutonomousLifeRuntime:
                     with self.journal._lock:
                         if not source_valid:return dict(state='deferred',reason='life_source_changed')
                         if not self._read_still_current(current):return dict(state='deferred',reason='life_material_changed_during_generation')
-                        data.update(last_decision=choice,last_decision_at=now,next_check_at=now+policy['interval_minutes']*60,
+                        next_check_at = now + policy['interval_minutes'] * 60
+                        if choice['next_due_at'] is not None:
+                            next_check_at = min(next_check_at, choice['next_due_at'])
+                        data.update(last_decision=choice,last_decision_at=now,next_check_at=next_check_at,
                             result=dict(state='quiet',reason='no_due_life_choice',at=now,model_called=False))
                         self._save(scope,data,old)
                         return data['result']

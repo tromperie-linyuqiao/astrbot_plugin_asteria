@@ -4,9 +4,6 @@
   if (global.TLSAdminPanels) return;
 
   const configs = {
-    assets: {
-      filters: [{list: '#assets-records', title: '筛选本页素材', placeholder: '说明、标签或素材编号'}]
-    },
     narrative: {editors: [
       {form: '#narrative-preference-form', title: '互动方式', hint: '当前会话的表达与陪伴偏好'}
     ]},
@@ -30,8 +27,7 @@
       triggers: '[data-date-action="new"], [data-date-list] button', focus: true, hint: '生日、纪念日和重复规则'}]},
     profile_candidates: {editors: [{panel: '[data-profile-detail]', title: '候选详情与审核',
       triggers: '[data-profile-list] button', focus: true, hint: '先查看原文与证据，再批准或拒绝'}]},
-    expression: {filters: [{list: '#expression-records', title: '筛选本页表达规则', placeholder: '原词、替换文本或规则'}]},
-    tasks: {filters: [{list: '#task-records', items: ':scope > section.panel > article.record', title: '筛选已载入任务', placeholder: '任务内容或状态'}]}
+    expression: {filters: [{list: '#expression-records', title: '筛选本页表达规则', placeholder: '原词、替换文本或规则'}]}
   };
   const wrappers = new WeakMap();
   const views = new WeakMap();
@@ -146,6 +142,7 @@
   }
 
   function outline(view) {
+    if (view.id === "view-overview") return;
     let value = views.get(view);
     if (!value) {value = {}; views.set(view, value);}
     const candidates = Array.from(view.querySelectorAll('section.panel, .ap-editor')).filter(panel => {

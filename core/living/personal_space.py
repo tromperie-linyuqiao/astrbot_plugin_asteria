@@ -11,7 +11,7 @@ import ipaddress
 from urllib.parse import urlsplit
 
 from .autonomous_life import (AutonomousLife, EVIDENCE, _digest, _epoch, _id,
-    _ids, _literal_excerpt, _query_terms, _revision, _text, _NS as _LIFE_NS,
+    _ids, _literal_excerpt, _normal, _query_terms, _revision, _text, _NS as _LIFE_NS,
     _LIMIT as _LIFE_LIMIT)
 from .journal import JournalConflict
 from .models import canonical, plain, private_scope, scope_key
@@ -24,6 +24,13 @@ _HISTORY = 'tls.personal.history.v1'
 _EFFECTS = 'tls.personal.effects.v1'
 _LIMIT = dict(space=32, item=256, interest=64, exploration=128, collection=256)
 _SOURCE_KINDS = {'terra_canon', 'public_reference', 'original_fiction', 'model_inference'}
+_CONTEXT_FIELDS = {
+    'space': ('环境', ('environment', 'area'), ('私人空间', '房间', '住处', '书桌')),
+    'item': ('物件', (), ('物品', '物件')),
+    'interest': ('兴趣', ('next_direction', 'questions', 'explored', 'origin_note'), ('兴趣', '爱好')),
+    'exploration': ('探索', ('goal', 'findings'), ('探索',)),
+    'collection': ('收藏', (), ('收藏', '专辑')),
+}
 _DEFAULTS = dict(
     space=dict(environment='', area=''),
     item=dict(space_id='', origin='ordinary', giver='', gifted_at=None, message_ref=''),
@@ -519,15 +526,20 @@ class PersonalSpace:
     def generation(self, scope):
         scope = self._scope(scope)
         with self.journal._lock:
-            values = [_digest([[kind, row['key'], row['revision']]
-                for row in self.journal.list(_NS[kind], scope, limit=_LIMIT[kind] + 1)]) for kind in KINDS]
+            collections = self.journal.list(_NS['collection'], scope, limit=_LIMIT['collection'] + 1)
+            collection_revisions = [(row['key'], row['revision']) for row in collections]
+            values = []
+            for kind in KINDS:
+                revisions = collection_revisions if kind == 'collection' else self.journal.list_revisions(
+                    _NS[kind], scope, limit=_LIMIT[kind] + 1)
+                values.append(_digest([[kind, key, revision] for key, revision in revisions]))
             # Life's aggregate token may include this module. Read source
             # revisions directly so neither aggregate recursively calls itself.
-            life_values = [_digest([[kind, row['key'], row['revision']]
-                for row in self.journal.list(_LIFE_NS[kind], scope, limit=_LIFE_LIMIT.get(kind, 1) + 1)])
+            life_values = [_digest([[kind, key, revision]
+                for key, revision in self.journal.list_revisions(_LIFE_NS[kind], scope, limit=_LIFE_LIMIT.get(kind, 1) + 1)])
                 for kind in ('event', 'character', 'thread', 'policy')]
             resources, seen = [], set()
-            for row in self.journal.list(_NS['collection'], scope, limit=_LIMIT['collection'] + 1):
+            for row in collections:
                 fields = row['data']['fields']
                 if not fields.get('resource_revision') or not fields.get('resource_id'):
                     continue
@@ -715,17 +727,38 @@ class PersonalSpace:
             raise ValueError('bounded personal-space context required')
         with self.journal._lock:
             generation = self.generation(scope)
-            records = [record for kind in KINDS for record in self.list_records(scope, kind, query=query, limit=200)['records']]
-            terms = _query_terms(query)
-            records.sort(key=lambda row: (-sum(term in canonical(row['fields']).casefold() for term in terms),
-                KINDS.index(row['kind']), -row['updated_at'], row['id']))
+            normalized, terms = _normal(query), _query_terms(query)
+            preferred_kinds = [kind for kind, (_, _, hints) in _CONTEXT_FIELDS.items()
+                               if any(hint in normalized for hint in hints)]
+            matches = []
+            for kind, (label, detail_keys, _) in _CONTEXT_FIELDS.items():
+                category_requested = kind in preferred_kinds
+                for offset in range(0, _LIMIT[kind], 200):
+                    page = self.list_records(scope, kind, limit=200, offset=offset)
+                    for record in page['records']:
+                        fields = record['fields']
+                        title = _normal(fields['name'])
+                        details = [part for key in detail_keys for part in
+                                   ([fields[key]] if isinstance(fields[key], str) else fields[key]) if part]
+                        excerpt_text = ' · '.join(part for part in [fields['name'], *details, fields['description']] if part)
+                        content = _normal(excerpt_text)
+                        score = sum(term in content for term in terms)
+                        if normalized and not (score or category_requested):
+                            continue
+                        named = len(title) >= 2 and title in normalized
+                        active = fields.get('status', '') in ('', 'active', 'planned')
+                        rank = (not named, not category_requested, not active, -score, -record['updated_at'], record['id'])
+                        matches.append((rank, record, label, excerpt_text))
+                    if offset + len(page['records']) >= page['total']:
+                        break
+            matches.sort(key=lambda value: value[0])
             sections, refs, used = [], [], 0
-            selected = records[:limit]
-            for index, record in enumerate(selected):
+            selected = matches[:limit]
+            for index, (_, record, label, excerpt_text) in enumerate(selected):
                 remaining = max_chars - used - (1 if sections else 0)
                 remaining //= len(selected) - index
-                prefix = '[虚构个人空间 ' + record['kind'] + '；引用未核验] '
-                excerpt = _literal_excerpt(canonical(record['fields']), remaining - len(prefix))
+                prefix = '[角色虚构资料·' + label + '；引用未核验] '
+                excerpt = _literal_excerpt(excerpt_text, remaining - len(prefix))
                 if not excerpt:
                     break
                 text = prefix + excerpt
@@ -740,7 +773,7 @@ class PersonalSpace:
             text = '\n'.join(section['text'] for section in sections)
             return dict(text=text, sections=sections, source_versions=refs,
                 selected_record_ids=[section['source_id'] for section in sections], generation=generation,
-                evidence_kind=EVIDENCE, deterministic=True, writes_memory=False, chars=len(text))
+                preferred_kinds=preferred_kinds, evidence_kind=EVIDENCE, deterministic=True, writes_memory=False, chars=len(text))
 
     def decision(self, scope):
         scope = self._scope(scope)
@@ -766,41 +799,43 @@ class PersonalSpace:
                 personal[kind]=values
             interests,explorations,collections=(personal[kind] for kind in ('interest','exploration','collection'))
             candidates = []
-            def option(action, record, priority, eligible, reason):
+            def option(action, record, priority, due_at, reason_due, reason_waiting):
                 deferred = postponed.get((record['kind'], record['id']))
+                eligible = due_at is None or now >= due_at
+                reason = reason_due if eligible else reason_waiting
                 if deferred:
                     eligible, reason = False, 'explicitly_deferred'
+                    due_at = max(due_at or 0, deferred['until'])
                 candidates.append(dict(action=action, kind=record['kind'], id=record['id'], version=record['version'],
                     revision=record['revision'], name=record['fields'].get('name', record['fields'].get('title', '')),
-                    priority=priority, eligible=eligible, reason=reason,
+                    priority=priority, eligible=eligible, reason=reason, due_at=due_at,
                     defer_until=deferred['until'] if deferred else None))
             event_times = {row['id']: row['fields']['occurred_at'] for row in events}
             for row in explorations:
                 if row['fields']['status'] not in {'planned', 'active'}:
                     continue
                 attended = max([event_times.get(id, row['updated_at']) for id in row['fields']['event_ids']] + [row['updated_at']])
-                due = now - attended >= 6 * 3600
-                option('continue_exploration', row, 75, due, 'recorded_exploration_due' if due else 'exploration_cooldown')
+                option('continue_exploration', row, 75, attended + 6 * 3600, 'recorded_exploration_due', 'exploration_cooldown')
             for row in threads:
-                age = now - max([event_times.get(id, now) for id in row['fields']['event_ids']] + [row['updated_at']])
-                option('continue_thread', row, 40, age >= 6 * 3600, 'recorded_open_thread' if age >= 6 * 3600 else 'thread_cooldown')
+                last_active = max([event_times.get(id, now) for id in row['fields']['event_ids']] + [row['updated_at']])
+                option('continue_thread', row, 40, last_active + 6 * 3600, 'recorded_open_thread', 'thread_cooldown')
             for row in interests:
                 fields = row['fields']
                 if fields['status'] != 'active' or not fields['worth_continuing']:
                     continue
                 attended = fields['last_attended_at']
-                due = attended is None or now - attended >= 86400
-                option('attend_interest', row, {'growing': 35, 'steady': 30, 'fading': 15}.get(fields.get('attention'), 30), due, 'active_interest_due' if due else 'interest_cooldown')
+                due_at = None if attended is None else attended + 86400
+                option('attend_interest', row, {'growing': 35, 'steady': 30, 'fading': 15}.get(fields.get('attention'), 30),
+                       due_at, 'active_interest_due', 'interest_cooldown')
             for row in collections:
-                due = now - row['updated_at'] >= 2 * 86400
-                option('organize_collection', row, 20, due, 'saved_collection_housekeeping' if due else 'collection_cooldown')
+                option('organize_collection', row, 20, row['updated_at'] + 2 * 86400, 'saved_collection_housekeeping', 'collection_cooldown')
             for row in people:
-                due = now - row['updated_at'] >= 3 * 86400
-                option('revisit_person', row, 10, due, 'existing_person_due' if due else 'person_cooldown')
+                option('revisit_person', row, 10, row['updated_at'] + 3 * 86400, 'existing_person_due', 'person_cooldown')
             candidates.sort(key=lambda value: (not value['eligible'], -value['priority'], value['id']))
             options = candidates[:6]
             latest = max((row['fields']['occurred_at'] for row in events), default=None)
-            ordinary_due = latest is None or now - latest >= 86400
+            ordinary_at = None if latest is None else latest + 86400
+            ordinary_due = ordinary_at is None or now >= ordinary_at
             options.append(dict(action='ordinary_life', kind=None, id=None, version=None, priority=5,
                 eligible=ordinary_due, reason='ordinary_day_available' if ordinary_due else 'ordinary_day_cooldown'))
             options.append(dict(action='idle', kind=None, id=None, version=None, priority=0, eligible=True, reason='quiet_day_allowed'))
@@ -808,10 +843,13 @@ class PersonalSpace:
                 options.insert(0, dict(action='rest', kind=None, id=None, version=None, priority=100,
                     eligible=True, reason='explicit_rest', defer_until=controls['rest']['until']))
             selected = next(value for value in options if value['eligible'])
+            due_times = [value['due_at'] for value in candidates if not value['eligible'] and value['due_at'] is not None]
+            if not ordinary_due:
+                due_times.append(ordinary_at)
             self._scope(scope)
             return dict(action=selected['action'], selected=deepcopy(selected), options=options,
                 deterministic=True, model_required=selected['action'] not in {'idle', 'rest'}, evidence_kind=EVIDENCE,
-                controls=controls,
+                controls=controls, next_due_at=min(due_times, default=None),
                 timezone=self.life.timezone_name, local_date=datetime.fromtimestamp(now, self.life.timezone).date().isoformat(),
                 source_versions=[{key: value[key] for key in ('kind', 'id', 'version', 'revision')}
                     for value in options if value['id'] is not None])

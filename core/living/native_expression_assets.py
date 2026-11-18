@@ -307,18 +307,29 @@ class NativeExpressionAssets:
             self.journal._ensure_open();row=self._load(self.journal._db,scope,identity);self._scope(scope)
             return row if row and (include_deleted or not row['deleted']) else None
 
-    def list(self,scope,*,limit=50,offset=0,include_deleted=False):
+    def list(self, scope, *, limit=50, offset=0, include_deleted=False, query=''):
         scope=self._scope(scope)
         if (type(limit) is not int or not 1<=limit<=MAX_ASSETS or type(offset) is not int or not 0<=offset<=MAX_ASSETS
-                or type(include_deleted) is not bool):raise ValueError('bounded asset pagination required')
+                or type(include_deleted) is not bool or not isinstance(query, str) or len(query) > 120):
+            raise ValueError('bounded asset pagination required')
+        words = query.casefold().split()
         with self._resources(),self.journal._lock:
             self.journal._ensure_open()
             keys=[row[0] for row in self.journal._db.execute('SELECT key FROM checkpoints WHERE namespace=? AND scope=? ORDER BY updated DESC,key LIMIT ?',
                 (NAMESPACE,scope_key(scope),MAX_ASSETS+1))]
             if len(keys)>MAX_ASSETS:raise ExpressionAssetError('expression asset scope capacity reached')
-            rows=[self._load(self.journal._db,scope,key) for key in keys]
+            rows = []
+            for key in keys:
+                row = self._load(self.journal._db, scope, key)
+                if row['deleted'] and not include_deleted:
+                    continue
+                if words:
+                    searchable = ' '.join((row['id'], row['caption'], *row['tags'])).casefold()
+                    if not all(word in searchable for word in words):
+                        continue
+                rows.append(row)
             self._scope(scope)
-            return [row for row in rows if include_deleted or not row['deleted']][offset:offset+limit]
+            return rows[offset:offset+limit]
 
     def scopes(self,*,limit=100):
         """Persisted image-source directory for the authenticated admin API.

@@ -2,3 +2,6 @@
 * -text
 
 /core/living/native_pc_business/pages/ export-ignore
+
+# The marketplace package contains the AstrBot plugin only.
+/client/ export-ignore

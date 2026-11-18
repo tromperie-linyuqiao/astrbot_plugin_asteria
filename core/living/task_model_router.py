@@ -18,7 +18,8 @@ SCOPE = private_scope(dict(platform='tls', bot_id='model-routing', user_id='admi
                            character_id='system', session_id='task-model-routing', private=True))
 TASKS = {'chat': '普通聊天', 'rp': '复杂角色互动', 'summary': '记忆摘要',
          'memory_filter': '记忆筛选', 'archive_review': '档案审阅',
-         'classification': '分类与历史提取', 'insight': '数据洞察', 'autonomous_life': '自主生活（独立配置）'}
+         'classification': '分类与历史提取', 'insight': '数据洞察', 'autonomous_life': '自主生活（独立配置）',
+         'chat_companion': '陪伴模式'}
 ALIASES = {'memory_summary': 'summary', 'memory_decay_summary': 'summary',
            'memory_audit_preview': 'archive_review', 'historical_chat_summary': 'summary',
            'historical_chat_phase_summary': 'summary', 'historical_chat_reconcile': 'archive_review',

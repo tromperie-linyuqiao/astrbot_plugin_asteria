@@ -164,8 +164,8 @@
   }
   function mountInheritance(target, {api, getScope}) {
     const document = target.ownerDocument, inputs = new Map(), switches = new Map(), actual = new Map();
-    let current = null, currentScope = null, currentSignature = '', busy = false, disposed = false, epoch = 0;
-    const pending = new Map();
+    let current = null, currentScope = null, currentSignature = '', busy = false, disposed = false, epoch = 0, fresh = false;
+    const pending = new Map(), drafts = new Map();
     const full = value => value && ['platform', 'bot_id', 'user_id', 'character_id', 'session_id'].every(k => typeof value[k] === 'string' && value[k]);
     const scopeSignature = () => JSON.stringify(getScope?.() || null);
     const selectionKey = (at = currentScope, selectedLevel = level.value) => selectedLevel + ':' + (selectedLevel === 'global' ? '' : JSON.stringify(at));
@@ -191,33 +191,84 @@
       const detail = el('p', '', 'hint');
       label.append(input); box.append(label, toggleLabel, detail); grid.append(box);
       inputs.set(field.key, input); switches.set(field.key, toggle); actual.set(field.key, detail);
-      toggle.addEventListener('change', () => { input.disabled = busy || !toggle.checked; });
+      toggle.addEventListener('change', () => {
+        input.disabled = busy || !toggle.checked;
+        trackDraft();
+      });
+      input.addEventListener('input', trackDraft);
     }
     const actions = el('div', undefined, 'context-settings-actions');
     const save = el('button', '保存并回读', 'primary'), reload = el('button', '读取所选层级'), cancel = el('button', '取消编辑'), restore = el('button', '恢复本级继承');
-    save.type = 'submit'; reload.type = cancel.type = restore.type = 'button';
+    const keep = el('button', '保留草稿，稍后确认保存');
+    save.type = 'submit'; reload.type = cancel.type = restore.type = keep.type = 'button';
+    keep.dataset.inheritanceAction = 'keep-draft';
     save.dataset.inheritanceAction = 'save'; reload.dataset.inheritanceAction = 'reload'; restore.dataset.inheritanceAction = 'restore';
-    actions.append(save, cancel, restore, reload); form.append(grid, actions); wrapper.append(title, intro, scopeInfo, levelLabel, status, form); target.append(wrapper);
+    actions.append(save, cancel, restore, reload, keep); form.append(grid, status, actions); wrapper.append(title, intro, scopeInfo, levelLabel, form); target.append(wrapper);
     const show = value => typeof value === 'boolean' ? (value ? '开启' : '关闭') : String(value);
-    function paint(preserveDraft = false) {
-      const uncertain = pending.get(selectionKey()), locked = busy || !!uncertain;
-      level.disabled = busy; reload.disabled = busy; save.disabled = locked || !current?.writable;
+    function picked(field, snapshot = current) {
+      const row = snapshot?.fields.find(entry => entry.key === field.key);
+      const actualValue = row?.override ?? row?.value;
+      return {override: row?.overridden === true, value: field.type === 'checkbox' ? actualValue === true : String(actualValue ?? '')};
+    }
+    const samePick = (a, b) => a.override === b.override && (!a.override || a.value === b.value);
+    function rememberDraft() {
+      if (!current) return;
+      const key = selectionKey(currentScope, current.level);
+      if (pending.has(key)) return;
+      const previous = drafts.get(key), next = new Map();
+      for (const field of fields) {
+        const value = inputs.get(field.key), original = picked(field);
+        const wanted = {override: switches.get(field.key).checked, value: field.type === 'checkbox' ? value.checked : value.value};
+        if (!samePick(wanted, original)) next.set(field.key, {base: previous?.get(field.key)?.base ?? original, wanted});
+      }
+      if (next.size) drafts.set(key, next);
+      else drafts.delete(key);
+    }
+    function conflicts() {
+      const draft = drafts.get(selectionKey());
+      return current && draft ? fields.filter(field => draft.has(field.key) && !samePick(draft.get(field.key).base, picked(field))) : [];
+    }
+    function paintActions() {
+      const locked = busy || pending.has(selectionKey()), conflicted = conflicts().length > 0;
+      level.disabled = busy; reload.disabled = busy;
+      save.disabled = locked || !fresh || !current?.writable || conflicted;
       cancel.disabled = restore.disabled = locked || !current;
+      keep.hidden = !conflicted;
+      keep.disabled = locked || !fresh || !current?.writable;
+    }
+    function trackDraft() {
+      const hadConflict = conflicts().length > 0;
+      rememberDraft();
+      paintActions();
+      const key = selectionKey();
+      if (!fresh || busy || pending.has(key)) return;
+      if (conflicts().length) status.textContent = draftConflictStatus();
+      else if (drafts.has(key)) status.textContent = '当前修改尚未保存。';
+      else if (hadConflict) status.textContent = '表单与当前后台值一致。';
+    }
+    function paint() {
+      const key = selectionKey(), uncertain = pending.get(key), draft = drafts.get(key), locked = busy || !!uncertain;
+      paintActions();
       scopeInfo.textContent = level.value === 'global' ? '全局设置；恢复继承将回到系统默认值。'
         : currentScope ? '当前平台 ' + currentScope.platform + ' · 角色 ' + currentScope.character_id + ' · 会话 ' + currentScope.session_id : '请先在上方选择完整真实会话，再读取局部设置。';
       for (const field of fields) {
-        const input = inputs.get(field.key), toggle = switches.get(field.key), row = current?.fields?.find(r => r.key === field.key);
-        if (!preserveDraft) toggle.checked = row?.overridden === true;
+        const input = inputs.get(field.key), toggle = switches.get(field.key), row = current?.fields.find(r => r.key === field.key);
+        const shown = uncertain?.draft[field.key] ?? draft?.get(field.key)?.wanted ?? picked(field);
+        toggle.checked = shown.override;
         toggle.disabled = locked || !current?.writable;
-        input.disabled = locked || !current?.writable || !toggle.checked;
-        const value = row?.override ?? row?.value;
-        if (!preserveDraft) { if (field.type === 'checkbox') input.checked = value === true; else input.value = value ?? ''; }
-        actual.get(field.key).textContent = row ? '默认：' + show(row.default) + ' · 来源：' + row.source_label + ' · 最终生效：' + show(row.value) : '尚未读取当前值。';
-        if (uncertain && !preserveDraft) {
-          const chosen = uncertain.draft[field.key]; toggle.checked = chosen.override;
-          if (field.type === 'checkbox') input.checked = chosen.value; else input.value = chosen.value;
-        }
+        input.disabled = locked || !current?.writable || !shown.override;
+        if (field.type === 'checkbox') input.checked = shown.value === true;
+        else input.value = shown.value;
+        const source = actual.get(field.key);
+        source.textContent = row ? '默认：' + show(row.default) + ' · 来源：' + row.source_label + ' · ' + (fresh ? '最终生效：' : '上次读到：') + show(row.value) : '尚未读取当前值。';
       }
+    }
+    function draftConflictStatus() {
+      const draft = drafts.get(selectionKey());
+      return '后台同时改动了：' + conflicts().map(field => {
+        const from = picked(field), wanted = draft.get(field.key).wanted;
+        return field.label + '（当前' + (from.override ? '覆盖 ' + show(from.value) : '继承') + '，草稿' + (wanted.override ? '覆盖 ' + show(wanted.value) : '恢复继承') + '）';
+      }).join('、') + '。请先核对，选择保留草稿或取消编辑。';
     }
     function validateSnapshot(value, selectedLevel) {
       if (!value || value.ok !== true || value.level !== selectedLevel || !Array.isArray(value.fields)
@@ -233,24 +284,52 @@
       if (busy || disposed) return false;
       const scope = getScope?.() || null, signature = scopeSignature(), selectedLevel = level.value, local = selectedLevel !== 'global';
       if (local && !full(scope)) { current = null; currentScope = null; status.textContent = '请选择上方完整会话；不会由配置创建会话或授权。'; paint(); return false; }
+      rememberDraft();
       const turn = ++epoch; currentScope = local ? {...scope} : null; currentSignature = signature;
-      const ownKey = selectionKey(currentScope, selectedLevel); busy = true; status.textContent = '正在读取当前层级和上级配置…'; paint(true);
+      const ownKey = selectionKey(currentScope, selectedLevel); busy = true; status.textContent = '正在读取当前层级和上级配置…'; paint();
       try {
         const result = validateSnapshot(await api('GET', 'page/console/config/inheritance', {...(local ? scope : {}), level: selectedLevel}), selectedLevel);
         if (!alive(turn,signature,local)) return false;
         current = result;
+        fresh = true;
         const intent = pending.get(ownKey);
-        if (intent && matches(result,intent) && result.revision !== intent.body.expected_revision) pending.delete(ownKey);
-        status.textContent = pending.has(ownKey) ? '已读取当前状态，但原保存尚未确认。草稿和原请求保留，只能继续读取，页面不会重发。' : '已读取当前来源和最终值；取消本级覆盖后保存可恢复继承。';
+        if (intent && matches(result, intent) && result.revision !== intent.body.expected_revision) {
+          pending.delete(ownKey);
+          drafts.delete(ownKey);
+        }
+        const draft = drafts.get(ownKey);
+        if (draft) {
+          for (const field of fields) {
+            const change = draft.get(field.key);
+            if (change && samePick(change.wanted, picked(field))) draft.delete(field.key);
+          }
+          if (!draft.size) drafts.delete(ownKey);
+        }
+        status.textContent = pending.has(ownKey) ? '已读取当前状态，但原保存尚未确认。草稿和原请求保留，只能继续读取，页面不会重发。'
+          : conflicts().length ? draftConflictStatus()
+          : drafts.has(ownKey) ? '已读取当前值；未保存的修改仍在表单中。未修改的字段使用最新后台值。'
+          : '已读取当前来源和最终值；取消本级覆盖后保存可恢复继承。';
         return true;
-      } catch (error) { if (alive(turn,signature,local)) { current = null; status.textContent = message(error); } return false; }
+      } catch (error) {
+        if (alive(turn, signature, local)) {
+          fresh = false;
+          status.textContent = message(error) + (drafts.has(ownKey) ? ' 草稿已保留，重新读取确认后再保存。' : '');
+        }
+        return false;
+      }
       finally { if (alive(turn,signature,local)) { busy = false; paint(); } }
     }
     async function persist(event) {
       event.preventDefault();
       const ownKey = selectionKey();
-      if (busy || disposed || !current?.writable || pending.has(ownKey)) return;
+      if (busy || disposed || !fresh || !current?.writable || pending.has(ownKey)) return;
       if (current.level !== 'global' && currentSignature !== scopeSignature()) { status.textContent = '上方会话已变化，请先读取新范围。'; return; }
+      rememberDraft();
+      if (conflicts().length) {
+        status.textContent = draftConflictStatus();
+        paintActions();
+        return;
+      }
       const changes = {}, restoreKeys = [], draft = {};
       for (const field of fields) {
         const input = inputs.get(field.key), value = field.type === 'checkbox' ? input.checked : Number(input.value);
@@ -262,30 +341,63 @@
       if (!Object.keys(changes).length && !restoreKeys.length) { status.textContent = '当前没有需要保存的修改。'; return; }
       const selectedLevel = current.level, capturedScope = currentScope && {...currentScope}, signature = currentSignature, turn = ++epoch;
       const intent = {body:{level:selectedLevel,...(capturedScope ? {scope:capturedScope} : {}),changes,restore:restoreKeys,expected_revision:current.revision},draft};
-      pending.set(ownKey,intent); busy = true; paint(true); status.textContent = '正在保存本级修改并读取实际生效值…';
+      pending.set(ownKey,intent); busy = true; paint(); status.textContent = '正在保存本级修改并读取实际生效值…';
       let accepted = false;
       try {
         const saved = validateSnapshot(await api('POST','page/console/config/inheritance/save',intent.body),selectedLevel); accepted = true;
         const confirmed = validateSnapshot(await api('GET','page/console/config/inheritance',{...(capturedScope || {}),level:selectedLevel}),selectedLevel);
         if (confirmed.revision !== saved.revision || !matches(confirmed,intent)) throw Error('Readback differs');
-        if (pending.get(ownKey)===intent) pending.delete(ownKey);
+        if (pending.get(ownKey)===intent) {
+          pending.delete(ownKey);
+          drafts.delete(ownKey);
+        }
         if (!alive(turn,signature,!!capturedScope)) return;
-        current = confirmed; status.textContent = '已保存并回读。下一次真实对话按上述最终值读取。';
+        current = confirmed; fresh = true; status.textContent = '已保存并回读。下一次真实对话按上述最终值读取。';
       } catch (error) {
         if (!accepted && [400,401,403,409].includes(Number(error?.status||error?.statusCode)) && pending.get(ownKey)===intent) pending.delete(ownKey);
-        if (alive(turn,signature,!!capturedScope)) status.textContent = message(error) + (pending.has(ownKey) ? ' 原保存结果未确认；保留草稿，请只读取核对，不会重发。' : ' 草稿已保留，请读取当前来源后再修改。');
-      } finally { if (alive(turn,signature,!!capturedScope)) { busy = false; paint(!accepted || pending.has(ownKey)); } }
+        if (alive(turn,signature,!!capturedScope)) {
+          if (Number(error?.status || error?.statusCode) === 409) fresh = false;
+          status.textContent = message(error) + (pending.has(ownKey) ? ' 原保存结果未确认；保留草稿，请只读取核对，不会重发。' : ' 草稿已保留，请读取当前来源后再修改。');
+        }
+      } finally { if (alive(turn,signature,!!capturedScope)) { busy = false; paint(); } }
     }
     function scopeChanged() {
       if (level.value === 'global') return;
-      epoch++; busy = false; current = null; currentScope = null; currentSignature = '';
+      rememberDraft();
+      epoch++; busy = false; fresh = false; current = null; currentScope = null; currentSignature = '';
       status.textContent = '会话范围已变化，旧结果不会应用到新范围。'; paint();
       if (wrapper.open) load();
     }
     wrapper.addEventListener('toggle', () => { if (wrapper.open && !current) load(); });
-    level.addEventListener('change', () => { epoch++; busy = false; current = null; currentScope = null; paint(); load(); });
-    reload.addEventListener('click', load); cancel.addEventListener('click', () => { if (!busy && !pending.has(selectionKey())) { paint(); status.textContent = '已取消本次编辑。'; } });
-    restore.addEventListener('click', () => { if (!busy && !pending.has(selectionKey())) { for (const [key, input] of inputs) { switches.get(key).checked = false; input.disabled = true; } status.textContent = '已选择恢复本级继承，请保存后生效。'; } });
+    level.addEventListener('change', () => {
+      rememberDraft();
+      epoch++; busy = false; fresh = false; current = null; currentScope = null;
+      paint(); load();
+    });
+    reload.addEventListener('click', load);
+    cancel.addEventListener('click', () => {
+      if (busy || pending.has(selectionKey())) return;
+      drafts.delete(selectionKey());
+      paint();
+      status.textContent = '已取消本次编辑。';
+    });
+    restore.addEventListener('click', () => {
+      if (busy || pending.has(selectionKey())) return;
+      for (const [key, input] of inputs) {
+        switches.get(key).checked = false;
+        input.disabled = true;
+      }
+      trackDraft();
+      status.textContent = '已选择恢复本级继承，请保存后生效。';
+    });
+    keep.addEventListener('click', () => {
+      if (busy || !fresh || pending.has(selectionKey())) return;
+      rememberDraft();
+      const draft = drafts.get(selectionKey());
+      for (const field of conflicts()) draft.get(field.key).base = picked(field);
+      paintActions();
+      status.textContent = '已保留草稿。确认后点击保存，后台仍会检查当前版本。';
+    });
     form.addEventListener('submit', persist); paint();
     return {scopeChanged, destroy() { disposed = true; epoch++; }};
   }

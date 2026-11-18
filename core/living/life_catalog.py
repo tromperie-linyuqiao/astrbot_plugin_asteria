@@ -18,14 +18,15 @@ def _day(value, zone, *, end=False):
     return datetime.combine(day,time.min,tzinfo=zone).timestamp()
 
 
-def search(life,scope,*,query='',kind='all',date_from='',date_to='',shared=False,limit=20,offset=0):
+def search(life,scope,*,query='',kind='all',date_from='',date_to='',shared=None,limit=20,offset=0):
     """Date means occurrence for events, latest record update for other kinds.
 
-    Counts and pagination follow filtering; in particular shared-only searches
-    do not merely filter the current client page. No provider or model calls.
+    An explicit share filter is for events and compares their recorded
+    confirmation history. None includes every matching kind. Filter before
+    calculating the count or selecting a page.
     """
     query=_text(query,200,empty=True)
-    if kind not in ('all',*KINDS) or type(shared) is not bool: raise ValueError('无效的档案类型或分享筛选')
+    if kind not in ('all',*KINDS) or (shared is not None and type(shared) is not bool): raise ValueError('无效的档案类型或分享筛选')
     if type(limit) is not int or not 1<=limit<=50 or type(offset) is not int or not 0<=offset<=MAX_OFFSET:
         raise ValueError('档案分页超出范围')
     start,end=_day(date_from,life.timezone),_day(date_to,life.timezone,end=True)
@@ -39,7 +40,7 @@ def search(life,scope,*,query='',kind='all',date_from='',date_to='',shared=False
             rows=life.journal.list(PERSONAL_NS[selected],scope,limit=maximum+1)
             if len(rows)>maximum: raise RuntimeError('私人资料超过支持的容量')
             scanned[selected]=len(rows)
-            if kind not in ('all',selected) or shared: continue
+            if kind not in ('all',selected) or shared is not None: continue
             for row in rows:
                 checked=personal._checked_row(scope,selected,row['key'],row)
                 cache[('row',selected,row['key'])]=checked
@@ -47,7 +48,7 @@ def search(life,scope,*,query='',kind='all',date_from='',date_to='',shared=False
         result=[]
         for row in records:
             if row['archived'] or row.get('deleted') or kind not in ('all',row['kind']):continue
-            if shared and (row['kind']!='event' or not row.get('sharing',{}).get('ever_shared')):continue
+            if shared is not None and (row['kind']!='event' or row['sharing']['ever_shared']!=shared):continue
             fields=row['fields'];stamp=fields.get('occurred_at') if row['kind']=='event' else row['updated_at']
             if start is not None and stamp<start or end is not None and stamp>=end:continue
             title=_normal(fields.get('title',fields.get('name','')))

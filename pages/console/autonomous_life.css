@@ -21,9 +21,48 @@
 .life-runtime-details>summary{cursor:pointer;color:var(--muted);font-size:13px}
 .life-world-group{margin-top:16px;padding:12px 14px;border:1px solid var(--line);border-radius:12px}
 .life-world-group h4{margin:0 0 4px}.life-world-group .life-world-node:last-child{border-bottom:0}
-.life-back-to-records{display:none}
+.life-detail-nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
 @media(max-width:760px){
- .life-columns:not(.life-detail-open)>[data-life-detail],.life-columns.life-detail-open>div,.life-columns.life-detail-open .life-toolbar{display:none}
+ .life-columns:not(.life-detail-open)>[data-life-detail],.life-columns.life-detail-open>div,
+ [data-life-records]:has(>.life-columns.life-detail-open)>.life-toolbar{display:none}
  .life-columns.life-detail-open .life-back-to-records{display:inline-block}
  .life-columns.life-detail-open [data-life-detail]{min-width:0}
+ [data-life-detail]>h3{scroll-margin-top:62px}
+}
+
+/* Master list and reading pane. The enclosing workbench supplies theme tokens. */
+#view-autonomous_life .life-columns { gap: var(--aw-block-gap); }
+#view-autonomous_life .life-card {
+  margin: 0;
+  padding: 13px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--aw-line-soft);
+  border-radius: 0;
+  background: transparent;
+}
+#view-autonomous_life .life-card strong { font-size: 15px; line-height: 1.5; }
+#view-autonomous_life .life-card small { margin-top: 4px; font-size: 12px; }
+#view-autonomous_life .life-card .life-record-flag { color: var(--aw-warning); }
+#view-autonomous_life .life-card[data-selected=true] {
+  box-shadow: inset 3px 0 var(--blue);
+  background: var(--accent-soft);
+}
+#view-autonomous_life .life-card:not([data-selected=true]):hover { background: var(--aw-hover); }
+#view-autonomous_life .life-card:focus-visible { outline-offset: -3px; }
+#view-autonomous_life [data-life-detail] {
+  min-width: 0;
+  padding-inline-start: var(--aw-detail-gap);
+  border-inline-start: 1px solid var(--aw-line-soft);
+}
+.life-record-header { margin: 12px 0 16px; }
+.life-record-header small { color: var(--muted); font-variant-numeric: tabular-nums; }
+.autonomous-life .life-record-header h3 {
+  margin: 4px 0 0;
+  font-size: clamp(20px, 2vw, 26px);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+#view-autonomous_life [data-life-detail] > .life-content { font-size: 15px; max-width: 60ch; }
+@media(max-width:760px) {
+  #view-autonomous_life [data-life-detail] { padding-inline-start: 0; border-inline-start: 0; }
 }

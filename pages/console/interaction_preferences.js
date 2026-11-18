@@ -38,7 +38,27 @@ function mount(root,{api,deadlineMs=20000}){
    else{say(key,'后台已刷新；草稿和原读取版本保持，保存时仍检查是否冲突。');}
   }catch(error){if(alive(s,n,key)&&s.token===token)say(key,errorText(error)+' 草稿或原请求仍保留。',true);}finally{if(alive(s,n,key)&&s.token===token){s.busy=false;draw(key);}}}
  async function write(key,pending){const s=current[key],n=epoch,at={...scope};s.busy=true;s.pending=pending;draw(key);say(key,'正在保存本项，随后独立回读…');let accepted=false;try{const result=await request('POST',pending.path,pending.body);if(!result||result.ok!==true)throw Error('invalid write response');accepted=true;const value=await read(key,at);if(!alive(s,n,key))return;const target=key==='mode'?pending.body.interaction_mode:pending.body.value,matched=key==='mode'?value.value===target:target==='default'?!value.override_owned:value.selection===target&&value.override_owned;if(!matched||value.revision<=pending.body.expected_revision)throw Error('readback mismatch');s.base=value;s.editing=false;s.pending=null;s.conflict=false;s.draft=value.selection;cards.get(key).compare.hidden=true;say(key,'已保存并独立回读确认；实际措辞仍由现有回复链路按当前上下文使用。');}catch(error){if(!alive(s,n,key))return;const code=Number(error?.status||error?.statusCode);if(!accepted&&[400,401,403,404,409].includes(code)){s.pending=null;s.conflict=code===409;say(key,errorText(error)+' 输入仍保留。',true);}else say(key,'保存结果未知或回读未确认，原输入和请求已保留。请先读取当前版本，勿盲目重复设置。 '+errorText(error),true);}finally{if(alive(s,n,key)){s.busy=false;draw(key);}}}
- function save(key){const s=current?.[key];if(!scope||!s?.base||s.busy||s.pending||s.conflict||!s.editing)return;const value=cards.get(key).select.value;if(value===s.base.selection){s.editing=false;draw(key);say(key,'选择未改变，没有重复提交。');return;}s.draft=value;const body=key==='mode'?{scope:{...scope},expected_revision:s.base.revision,interaction_mode:value}:{scope:{...scope},feature:key,value,expected_revision:s.base.revision,request_id:'interaction.'+crypto.randomUUID()};write(key,{body,path:key==='mode'?'page/narrative/preference/save':'page/interaction-preferences/expression/save'});}
+ function save(key){
+  const s=current?.[key];
+  if(!scope||!s?.base||s.busy||s.pending||s.conflict||!s.editing)return;
+  const value=cards.get(key).select.value;
+  if(value===s.base.selection){s.editing=false;draw(key);say(key,'选择未改变，没有重复提交。');return;}
+  s.draft=value;
+  const body={scope:{...scope},expected_revision:s.base.revision};
+  if(key==='mode'){
+   write(key,{body:{...body,interaction_mode:value},path:'page/narrative/preference/save'});
+   return;
+  }
+  let requestId;
+  try{
+   const uuid=global.TLSBrowserCompat?global.TLSBrowserCompat.uuid():global.crypto.randomUUID();
+   requestId='interaction.'+uuid;
+  }catch{
+   say(key,'未能生成请求编号，编辑仍保留。请刷新页面后再试。',true);
+   return;
+  }
+  write(key,{body:{...body,feature:key,value,request_id:requestId},path:'page/interaction-preferences/expression/save'});
+ }
  function setScope(value){if(scoped(scope,value))return;if(current)for(const s of Object.values(current)){s.busy=false;s.token++;}scope=value&&SCOPE.every(k=>typeof value[k]==='string'&&value[k])?Object.fromEntries(SCOPE.map(k=>[k,value[k]])):null;epoch++;current=scope?(states.get(JSON.stringify(scope))||fresh()):null;if(scope)states.set(JSON.stringify(scope),current);root.querySelector('[data-preferences-scope]').textContent=scope?'用户 '+scope.user_id+' · 角色 '+scope.character_id+' · 会话 '+scope.session_id:'先选择完整会话；未设置任何默认覆盖。';for(const key of Object.keys(configs)){cards.get(key).compare.hidden=true;draw(key);say(key,current?.[key].pending?'已恢复此会话原请求，请先核查。':'');}}
  const controller={setScope,activate(){if(scope)return Promise.allSettled(Object.keys(configs).map(k=>loadCard(k)));}};root.querySelector('[data-preferences-refresh]').addEventListener('click',()=>controller.activate());root.__interactionPreferences=controller;setScope(null);return controller;
 }

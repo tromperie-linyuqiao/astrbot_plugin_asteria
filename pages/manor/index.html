@@ -35,6 +35,9 @@ td input,td select{width:100%}
 svg{background:#0d1117;border:1px solid #30363d;border-radius:10px;touch-action:none;user-select:none}
 #plan{display:block;width:100%;height:auto}
 #editor{flex:1;min-width:300px}
+.room-picker{display:grid;gap:4px;margin-bottom:9px;color:var(--tls-page-muted)}
+.room-picker select{width:100%;min-width:0;min-height:36px}
+.room-picker select:focus-visible{outline:2px solid var(--tls-page-accent);outline-offset:2px}
 .toast{position:fixed;bottom:24px;right:24px;background:#1f6feb;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;display:none;box-shadow:0 4px 18px #000a}
 .toast.err{background:#b62324}
 /* 四页互跳导航条（沙箱内无法直接跳转，见脚本注） */
@@ -87,7 +90,7 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
 </div>
 <h1>庄园空间层 · 平面图编辑器</h1>
 <div class="meta" id="meta">加载中…</div>
-<div class="tabs" id="floor-tabs"></div>
+<div class="tabs" id="floor-tabs" role="group" aria-label="楼层"></div>
 
 <div class="wrap">
   <div id="plan-wrap">
@@ -97,7 +100,10 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
   <div id="editor" style="flex:1;min-width:min(100%,320px)">
     <div class="card">
       <h2>选中房间</h2>
-      <div id="room-panel"><span class="hint">点击平面图上的房间节点进行编辑。</span></div>
+      <label class="room-picker" for="room-select">本层房间
+        <select id="room-select" disabled><option value="">正在读取房间…</option></select>
+      </label>
+      <div id="room-panel"><span class="hint">在列表或平面图中选择房间，然后修改参数。</span></div>
       <button onclick="addRoom()">+ 新增房间（本层随机落点）</button>
     </div>
     <div class="card">
@@ -221,10 +227,38 @@ function floorRooms(){ return (M.rooms || []).filter(r => r.floor === FLOOR); }
 function roomById(id){ return (M.rooms || []).find(r => r.id === id); }
 
 function renderTabs(){
-  document.getElementById('floor-tabs').innerHTML = (M.floors || []).map(f =>
-    `<div class="tab ${f.id === FLOOR ? 'active' : ''}" onclick="setFloor('${esc(f.id)}')">${esc(f.name)}</div>`).join('');
+  const tabs = document.getElementById('floor-tabs');
+  const focusedFloor = tabs.contains(document.activeElement) ? document.activeElement.dataset.floor : null;
+  const buttons = (M.floors || []).map(f => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tab' + (f.id === FLOOR ? ' active' : '');
+    button.dataset.floor = f.id;
+    button.setAttribute('aria-pressed', String(f.id === FLOOR));
+    button.textContent = f.name;
+    button.addEventListener('click', () => setFloor(f.id));
+    return button;
+  });
+  tabs.replaceChildren(...buttons);
+  if (focusedFloor !== null) buttons.find(button => button.dataset.floor === focusedFloor)?.focus({preventScroll:true});
 }
-function setFloor(f){ FLOOR = f; SEL = -1; renderAll(); }
+function setFloor(f){
+  if (f === FLOOR) return;
+  FLOOR = f; SEL = -1; renderAll();
+}
+
+const roomSelect = document.getElementById('room-select');
+function renderRoomPicker(){
+  const choices = M.rooms.flatMap((room, index) =>
+    room.floor === FLOOR ? [new Option(room.label || room.id, String(index))] : []);
+  roomSelect.replaceChildren(new Option(choices.length ? '选择房间' : '本层没有房间', ''), ...choices);
+  roomSelect.disabled = choices.length === 0;
+  roomSelect.value = M.rooms[SEL]?.floor === FLOOR ? String(SEL) : '';
+}
+roomSelect.addEventListener('change', () => {
+  SEL = roomSelect.value === '' ? -1 : Number(roomSelect.value);
+  renderAll();
+});
 
 function renderPlan(){
   const svg = document.getElementById('plan');
@@ -334,9 +368,10 @@ function parseSceneWords(s, prev){
 }
 
 function renderEditor(){
+  renderRoomPicker();
   const panel = document.getElementById('room-panel');
   const p = SEL >= 0 && M.rooms[SEL];
-  if (!p){ panel.innerHTML = '<span class="hint">点击房间进行编辑。</span>'; }
+  if (!p){ panel.innerHTML = '<span class="hint">在列表或平面图中选择房间，然后修改参数。</span>'; }
   else{
     panel.innerHTML = `
       <table>
@@ -367,6 +402,7 @@ function renderEditor(){
           inp.value = sceneWordsStr(p);
         } else p.scene_words = parsed;
       }
+      if (k === 'label' || k === 'floor') renderRoomPicker();
       renderPlan();
     }));
   }
@@ -454,8 +490,9 @@ async function load(){
     M.rooms.forEach(r => { if (!Array.isArray(r.scene_words)) r.scene_words = []; });
     M.default_schedule = M.default_schedule || []; M.activity_map = M.activity_map || [];
     M.floors = M.floors && M.floors.length ? M.floors : [{id: 'L1', name: '一层'}];
+    if (!M.floors.some(f => f.id === FLOOR)){ FLOOR = M.floors[0].id; SEL = -1; }
     document.getElementById('meta').textContent = `房间 ${M.rooms.length}｜边 ${M.edges.length}｜动线 ${M.default_schedule.length}｜映射 ${M.activity_map.length}`;
-    renderTabs(); renderAll();
+    renderAll();
     await loadObjectsUI();
     const ov = await bridge.apiGet('page/manor/overview');
     const states = ov.states || [];

@@ -274,6 +274,9 @@ class NativeProactiveChatHost(SessionMixin, StorageMixin, ConfigMixin,
         username, sid = self._app_identity(scope)
         if self._scope(scope['session_id']) != scope:
             raise PermissionError('app_real_scope_unavailable')
+        mode = getattr(self.host,'chat_companion_mode',None)
+        if mode is not None and mode.suppress_ordinary(scope):
+            raise PermissionError('app_companion_mode_active')
         actual = service._tls_source
         if (not isinstance(actual, dict) or actual.get('source') != 'genuine_inbound_sdk_selection'
                 or not isinstance(actual.get('event_id'), str) or not actual['event_id'] or actual['event_id'] == '0'

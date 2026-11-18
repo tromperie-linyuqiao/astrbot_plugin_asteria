@@ -338,12 +338,13 @@ export function renderContextLogs(logs) {
   `;
 }
 
-export async function loadUserMemory() {
+export async function loadUserMemory(current, refreshPortraits) {
   const target = $("#relationList");
   if (!target) return;
   syncUserMemoryFilterControls();
   target.innerHTML = loadingState("正在读取用户档案与记忆...");
-  await loadPortraitGovernance();
+  if (refreshPortraits) void loadPortraitGovernance();
+  const filter = state.userMemoryFilter;
   const types = relationTypesForSecondary();
   const { params, incompatible } = scopedMemoryParams("private", { limit: 180 });
   if (incompatible) {
@@ -354,10 +355,11 @@ export async function loadUserMemory() {
   // 不能把同一用户在其他私聊窗口中的画像/偏好切掉。
   if (activeBucket()?.target_id) params.delete("session_id");
   const data = await apiGet(`/memories?${params.toString()}`);
+  if (!current()) return;
   const allMemories = data.memories || [];
   let memories = allMemories;
   if (types.length) memories = allMemories.filter((memory) => hasMemoryType(memory, types));
-  if (state.userMemoryFilter === 'private') {
+  if (filter === 'private') {
     memories = allMemories.filter((memory) => memory.scope === 'private');
   }
   renderMemoryList("#relationList", memories, "当前用户在这个分类下还没有记忆。", 180);

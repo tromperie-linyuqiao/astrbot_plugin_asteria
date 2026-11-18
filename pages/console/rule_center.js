@@ -7,7 +7,7 @@
     if (!container || typeof options.api !== 'function' || typeof options.getScope !== 'function'
         || typeof options.uuid !== 'function') throw Error('Rule center requires the existing authenticated page bridge and scope.');
     const api = options.api, notify = options.notify || function () {};
-    let sequence = 0, busy = false, snapshot = null, draftId = null, scopeKey = '';
+    let sequence = 0, busy = false, snapshotKnown = false, snapshotFresh = false, draftId = null, scopeKey = '';
     const actions = new Map();
     const node = (tag, text, css) => {
       const element = document.createElement(tag);
@@ -51,10 +51,14 @@
     panel.append(heading, boundary, toolbar, status, form, node('h3', '纠正候选'), candidates,
                  node('h3', '已登记的表达规则'), rules);
     container.replaceChildren(panel);
+    function say(text, error = false) {
+      status.textContent = text;
+      status.dataset.error = String(error);
+    }
     function availability() {
       submit.disabled = busy || !scope(); reload.disabled = busy;
       input.disabled = busy;
-      for (const button of panel.querySelectorAll('[data-rule-action]')) button.disabled = busy;
+      for (const button of panel.querySelectorAll('[data-rule-action]')) button.disabled = busy || !snapshotFresh;
     }
     function operationId(kind, row) {
       const identity = kind + ':' + row.id + ':' + row.revision;
@@ -103,17 +107,28 @@
     async function refresh() {
       const selected = scope(), token = ++sequence;
       const nextKey = key(selected);
-      if (scopeKey && scopeKey !== nextKey) {input.value = ''; draftId = null; actions.clear();}
-      scopeKey = nextKey; snapshot = null; candidates.replaceChildren(); rules.replaceChildren();
-      if (!selected) {status.textContent = '请选择完整的用户、角色和会话范围。'; availability(); return false;}
-      status.textContent = '正在读取当前范围的纠正与规则…';
+      if (scopeKey !== nextKey) {
+        input.value = ''; draftId = null; actions.clear(); snapshotKnown = false;
+        candidates.replaceChildren(); rules.replaceChildren();
+      }
+      scopeKey = nextKey;
+      snapshotFresh = false;
+      availability();
+      if (!selected) {say('请选择完整的用户、角色和会话范围。'); return false;}
+      say('正在读取当前范围的纠正与规则…');
       try {
         const result = await api('GET', 'page/rule-center/state', selected);
         if (!current(selected, token)) return false;
-        snapshot = result; draw(result); status.textContent = '已从后台读取。批准并生效是一个动作；不产生发送任务。';
+        if (!Array.isArray(result?.candidates) || !Array.isArray(result?.rules)) throw Error('invalid rules response');
+        snapshotKnown = true;
+        snapshotFresh = true;
+        draw(result);
+        say('已从后台读取。批准并生效是一个动作；不产生发送任务。');
         return true;
       } catch (_) {
-        if (current(selected, token)) status.textContent = '暂时无法读取规则，请刷新；草稿会保留。';
+        if (current(selected, token)) say(snapshotKnown
+          ? '暂时无法读取规则。下方为本会话上次读到的记录，刷新确认后可继续审核或停用。草稿已保留。'
+          : '暂时无法读取规则，请刷新；草稿会保留。', true);
         return false;
       } finally {if (current(selected, token)) availability();}
     }
@@ -121,7 +136,7 @@
       if (busy || !scope()) return false;
       const selected = scope(), token = sequence;
       let expectedSequence = token;
-      busy = true; availability(); status.textContent = '正在保存并回读…';
+      busy = true; availability(); say('正在保存并回读…');
       try {
         const result = await api('POST', 'page/rule-center/' + path, {scope: selected, ...body});
         if (!current(selected, token)) return false;
@@ -130,11 +145,11 @@
         const confirmed = await refresh();
         if (sequence !== expectedSequence || key(scope()) !== key(selected)) return false;
         if (!confirmed) throw Error('readback-unavailable');
-        status.textContent = success; notify(success); return true;
+        say(success); notify(success); return true;
       } catch (error) {
-        if (sequence === expectedSequence && key(scope()) === key(selected)) status.textContent = error && error.message === 'unrecognized'
+        if (sequence === expectedSequence && key(scope()) === key(selected)) say(error && error.message === 'unrecognized'
           ? '尚未识别为明确纠正，请使用示例句式。草稿已保留。'
-          : '尚未确认保存结果。草稿及操作编号已保留；请刷新确认后重试。';
+          : '尚未确认保存结果。草稿及操作编号已保留；请刷新确认后重试。', true);
         return false;
       } finally {busy = false; availability();}
     }
@@ -156,8 +171,8 @@
     });
     input.addEventListener('input', () => {draftId = null;});
     reload.addEventListener('click', refresh); availability();
-    return {refresh, reset() {sequence++; snapshot = null; candidates.replaceChildren(); rules.replaceChildren();
-      status.textContent = '会话范围已变更，请刷新规则。'; availability();}, destroy() {sequence++; container.replaceChildren();}};
+    return {refresh, reset() {sequence++; snapshotKnown = false; snapshotFresh = false; candidates.replaceChildren(); rules.replaceChildren();
+      say('会话范围已变更，请刷新规则。'); availability();}, destroy() {sequence++; container.replaceChildren();}};
   }
   const api = Object.freeze({mount});
   if (typeof module === 'object' && module.exports) module.exports = api;

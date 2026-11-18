@@ -217,6 +217,8 @@ class NativeHostServices:
         return self._delivery_allowed(scope)
 
     def _proactive_allowed(self,scope):
+        mode = getattr(self.host,'chat_companion_mode',None)
+        if mode is not None and mode.suppress_ordinary(scope):return False
         from .native_legacy_companion_inspection import runtime_disabled,runtime_random_disabled
         activated=self.plugin._cfg('living_proactive_activated_at',0)
         if (type(activated) not in (int,float) or not math.isfinite(activated)

@@ -5,170 +5,238 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>材质工坊 · 虚拟存在层</title>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh;padding:12px;font-size:12px}
-.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px}
-.top h1{font-size:17px;color:#58a6ff}
-.top .meta{font-size:12px;color:#8b949e}
-button{background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px}
-button:hover{background:#30363d}
-button.danger{color:#f85149}
-button.danger-armed{background:#b62324;color:#fff;border-color:#b62324}
-button.primary{background:#1f6feb;color:#fff;border-color:#1f6feb}
-button.primary:hover{background:#388bfd}
-input,select,textarea{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:5px 8px;font-size:12px}
-input:focus,textarea:focus,select:focus{outline:1px solid #1f6feb}
-.panel{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;margin-bottom:16px}
-.panel>h2{font-size:13px;color:#e6edf3;margin-bottom:10px}
-.panel>h2 .sub{font-size:11px;color:#8b949e;font-weight:400;margin-left:8px}
-.controls{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
-.controls label{font-size:12px;color:#8b949e;display:flex;align-items:center;gap:6px}
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
-.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px solid #30363d;border-radius:14px;background:#161b22;color:#8b949e;cursor:pointer;font-size:12px;user-select:none}
-.chip .dot{width:9px;height:9px;border-radius:50%;background:#484f58}
-.chip.on{color:#e6edf3;border-color:#1f6feb88;background:#1f6feb22}
-.chip.on .dot{background:var(--c)}
-#chart-wrap{position:relative;background:#0d1117;border:1px solid #30363d;border-radius:8px}
-#chart{display:block;width:100%;height:auto}
-#chart-tip{position:absolute;pointer-events:none;background:#161b22ee;border:1px solid #30363d;border-radius:6px;padding:6px 10px;font-size:11px;display:none;z-index:5;min-width:130px}
-#chart-tip b{color:#58a6ff}
-.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:#8b949e}
-.legend span{display:inline-flex;align-items:center;gap:5px}
-.legend i{width:14px;height:3px;border-radius:2px;display:inline-block}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr));gap:14px}
-.mat-card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px}
-.mat-card h3{font-size:13px;color:#e6edf3;display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.mat-card h3 .id{font-size:11px;color:#8b949e;font-weight:400}
-.krow{display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:12px;color:#8b949e}
-.krow .k{width:110px;flex-shrink:0}
-.krow input[type=number]{width:90px}
-.krow input[type=range]{flex:1;min-width:80px}
-.krow .v{width:44px;text-align:right;color:#e6edf3;font-variant-numeric:tabular-nums}
-.krow input[type=text]{flex:1;min-width:60px}
-.mat-card textarea{width:100%;height:40px;resize:vertical;font-size:11px;line-height:1.5}
-.hint{font-size:11px;color:#8b949e;margin:6px 0}
-.err{color:#f85149;font-size:13px;padding:20px;text-align:center}
-.empty{color:#8b949e;text-align:center;padding:40px 0;font-size:13px}
-.toast{position:fixed;bottom:24px;right:24px;background:#1f6feb;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;display:none;box-shadow:0 4px 20px #0008}
-.toast.err{background:#b62324}
-/* 四页互跳导航条（沙箱内无法直接跳转，见脚本注） */
-.xnav{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #21262d}
-.xnav .xt{font-size:11px;color:#8b949e;margin-right:4px}
-.xnav a{font-size:12px;color:#8b949e;border:1px solid #30363d;border-radius:6px;padding:3px 10px;background:#161b22;cursor:pointer;text-decoration:none}
-.xnav a:hover{background:#21262d;color:#c9d1d9}
-.xnav a.cur{color:#58a6ff;border-color:#1f6feb66;background:#1f6feb22;cursor:default}
-.refs{font-size:12px;color:#8b949e}
-.refs li{margin-bottom:6px;line-height:1.6}
-.refs a{color:#58a6ff;text-decoration:none;overflow-wrap:anywhere}
-.refs a:hover{text-decoration:underline}
-.refs .k{color:#c9d1d9}
-.rowbtn{padding:2px 8px;font-size:11px}
-/* 方式参数卡（键名与 web_api._METHOD_PARAM_SPEC 对齐：freq_lo/freq_hi、speed_lo/speed_hi） */
-.mptab{width:100%;border-collapse:collapse;font-size:12px}
-.mptab th{color:#8b949e;font-weight:500;text-align:left;padding:5px 8px;border-bottom:1px solid #21262d}
-.mptab td{padding:5px 8px;border-bottom:1px solid #21262d}
-.mptab input[type=number]{width:86px}
-/* ---- 五页统一响应式基座：卡片限宽居中 / 表格容器横滚 / 触摸目标 ≥36px ---- */
-.xnav,.top,.panel{max-width:960px;margin-left:auto;margin-right:auto}
-.twrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-@media (max-width:639px){
-  button:not(.rowbtn){min-height:36px}
-  .krow{flex-wrap:wrap}
+:root{
+  color-scheme:dark;
+  --bg:#151418;--panel:#201f24;--field:#19181d;--raised:#2b292f;--line:#3d3a44;
+  --text:#efedf1;--muted:#b6b0bf;--accent:#c5b3f1;--on-accent:#241938;--accent-surface:#332941;
+  --error:#ffa9ad;--error-surface:#4b282f;--radius:12px;
 }
-/* 保存反馈在手机窄屏保持可读，焦点操作同样可见。 */
-.toast{max-width:calc(100vw - 32px);overflow-wrap:anywhere;z-index:1000}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --bg:#f5f4f1;--panel:#fff;--field:#f7f6f5;--raised:#eeebf0;--line:#d7d3db;
+  --text:#25222b;--muted:#645e6c;--accent:#634c9c;--on-accent:#fff;--accent-surface:#eee8f8;
+  --error:#9e2c3e;--error-surface:#f9e9ec;
+}
+:root[data-theme="black"]{
+  --bg:#000;--panel:#0f0f10;--field:#060607;--raised:#1b1a1e;--line:#37343e;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--bg);color:var(--text);margin:0;padding:clamp(12px,3.2vw,32px);
+  font:14px/1.55 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+}
+h1,h2,h3,p,ol{margin:0}
+h1{font-size:clamp(24px,3vw,34px);line-height:1.2;letter-spacing:-.025em}
+h2{font-size:18px;line-height:1.35;scroll-margin-top:16px}
+button,input,textarea,select{font:inherit}
+button,input:not([type=range]),textarea,select{
+  border:1px solid var(--line);border-radius:8px;background:var(--field);color:var(--text);
+}
+button{min-height:38px;padding:7px 12px;cursor:pointer}
+button:hover,.related-pages button:hover{background:var(--raised)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:650}
+button.primary:hover{opacity:.9}
+button.danger{color:var(--error)}
+button.danger-armed{background:var(--error-surface);border-color:var(--error)}
 button:disabled{opacity:.6;cursor:wait}
-.xnav a:focus-visible,button:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
-@media(max-width:639px){.xnav a{min-height:36px;display:inline-flex;align-items:center}.rowbtn{min-height:32px}}
-@media(max-width:639px){#chart-wrap{overflow-x:auto}#chart{min-width:560px}.mptab{min-width:420px}}
-
-/* Follow the actual page theme, including explicit pure black navigation. */
-:root{--tls-page-bg:#0d1117;--tls-page-panel:#161b22;--tls-page-field:#0d1117;--tls-page-line:#30363d;--tls-page-text:#c9d1d9;--tls-page-muted:#8b949e;--tls-page-heading:#e6edf3;--tls-page-accent:#58a6ff}
-:root[data-theme="light"]{color-scheme:light;--tls-page-bg:#f6f5f1;--tls-page-panel:#ffffff;--tls-page-field:#fbfaf7;--tls-page-line:#d9d6cf;--tls-page-text:#292c30;--tls-page-muted:#676c73;--tls-page-heading:#202328;--tls-page-accent:#315e89}
-:root[data-theme="black"]{color-scheme:dark;--tls-page-bg:#000000;--tls-page-panel:#111111;--tls-page-field:#080808;--tls-page-line:#353535;--tls-page-text:#ededeb;--tls-page-muted:#aaa9a5;--tls-page-heading:#f1efea;--tls-page-accent:#d2bc91}
-body{background:var(--tls-page-bg);color:var(--tls-page-text)}.card,.panel,.tab,.tab.active,.xnav a,dialog{background:var(--tls-page-panel);border-color:var(--tls-page-line);color:var(--tls-page-text)}input,select,textarea,button{background:var(--tls-page-field);border-color:var(--tls-page-line);color:var(--tls-page-text)}.card h2,.panel h3,b,strong{color:var(--tls-page-heading)}.hint,.meta,.kv,th,.xnav .xt{color:var(--tls-page-muted)}.top h1,.xnav a.cur,.tab.active{color:var(--tls-page-accent)}:root[data-theme="light"] [style*="color:#e6edf3"]{color:var(--tls-page-heading)!important}table{max-width:100%}dialog{max-height:90dvh;overflow:auto}dialog::backdrop{background:#0009}.toast{max-width:min(90vw,600px);overflow-wrap:anywhere}.toast button{margin-left:12px;min-height:30px;padding:3px 8px;color:inherit}.xnav a{min-height:36px;display:inline-flex;align-items:center}
-
-</style>
-<style id="asteria-leaf-style">
-body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.6}
-.aw-leaf-header{max-width:1560px;margin:0 auto 22px;padding:16px 18px;border:1px solid var(--line,var(--edge,#475569));border-radius:12px;background:var(--panel,#161b22);color:var(--text,var(--ink,#e6edf3));display:flex;align-items:center;gap:18px;flex-wrap:wrap}
-.aw-leaf-brand{font-weight:650;letter-spacing:.04em;font-size:16px;white-space:nowrap}.aw-leaf-path{flex:1;min-width:180px;font-size:13px;color:var(--muted,#94a3b8)}
-.aw-leaf-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.aw-leaf-tools button,.aw-leaf-tools select{font:inherit;font-size:13px;min-height:38px;border-radius:8px;padding:8px 12px;max-width:260px;width:auto;background:var(--panel,#161b22);color:inherit;border:1px solid var(--line,var(--edge,#475569))}
-.aw-leaf-tools label{display:flex;align-items:center;gap:8px}.aw-leaf-message{flex-basis:100%;margin:0;font-size:13px;color:var(--red,#c65364)}
-body h1{font-size:clamp(21px,2vw,28px);line-height:1.35}body h2{line-height:1.45}body .panel,body .card{border-radius:12px}body input,body textarea,body select{scroll-margin-top:24px}body button:focus-visible,body a:focus-visible{outline:2px solid var(--blue,var(--accent,#7385c9));outline-offset:3px}
-body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto}body pre{overflow-wrap:anywhere;white-space:pre-wrap}body .table-wrap,body .twrap{max-width:100%;overflow:auto}
-@media(max-width:640px){.aw-leaf-header{padding:14px;margin:8px 0 18px;gap:10px}.aw-leaf-path{font-size:12px}.aw-leaf-tools{width:100%}.aw-leaf-tools label{flex:1;min-width:0}.aw-leaf-tools select{min-width:0;width:100%;max-width:100%}.aw-leaf-tools button{flex-shrink:0}body h1{font-size:22px}}
+a{color:var(--accent)}
+a:hover{text-decoration:underline}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+summary{cursor:pointer}
+input:not([type=range]),textarea,select{min-width:0;padding:8px 10px}
+input[type=range]{accent-color:var(--accent);min-width:0;width:100%;margin:0}
+.ui-shell{max-width:1100px;margin-inline:auto}
+.aw-leaf-header,.top,.section-header,.library-actions,.aw-leaf-tools{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+}
+.aw-leaf-header{border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:20px}
+.aw-leaf-brand{font-weight:700;white-space:nowrap}
+.aw-leaf-path,.meta,.hint{color:var(--muted);font-size:13px}
+.aw-leaf-path{flex:1;min-width:fit-content}
+.aw-leaf-tools select,.aw-leaf-tools button{min-height:38px}
+.aw-leaf-message,.top .save-state{flex-basis:100%;color:var(--muted);font-size:13px}
+.aw-leaf-message:empty,.top .save-state:empty{display:none}
+.aw-leaf-message,.top .save-state[data-error=true]{color:var(--error)}
+.top{margin-bottom:20px}
+.top .meta{margin-top:4px}
+.top-tools{display:flex;gap:8px;flex-wrap:wrap}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:clamp(12px,2.2vw,22px);margin-block:0 14px;min-width:0}
+.panel>.hint,.section-header+.hint{margin-top:6px}
+.panel>h2 .sub,.section-header .sub{font-size:13px;font-weight:400;color:var(--muted);margin-inline-start:8px}
+.library-actions{justify-content:start;margin:14px 0 6px}
+.library-search{flex:1 1 230px;max-width:340px}
+.library-feedback{min-height:1.6em;margin:4px 0 8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,268px),1fr));gap:10px}
+.mat-card{min-width:0;background:var(--field);border:1px solid var(--line);border-radius:10px}
+.mat-card[open]{grid-column:1/-1}
+.mat-card>summary{padding:12px 14px;min-height:56px}
+.mat-title{margin-inline-start:4px;font-weight:650;overflow-wrap:anywhere}
+.mat-id,.mat-metrics{color:var(--muted);font-size:12px}
+.mat-id{margin-inline-start:8px;overflow-wrap:anywhere}
+.mat-metrics{display:block;margin-inline-start:20px}
+.mat-edit{padding:14px;border-top:1px solid var(--line)}
+.mat-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:12px 22px}
+.mat-fields .krow{display:grid;grid-template-columns:minmax(0,1fr) 36px;gap:5px 8px;margin:0}
+.mat-fields .krow>.k,.mat-fields .krow>input:not([type=range]){grid-column:1/-1}
+.krow .k,.krow .v{color:var(--muted);font-size:13px}
+.krow .v{text-align:right;font-variant-numeric:tabular-nums}
+.mat-more{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.mat-more>summary,.references>summary,.related-pages>summary{min-height:32px;font-weight:600}
+.mat-more .mat-fields{margin-top:12px}
+.mat-more textarea{width:100%;min-height:68px;resize:vertical;margin:4px 0 6px}
+.mat-more .hint{margin:5px 0 0}
+.mat-delete{margin-top:12px}
+.controls{display:flex;gap:12px 18px;flex-wrap:wrap;margin:14px 0 8px}
+.controls label{display:grid;gap:4px;color:var(--muted);min-width:0;max-width:100%}
+.controls select{max-width:100%}
+.controls .sensitivity{grid-template-columns:minmax(100px,150px) 2ch;align-items:center}
+.sensitivity .control-label{grid-column:1/-1}
+#sens-label{color:var(--text);font-variant-numeric:tabular-nums}
+#axis-hint{display:block;min-height:1.5em}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 10px}
+.chip{display:inline-flex;align-items:center;gap:7px;min-height:34px;padding:5px 10px;font-size:13px}
+.chip.on{color:var(--accent);border-color:var(--accent);background:var(--accent-surface)}
+.chip .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.chip.on .dot{background:var(--c)}
+#chart-wrap,.twrap{overflow-x:auto;max-width:100%}
+#chart-wrap{position:relative;background:var(--field);border:1px solid var(--line);border-radius:8px}
+#chart{display:block;width:100%;height:auto}
+#chart-tip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:12px;display:none;z-index:5;min-width:130px}
+#chart-tip b{color:var(--accent)}
+.legend{display:flex;gap:10px 18px;flex-wrap:wrap;margin-top:8px;font-size:13px;color:var(--muted)}
+.legend-key{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:14px;height:3px;border-radius:2px;display:inline-block}
+.chart-scroll-note{display:none}
+.mptab{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+.mptab th,.mptab td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}
+.mptab th{color:var(--muted);font-weight:600}
+.mptab input[type=number]{width:86px}
+.refs{padding-inline-start:1.7em;color:var(--muted);margin-top:10px}
+.refs li,.reference-parameters li{margin-bottom:7px}
+.reference-parameters{padding-inline-start:1.7em;color:var(--muted);font-size:13px}
+.refs a{overflow-wrap:anywhere}
+.refs .k{color:var(--text)}
+.references{margin-top:10px}
+.references .hint{margin-block:5px 12px}
+.related-pages{margin-block:14px;color:var(--muted)}
+.xnav{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.xnav button{background:var(--panel)}
+.err{color:var(--error)}
+.empty{color:var(--muted);padding:14px 0}
+.toast{display:none;position:fixed;bottom:24px;right:clamp(12px,3vw,24px);z-index:1000;max-width:min(calc(100vw - 24px),600px);overflow-wrap:anywhere;background:var(--panel);border:1px solid var(--accent);border-radius:8px;padding:10px 12px;color:var(--text)}
+.toast.err{border-color:var(--error);color:var(--error)}
+.toast button{margin-left:10px;min-height:32px;padding:3px 8px;color:inherit}
+@media(max-width:639px){
+  button,.aw-leaf-tools select,.aw-leaf-tools button{min-height:42px}
+  .aw-leaf-header,.aw-leaf-tools{gap:8px}
+  .aw-leaf-tools{width:100%;justify-content:start}
+  .aw-leaf-tools select{flex:1;min-width:0}
+  .aw-leaf-path{font-size:12px}
+  .library-actions{flex-wrap:nowrap}
+  .library-search{flex:1;width:0}
+  .controls label:has(select){flex:1 1 100%}
+  .chart-scroll-note{display:block;margin-top:6px}
+  #chart{min-width:560px}
+  .mptab{min-width:420px}
+}
 </style>
 </head>
 <body>
-<header id="asteria-leaf-header" class="aw-leaf-header" data-area="area-resources"><span class="aw-leaf-brand">✧ 星栖 Asteria</span><span class="aw-leaf-path">资料中心 / 触觉材质库</span><div class="aw-leaf-tools"><label>本页<select aria-label="定位本页分区"><option>定位本页分区</option></select></label><button type="button">返回资料中心</button></div><p class="aw-leaf-message" role="status"></p></header>
-<div class="xnav">
-  <a data-pg="控制台">控制台</a><span class="xt">存在层页面</span>
-  <a data-pg="身体">身体</a>
-  <a data-pg="空间">空间</a>
-  <a class="cur" data-pg="材质">材质</a>
-  <a data-pg="总览">总览</a>
-  <a data-pg="心绪">心绪</a>
-  <a data-pg="记忆">记忆</a>
-</div>
-<div class="top">
-  <div>
-    <h1>材质工坊 · 神经触觉层</h1>
-    <div class="meta" id="meta">加载中…</div>
+<header id="asteria-leaf-header" class="aw-leaf-header ui-shell" data-area="area-resources">
+  <span class="aw-leaf-brand">星栖 Asteria</span>
+  <span class="aw-leaf-path">资料中心 / 材质工坊</span>
+  <div class="aw-leaf-tools">
+    <select aria-label="定位本页分区"><option value="">定位本页分区</option></select>
+    <button type="button">返回资料中心</button>
   </div>
-  <div>
-    <button onclick="loadAll()">刷新</button>
-    <button class="primary" id="save-btn" onclick="saveMaterials()">保存材质库并热生效</button>
-    <span id="save-state" class="hint"></span>
-  </div>
-</div>
+  <p class="aw-leaf-message" role="status"></p>
+</header>
+<main class="ui-shell">
+  <header class="top">
+    <div>
+      <h1>材质工坊</h1>
+      <p class="meta" id="meta">加载中…</p>
+    </div>
+    <div class="top-tools">
+      <button type="button" onclick="loadAll()">刷新</button>
+      <button type="button" class="primary" id="save-btn" onclick="saveMaterials()">保存材质库并热生效</button>
+    </div>
+    <p id="save-state" class="save-state" role="status"></p>
+  </header>
 
-<div class="panel">
-  <h2>曲线预览<span class="sub">部位敏感度 × 接触方式 × 材质 → 刺激乘数（core/material.material_gain 后端采样 40 点，前端零公式复制）</span></h2>
-  <div class="controls">
-    <label>部位
-      <select id="part-sel" onchange="onPartChange()"><option value="">加载中…</option></select>
-    </label>
-    <label>sens
-      <input type="range" id="sens-slider" min="0" max="10" step="1" value="5" style="width:110px" oninput="onSensChange()">
-      <b id="sens-label" style="color:#e6edf3;font-variant-numeric:tabular-nums">5</b>
-    </label>
-    <label>方式
-      <select id="method-sel" onchange="onMethodChange()"></select>
-    </label>
-    <span class="hint" id="axis-hint"></span>
-  </div>
-  <div class="chips" id="mat-chips"></div>
-  <div id="chart-wrap">
-    <svg id="chart" viewBox="0 0 760 330" preserveAspectRatio="xMidYMid meet"></svg>
-    <div id="chart-tip"></div>
-  </div>
-  <div class="legend" id="legend"></div>
-</div>
+  <section class="panel" aria-labelledby="library-heading">
+    <div class="section-header">
+      <h2 id="library-heading" data-page-section>材质库</h2>
+    </div>
+    <div class="library-actions">
+      <input class="library-search" id="mat-search" type="search" aria-label="搜索材质" placeholder="搜索名称、别名或备注">
+      <button type="button" onclick="addMaterial()">新材质</button>
+    </div>
+    <p class="hint library-feedback" id="lib-count" role="status"></p>
+    <div class="grid" id="mat-grid"><div class="empty">加载中…</div></div>
+  </section>
 
-<div class="panel">
-  <h2>方式参数<span class="sub" id="mp-src"></span></h2>
-  <p class="hint">揉搓/拍点的频率窗与抚摸的速度窗（随顶部「保存材质库并热生效」一并落盘 materials.json）。rub/tap 频率 Hz ｜ stroke 速度 cm/s。</p>
-  <div class="twrap"><table class="mptab" id="mp-table"></table></div>
-</div>
+  <section class="panel" aria-labelledby="curve-heading">
+    <h2 id="curve-heading" data-page-section>对比曲线</h2>
+    <p class="hint">选择部位、接触方式和材质，比较不同条件下的刺激乘数。</p>
+    <div class="controls">
+      <label>部位
+        <select id="part-sel" onchange="onPartChange()"><option value="">加载中…</option></select>
+      </label>
+      <label class="sensitivity">
+        <span class="control-label">敏感度</span>
+        <input type="range" id="sens-slider" min="0" max="10" step="1" value="5" oninput="onSensChange()">
+        <b id="sens-label" aria-hidden="true">5</b>
+      </label>
+      <label>接触方式
+        <select id="method-sel" onchange="onMethodChange()"></select>
+      </label>
+    </div>
+    <p class="hint" id="axis-hint"></p>
+    <div class="chips" id="mat-chips" role="group" aria-label="选择曲线材质"></div>
+    <div id="chart-wrap" role="region" aria-label="材质对比曲线" tabindex="0">
+      <svg id="chart" viewBox="0 0 760 330" preserveAspectRatio="xMidYMid meet" role="img" aria-label="不同材质的刺激乘数"></svg>
+      <div id="chart-tip"></div>
+    </div>
+    <p class="hint chart-scroll-note">左右滑动查看完整曲线</p>
+    <div class="legend" id="legend" aria-label="曲线图例"></div>
+  </section>
 
-<div class="panel">
-  <h2>材质库<span class="sub" id="lib-count"></span></h2>
-  <p class="hint">基础三参数：roughness_um 粗糙度（µm，0-1000）｜thermal 热导/凉感（0-1）｜ct_affinity CT 情感触觉亲和（0-1）。0.29.0 四扩展参数（缺省=中性不落档：摩擦 0.5、其余 0）：friction 摩擦｜thickness 厚度｜warm_hold 保温｜pattern_mm 纹理间距（mm）。每材质可再折叠"方式微调"按方式覆盖乘数。保存原子写回 data/materials.json，mtime 缓存自动热载——运行中的会话立即用新参数。</p>
-  <div class="grid" id="mat-grid"><div class="empty">加载中…</div></div>
-  <div style="margin-top:10px"><button onclick="addMaterial()">+ 新材质</button> <span class="hint">id 随中文名自动生成（英文名直接 slug；非英文回退编号）</span></div>
-</div>
+  <section class="panel" aria-labelledby="method-heading">
+    <h2 id="method-heading" data-page-section>方式参数</h2>
+    <p class="hint" id="mp-src"></p>
+    <p class="hint">调整揉搓和拍点的频率范围、抚摸的速度范围。</p>
+    <div class="twrap" role="region" aria-label="方式参数表" tabindex="0"><table class="mptab" id="mp-table"></table></div>
+  </section>
 
-<div class="panel">
-  <h2>文献锚点<span class="sub">data/materials.json 的 _refs——公式数字的出处（保存时原样保留）</span></h2>
-  <p class="hint">0.29.0 扩展参数公式（默认中性值不改变现行为；常量锚在 CONFIG.py）：<br>
-    · 摩擦 friction（0-1，中性 0.5）：揉搓增益 ×(0.7+friction×0.6)——织物-皮肤摩擦系数 µ≈0.5-0.7（Temel 2023），冰面打滑 / 橡胶涩滞<br>
-    · 厚度 thickness（0-1，中性 0）：拍打增益 ×(1-thickness×0.4)——厚织物衬垫吸收高频振动（Pacinian 频带首当其冲）<br>
-    · 保温 warm_hold（0-1，中性 0）：吹气舒适窗 ×(1+0.6×warm_hold)——保温层热阻大、皮肤-气流温差衰减慢；温度类事件另 ×(1+0.3×warm_hold)<br>
-    · 纹理间距 pattern_mm（mm，中性 0/≤2）：&gt;2mm（两点辨别阈上限量级，Weinstein 系）粗纹理拍打 ×(1+0.25×(mm-2)/10 上限 1)——宏观纹冲击与 Pacinian 频带交互强化<br>
-    · 方式微调 method_gains：材质级方式乘数覆盖（0.4-1.8），乘在方式公式之后、总钳制之前</p>
-  <ol class="refs" id="refs"></ol>
-</div>
+  <section class="panel" aria-labelledby="references-heading">
+    <h2 id="references-heading" data-page-section>参数参考</h2>
+    <details class="references">
+      <summary>查看公式说明与来源</summary>
+      <p class="hint">中性数值保持现有行为。各项公式使用实际参数，再将结果限制在允许范围内。</p>
+      <ul class="reference-parameters">
+        <li>摩擦（0–1，中性 0.5）：揉搓增益 ×(0.7 + 摩擦 × 0.6)。织物和皮肤摩擦系数见 Temel 2023。</li>
+        <li>厚度（0–1，中性 0）：拍打增益 ×(1 − 厚度 × 0.4)。织物衬垫吸收高频振动。</li>
+        <li>保温（0–1，中性 0）：吹气舒适窗 ×(1 + 0.6 × 保温)，温度类事件另 ×(1 + 0.3 × 保温)。</li>
+        <li>纹理间距（mm，0–2 为中性）：超过 2 mm 的粗纹理拍打 ×(1 + 0.25 × min((间距 − 2) / 10, 1))，见两点辨别研究。</li>
+        <li>方式微调（0.4–1.8，中性 1）：针对单种材质覆盖某一方式的乘数，应用于对应方式的公式之后。</li>
+      </ul>
+      <ol class="refs" id="refs"></ol>
+    </details>
+  </section>
+
+  <details class="related-pages">
+    <summary>相关页面</summary>
+    <nav class="xnav" aria-label="相关页面">
+      <button type="button" data-pg="控制台">控制台</button>
+      <button type="button" data-pg="身体">身体</button>
+      <button type="button" data-pg="空间">空间</button>
+      <button type="button" data-pg="总览">总览</button>
+      <button type="button" data-pg="心绪">心绪</button>
+      <button type="button" data-pg="记忆">记忆</button>
+    </nav>
+  </details>
+</main>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="/api/plugin/page/bridge-sdk.js"></script>
@@ -207,10 +275,10 @@ function tlsPageTheme(){const theme=document.documentElement.dataset.theme;retur
 
   var PAGE = { "控制台": "console", "身体": "status", "空间": "manor", "材质": "materials", "总览": "home", "心绪": "mood", "记忆": "memory" };
   function bindNav() {
-    document.querySelectorAll(".xnav a[data-pg]").forEach(function (a) {
-      var target = PAGE[a.getAttribute("data-pg")];
-      if (!target || a.classList.contains("cur")) return;
-      a.addEventListener("click", async function (ev) {
+    document.querySelectorAll(".xnav button[data-pg]").forEach(function (button) {
+      var target = PAGE[button.dataset.pg];
+      if (!target) return;
+      button.addEventListener("click", async function (ev) {
         ev.preventDefault();
         ev.stopImmediatePropagation();
         try {
@@ -266,7 +334,7 @@ const METHODS = [
   {id:'blow', label:'吹气（CT 温度调谐）', axis:'温度', unit:'°C', lo:0, hi:60,
    hint:'32°C 肤温附近峰值（Ackerley 2014）；凉材质凉气带激灵感'},
 ];
-const PALETTE = ['#58a6ff','#f778ba','#3fb950','#d29922','#f85149','#bc8cff','#39c5cf','#ffa198','#7ee787','#e3b341','#ff9bce','#d2a8ff'];
+const PALETTE = ['#678dd4','#c85e90','#508b57','#9a7326','#ce6555','#9c76cc','#448b95','#bc785d','#708642','#b2825a','#9e5ca5','#8583c0'];
 
 let MATS = [];            // 材质编辑副本 [{id,label,aliases,roughness_um,thermal,ct_affinity,note,_new?}]
 let REFS = [];            // _refs 原文（页尾展示；保存原样回传）
@@ -312,10 +380,10 @@ function renderMethodParams(){
     rows.map(([m, label]) => {
       const spec = MP_SPEC[m], step = m === 'stroke' ? '0.1' : '1';
       return `<tr><td>${label}</td>` + MP_KEYS[m].map(f =>
-        `<td><input type="number" data-mp="${m}.${f}" min="${spec.lo}" max="${spec.hi}" step="${step}" value="${MP[m][f]}"></td>`).join('') +
+        `<td><input type="number" data-mp="${m}.${f}" aria-label="${esc(label)} ${f.endsWith('lo') ? '下限' : '上限'}" min="${spec.lo}" max="${spec.hi}" step="${step}" value="${MP[m][f]}"></td>`).join('') +
         `<td class="hint">${spec.lo} - ${spec.hi}（下限须小于上限）</td></tr>`;
     }).join('');
-  document.getElementById('mp-src').textContent = MP_FROM_FILE ? 'materials.json 已有 method_params' : '未落盘——展示默认值，首存生成';
+  document.getElementById('mp-src').textContent = MP_FROM_FILE ? '当前已保存的参数' : '当前使用默认值，保存后写入材质库。';
   tb.querySelectorAll('[data-mp]').forEach(inp => inp.addEventListener('change', () => {
     const [m, f] = inp.dataset.mp.split('.');
     const v = parseFloat(inp.value);
@@ -348,7 +416,7 @@ async function loadAll(){
     SENS_SCALE = pr.sens_scale || [];
     buildPartSelect(pr.profiles || {});
     buildMethodSelect();
-    if (!SELECTED.size) (MATS.slice(0, 3)).forEach(x => SELECTED.add(x.id));
+    if (CURVE_SEQ === 0) (MATS.slice(0, 3)).forEach(x => SELECTED.add(x.id));
     renderMeta(m);
     renderChips();
     renderGrid();
@@ -363,24 +431,27 @@ async function loadAll(){
 
 function renderMeta(m){
   document.getElementById('meta').textContent =
-    `v${m.version} ｜ ${MATS.length} 种材质 ｜ ${MATERIAL_ENABLED ? '材质层开启' : '材质层已旁路（MATERIAL_ENABLED=False，曲线恒 1.0）'} ｜ 匹配窗 ${m.match_window} 字符 ｜ 感受词时效 ${m.stale_seconds}s`;
+    MATERIAL_ENABLED ? '当前材质库已启用' : '材质效果已停用，比较曲线保持 1.0。';
+  document.getElementById('meta').title = [
+    m.version && '版本 ' + m.version,
+    m.match_window != null && '匹配范围 ' + m.match_window + ' 字符',
+    m.stale_seconds != null && '感受词时效 ' + m.stale_seconds + ' 秒',
+  ].filter(Boolean).join(' · ');
 }
 
 function buildPartSelect(profiles){
   const sel = document.getElementById('part-sel');
-  const prev = sel.value;
-  const groups = Object.entries(profiles).map(([pid, prof]) => {
-    const opts = (prof.parts || []).map(p =>
-      `<option value="${Math.round(+p.sens || 0)}" data-label="${esc(p.label)}">${esc(p.label)}（sens ${Math.round(+p.sens || 0)}）</option>`).join('');
-    return `<optgroup label="${esc(prof.name || pid)}">${opts}</optgroup>`;
+  const previous = sel.value;
+  const groups = Object.entries(profiles).map(([pid, profile]) => {
+    const options = (profile.parts || []).map(part => {
+      const sensitivity = Math.round(Number(part.sens ?? 0));
+      return `<option value="${esc(pid + '/' + part.id)}" data-sensitivity="${sensitivity}">${esc(part.label)}（敏感度 ${sensitivity}）</option>`;
+    }).join('');
+    return options ? `<optgroup label="${esc(profile.name || pid)}">${options}</optgroup>` : '';
   }).join('');
-  sel.innerHTML = groups || '<option value="5">（无 profile 部位——手动调 sens）</option>';
-  const first = sel.querySelector('option[value]');
-  if (first && (!prev || ![...sel.options].some(o => o.value === prev))) sel.value = first.value;
-  else if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
-  SENS = Math.round(+sel.value || 5);
-  document.getElementById('sens-slider').value = SENS;
-  onSensChange(false);
+  sel.innerHTML = groups || '<option value="manual" data-sensitivity="5">无可用部位，手动调节敏感度</option>';
+  if ([...sel.options].some(option => option.value === previous)) sel.value = previous;
+  applyPartSensitivity();
 }
 
 function buildMethodSelect(){
@@ -397,10 +468,13 @@ function renderAxisHint(){
   document.getElementById('axis-hint').textContent = m.hint;
 }
 
-function onPartChange(){
-  SENS = Math.round(+document.getElementById('part-sel').value || 5);
-  document.getElementById('sens-slider').value = SENS;
+function applyPartSensitivity(){
+  const [part] = document.getElementById('part-sel').selectedOptions;
+  document.getElementById('sens-slider').value = part?.dataset.sensitivity ?? 5;
   onSensChange(false);
+}
+function onPartChange(){
+  applyPartSensitivity();
   refreshCurve();
 }
 function onSensChange(redraw = true){
@@ -419,17 +493,22 @@ function onMethodChange(){
 function renderChips(){
   const box = document.getElementById('mat-chips');
   box.innerHTML = MATS.map((m, i) => {
-    const on = SELECTED.has(m.id);
-    return `<span class="chip${on ? ' on' : ''}" style="--c:${colorOf(i)}" data-chip="${esc(m.id)}" title="${esc(m.note || '')}">` +
-      `<span class="dot"></span>${esc(m.label)}<span style="color:#8b949e">${+m.roughness_um}µm·ct${+m.ct_affinity}</span></span>`;
+    const selected = SELECTED.has(m.id);
+    return `<button type="button" class="chip${selected ? ' on' : ''}" style="--c:${colorOf(i)}" data-chip="${esc(m.id)}" aria-pressed="${selected}">` +
+      `<span class="dot" aria-hidden="true"></span>${esc(m.label)}</button>`;
   }).join('');
-  box.querySelectorAll('[data-chip]').forEach(el => el.addEventListener('click', () => {
-    const id = el.dataset.chip;
-    if (SELECTED.has(id)) SELECTED.delete(id); else SELECTED.add(id);
-    renderChips();
-    refreshCurve();
-  }));
 }
+document.getElementById('mat-chips').addEventListener('click', event => {
+  const button = event.target.closest('[data-chip]');
+  if (!button) return;
+  const id = button.dataset.chip;
+  const selected = !SELECTED.has(id);
+  if (selected) SELECTED.add(id);
+  else SELECTED.delete(id);
+  button.classList.toggle('on', selected);
+  button.setAttribute('aria-pressed', String(selected));
+  refreshCurve();
+});
 
 /* ---- 曲线（后端采样，SVG 绘制） ---- */
 async function refreshCurve(){
@@ -438,11 +517,11 @@ async function refreshCurve(){
   const svg = document.getElementById('chart');
   if (!ids.length){
     CURVE = null;
-    svg.innerHTML = `<text x="380" y="165" text-anchor="middle" fill="#484f58" font-size="13">在上方选中至少一种材质</text>`;
+    svg.innerHTML = `<text x="380" y="165" text-anchor="middle" fill="var(--muted)" font-size="13">在上方选中至少一种材质</text>`;
     document.getElementById('legend').innerHTML = '';
     return;
   }
-  svg.innerHTML = `<text x="380" y="165" text-anchor="middle" fill="#484f58" font-size="13">采样中…</text>`;
+  svg.innerHTML = `<text x="380" y="165" text-anchor="middle" fill="var(--muted)" font-size="13">采样中…</text>`;
   try{
     const data = await apiPost('page/materials/curve', {part_sens: SENS, material_ids: ids, method: METHOD, points: 40});
     if (seq !== CURVE_SEQ) return;   // 过期响应丢弃（快速切换控件时防串线）
@@ -450,7 +529,7 @@ async function refreshCurve(){
     drawChart();
   }catch(e){
     if (seq !== CURVE_SEQ) return;
-    svg.innerHTML = `<text x="380" y="165" text-anchor="middle" fill="#f85149" font-size="12">曲线采样失败：${esc(e.message || e)}</text>`;
+    svg.innerHTML = `<text x="380" y="165" text-anchor="middle" fill="var(--error)" font-size="12">曲线采样失败：${esc(e.message || e)}</text>`;
   }
 }
 
@@ -473,23 +552,23 @@ function drawChart(){
   const yTicks = 6;
   for (let i = 0; i <= yTicks; i++){
     const g = y0 + (y1 - y0) * i / yTicks;
-    s += `<line x1="${CH.ml}" y1="${Y(g)}" x2="${CH.w - CH.mr}" y2="${Y(g)}" stroke="#21262d" stroke-width="1"/>` +
-      `<text x="${CH.ml - 6}" y="${Y(g) + 4}" text-anchor="end" fill="#8b949e" font-size="10">${g.toFixed(1)}</text>`;
+    s += `<line x1="${CH.ml}" y1="${Y(g)}" x2="${CH.w - CH.mr}" y2="${Y(g)}" stroke="var(--line)" stroke-width="1"/>` +
+      `<text x="${CH.ml - 6}" y="${Y(g) + 4}" text-anchor="end" fill="var(--muted)" font-size="10">${g.toFixed(1)}</text>`;
   }
   // 中性线 y=1（乘数 1 = 无材质影响）
   if (y0 < 1 && 1 < y1){
-    s += `<line x1="${CH.ml}" y1="${Y(1)}" x2="${CH.w - CH.mr}" y2="${Y(1)}" stroke="#30363d" stroke-width="1" stroke-dasharray="4 4"/>` +
-      `<text x="${CH.w - CH.mr - 2}" y="${Y(1) - 4}" text-anchor="end" fill="#484f58" font-size="9">中性 ×1.0</text>`;
+    s += `<line x1="${CH.ml}" y1="${Y(1)}" x2="${CH.w - CH.mr}" y2="${Y(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="4 4"/>` +
+      `<text x="${CH.w - CH.mr - 2}" y="${Y(1) - 4}" text-anchor="end" fill="var(--muted)" font-size="9">中性 ×1.0</text>`;
   }
   // x 刻度
   const xTicks = 8;
   for (let i = 0; i <= xTicks; i++){
     const x = data.x_min + (data.x_max - data.x_min) * i / xTicks;
-    s += `<line x1="${X(x)}" y1="${CH.mt + ih}" x2="${X(x)}" y2="${CH.mt + ih + 4}" stroke="#30363d"/>` +
-      `<text x="${X(x)}" y="${CH.mt + ih + 16}" text-anchor="middle" fill="#8b949e" font-size="10">${fmtX(x)}</text>`;
+    s += `<line x1="${X(x)}" y1="${CH.mt + ih}" x2="${X(x)}" y2="${CH.mt + ih + 4}" stroke="var(--line)"/>` +
+      `<text x="${X(x)}" y="${CH.mt + ih + 16}" text-anchor="middle" fill="var(--muted)" font-size="10">${fmtX(x)}</text>`;
   }
-  s += `<text x="${CH.ml + iw / 2}" y="${CH.h - 6}" text-anchor="middle" fill="#8b949e" font-size="11">${esc(meta.axis)}${meta.unit ? '（' + esc(meta.unit) + '）' : ''}</text>` +
-    `<text x="14" y="${CH.mt + ih / 2}" text-anchor="middle" fill="#8b949e" font-size="11" transform="rotate(-90 14 ${CH.mt + ih / 2})">刺激乘数</text>`;
+  s += `<text x="${CH.ml + iw / 2}" y="${CH.h - 6}" text-anchor="middle" fill="var(--muted)" font-size="11">${esc(meta.axis)}${meta.unit ? '（' + esc(meta.unit) + '）' : ''}</text>` +
+    `<text x="14" y="${CH.mt + ih / 2}" text-anchor="middle" fill="var(--muted)" font-size="11" transform="rotate(-90 14 ${CH.mt + ih / 2})">刺激乘数</text>`;
   // 曲线（每材质一条）
   data.curves.forEach((c, ci) => {
     const color = colorOf(MATS.findIndex(m => m.id === c.material_id) >= 0 ? MATS.findIndex(m => m.id === c.material_id) : ci);
@@ -498,7 +577,7 @@ function drawChart(){
   });
   // 悬停层
   s += `<rect id="chart-hover" x="${CH.ml}" y="${CH.mt}" width="${iw}" height="${ih}" fill="transparent"/>`;
-  s += `<g id="chart-cross" style="display:none"><line id="cross-line" y1="${CH.mt}" y2="${CH.mt + ih}" stroke="#58a6ff88" stroke-width="1"/></g>`;
+  s += `<g id="chart-cross" style="display:none"><line id="cross-line" y1="${CH.mt}" y2="${CH.mt + ih}" stroke="var(--accent)" stroke-width="1"/></g>`;
   s += `<g id="chart-dots"></g>`;
   svg.innerHTML = s;
   const hover = svg.querySelector('#chart-hover');
@@ -519,7 +598,7 @@ function drawChart(){
     data.curves.forEach(c => {
       const color = colorOf(Math.max(0, MATS.findIndex(m => m.id === c.material_id)));
       dh += `<div><span style="color:${color}">●</span> ${esc(c.label)} <b>×${c.points[idx].gain.toFixed(2)}</b></div>`;
-      dotsSvg += `<circle cx="${X(px)}" cy="${Y(c.points[idx].gain)}" r="3.5" fill="${color}" stroke="#0d1117"/>`;
+      dotsSvg += `<circle cx="${X(px)}" cy="${Y(c.points[idx].gain)}" r="3.5" fill="${color}" stroke="var(--field)"/>`;
     });
     dots.innerHTML = dotsSvg;
     tip.innerHTML = `<b>${esc(meta.axis)} ${fmtX(px)}${meta.unit ? ' ' + esc(meta.unit) : ''}</b>` + dh;
@@ -537,8 +616,8 @@ function drawChart(){
 function renderLegend(data){
   document.getElementById('legend').innerHTML = (data.curves || []).map(c => {
     const i = MATS.findIndex(m => m.id === c.material_id);
-    return `<span><i style="background:${colorOf(i >= 0 ? i : 0)}"></i>${esc(c.label)} <span style="color:#8b949e">${esc(c.material_id)}</span></span>`;
-  }).join('') + `<span style="color:#8b949e">sens ${SENS} ｜ ${esc(methodMeta(data.method).label)}</span>`;
+    return `<span class="legend-key"><i aria-hidden="true" style="background:${colorOf(i >= 0 ? i : 0)}"></i>${esc(c.label)}</span>`;
+  }).join('') + `<span>敏感度 ${SENS} · ${esc(methodMeta(data.method).label)}</span>`;
 }
 
 /* ---- 材质库卡片 ---- */
@@ -558,55 +637,88 @@ const METHOD_FIELDS = [
   {id: 'tap', label: '拍打'}, {id: 'blow', label: '吹气'},
 ];
 
-function renderGrid(){
-  const grid = document.getElementById('mat-grid');
-  document.getElementById('lib-count').textContent = `（${MATS.length} 种）`;
-  grid.innerHTML = MATS.map((m, i) => {
+const materialGrid = document.getElementById('mat-grid');
+const materialSearch = document.getElementById('mat-search');
+
+function filterMaterials(){
+  const query = materialSearch.value.trim().toLocaleLowerCase();
+  let matches = 0;
+  materialGrid.querySelectorAll('.mat-card').forEach(card => {
+    const material = MATS[Number(card.dataset.mi)];
+    const fields = [material.label, material.id, ...(material.aliases || []), material.note];
+    card.hidden = !fields.some(value => String(value ?? '').toLocaleLowerCase().includes(query));
+    if (!card.hidden) matches++;
+  });
+  document.getElementById('lib-count').textContent = query
+    ? matches ? `找到 ${matches} 种材质` : '未找到匹配的材质'
+    : `共 ${MATS.length} 种材质`;
+}
+materialSearch.addEventListener('input', filterMaterials);
+
+function materialMetrics(m){
+  return `粗糙度 ${+m.roughness_um} µm · 凉感 ${(+m.thermal).toFixed(2)} · 亲和度 ${(+m.ct_affinity).toFixed(2)}`;
+}
+function renderGrid(openMaterial = null){
+  materialGrid.innerHTML = MATS.map((m, i) => {
     const mg = (m.method_gains && typeof m.method_gains === 'object') ? m.method_gains : {};
     return `
-    <div class="mat-card" data-mi="${i}">
-      <h3>
-        <span><input value="${esc(m.label)}" data-k="label" style="width:120px;font-size:13px"> <span class="id">${esc(m.id)}</span></span>
-        <button class="rowbtn danger" data-action="delmat" data-mid="${esc(m.id)}">删</button>
-      </h3>
-      <div class="krow"><span class="k">粗糙度 µm（0-1000）</span><input type="number" min="0" max="1000" step="0.5" value="${+m.roughness_um}" data-k="roughness_um"></div>
-      <div class="krow"><span class="k">凉感 thermal（0-1）</span><input type="range" min="0" max="1" step="0.05" value="${+m.thermal}" data-k="thermal"><span class="v" data-v="thermal">${(+m.thermal).toFixed(2)}</span></div>
-      <div class="krow"><span class="k">CT 亲和（0-1）</span><input type="range" min="0" max="1" step="0.05" value="${+m.ct_affinity}" data-k="ct_affinity"><span class="v" data-v="ct_affinity">${(+m.ct_affinity).toFixed(2)}</span></div>
-      ${EXTRA_FIELDS.map(f => `
-      <div class="krow"><span class="k" title="${esc(f.hint)}">${esc(f.label)}</span><input type="range" min="${f.lo}" max="${f.hi}" step="${f.step}" value="${m[f.k] !== undefined ? +m[f.k] : f.neutral}" data-k="${f.k}"><span class="v" data-v="${f.k}">${m[f.k] !== undefined ? +m[f.k] : f.neutral}</span></div>`).join('')}
-      <details style="margin:6px 0">
-        <summary style="font-size:11px;color:#8b949e;cursor:pointer">方式微调（按方式覆盖乘数 0.4-1.8，1=中性）</summary>
-        ${METHOD_FIELDS.map(mm => `
-        <div class="krow"><span class="k">${esc(mm.label)} ${esc(mm.id)}</span><input type="range" min="0.4" max="1.8" step="0.05" value="${mg[mm.id] !== undefined ? +mg[mm.id] : 1}" data-mg="${mm.id}"><span class="v" data-vmg="${mm.id}">${mg[mm.id] !== undefined ? +mg[mm.id] : 1}</span></div>`).join('')}
-        <div class="hint">如 羽毛·拍打 1.3（振动更明显）、皮革·揉搓 0.8（抑制涩滞感）；全 1 不落档</div>
-      </details>
-      <div class="krow"><span class="k">id（新材质可改）</span><input type="text" value="${esc(m.id)}" data-k="id" ${m._new ? '' : 'title="改 id 会丢运行中状态的 last_material 引用，慎改"'}></div>
-      <div class="krow"><span class="k">别名（逗号分隔）</span><input type="text" value="${esc((m.aliases || []).join(','))}" data-k="aliases"></div>
-      <textarea data-k="note" placeholder="备注（触觉依据/出处）">${esc(m.note || '')}</textarea>
-    </div>`;
+    <details class="mat-card" data-mi="${i}"${m === openMaterial ? ' open' : ''}>
+      <summary>
+        <span class="mat-title" data-material-title>${esc(m.label)}</span>
+        <span class="mat-id" data-material-id>${esc(m.id)}</span>
+        <span class="mat-metrics" data-material-metrics>${esc(materialMetrics(m))}</span>
+      </summary>
+      <div class="mat-edit">
+        <div class="mat-fields">
+          <label class="krow"><span class="k">名称</span><input type="text" value="${esc(m.label)}" data-k="label"></label>
+          <label class="krow"><span class="k">粗糙度（0–1000 µm）</span><input type="number" min="0" max="1000" step="0.5" value="${+m.roughness_um}" data-k="roughness_um"></label>
+          <label class="krow"><span class="k">凉感（0–1）</span><input type="range" min="0" max="1" step="0.05" value="${+m.thermal}" data-k="thermal"><span class="v" data-v="thermal" aria-hidden="true">${(+m.thermal).toFixed(2)}</span></label>
+          <label class="krow"><span class="k">情感触觉亲和度（0–1）</span><input type="range" min="0" max="1" step="0.05" value="${+m.ct_affinity}" data-k="ct_affinity"><span class="v" data-v="ct_affinity" aria-hidden="true">${(+m.ct_affinity).toFixed(2)}</span></label>
+        </div>
+        <details class="mat-more">
+          <summary>别名、备注和方式微调</summary>
+          <div class="mat-fields">
+            <label class="krow"><span class="k">材质 ID</span><input type="text" value="${esc(m.id)}" data-k="id" ${m._new ? '' : 'title="更改 ID 后，运行中依赖原 ID 的记录会失去引用"'}></label>
+            <label class="krow"><span class="k">别名（逗号分隔）</span><input type="text" value="${esc((m.aliases || []).join(','))}" data-k="aliases"></label>
+            ${EXTRA_FIELDS.map(f => `
+              <label class="krow"><span class="k" title="${esc(f.hint)}">${esc(f.label)}</span><input type="range" min="${f.lo}" max="${f.hi}" step="${f.step}" value="${m[f.k] !== undefined ? +m[f.k] : f.neutral}" data-k="${f.k}"><span class="v" data-v="${f.k}" aria-hidden="true">${m[f.k] !== undefined ? +m[f.k] : f.neutral}</span></label>`).join('')}
+            ${METHOD_FIELDS.map(mm => `
+              <label class="krow"><span class="k">${esc(mm.label)}乘数（0.4–1.8）</span><input type="range" min="0.4" max="1.8" step="0.05" value="${mg[mm.id] !== undefined ? +mg[mm.id] : 1}" data-mg="${mm.id}"><span class="v" data-vmg="${mm.id}" aria-hidden="true">${mg[mm.id] !== undefined ? +mg[mm.id] : 1}</span></label>`).join('')}
+          </div>
+          <p class="hint">方式乘数为 1 时保持默认效果。</p>
+          <label class="hint">备注（触觉依据或出处）
+            <textarea data-k="note">${esc(m.note || '')}</textarea>
+          </label>
+        </details>
+        <div class="mat-delete"><button type="button" class="rowbtn danger" data-action="delmat">删除</button></div>
+      </div>
+    </details>`;
   }).join('');
-  grid.querySelectorAll('.mat-card').forEach(card => {
-    const m = MATS[+card.dataset.mi];
+  materialGrid.querySelectorAll('.mat-card').forEach(card => {
+    const m = MATS[Number(card.dataset.mi)];
     card.querySelectorAll('[data-k]').forEach(inp => inp.addEventListener('change', () => {
       const k = inp.dataset.k;
+      const previousId = m.id;
       if (k === 'label'){
         m.label = inp.value.trim();
-        if (m._new){   // 新材质：id 随中文名自动 slug（非英文回退编号，保持可改）
-          const slug = slugMatId(m.label, MATS);
+        if (m._new){
+          const slug = slugMatId(m.label, MATS.filter(other => other !== m));
           if (slug){ m.id = slug; card.querySelector('[data-k="id"]').value = slug; }
         }
+        card.querySelector('[data-material-title]').textContent = m.label || '未命名材质';
       }
       else if (k === 'id') m.id = inp.value.trim();
       else if (k === 'aliases') m.aliases = inp.value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
       else if (k === 'note') m.note = inp.value.trim();
-      else if (k === 'roughness_um') m.roughness_um = parseFloat(inp.value);
-      else if (EXTRA_FIELDS.some(f => f.k === k)){
+      else {
         m[k] = parseFloat(inp.value);
-        const v = card.querySelector(`[data-v="${k}"]`);
-        if (v) v.textContent = String(+inp.value);
+        card.querySelector('[data-material-metrics]').textContent = materialMetrics(m);
       }
-      else { m[k] = parseFloat(inp.value); const v = card.querySelector(`[data-v="${k}"]`); if (v) v.textContent = (+inp.value).toFixed(2); }
-      if (k === 'id' || k === 'label' || k === 'aliases') renderChips();
+      if (previousId !== m.id){
+        card.querySelector('[data-material-id]').textContent = m.id;
+        if (SELECTED.delete(previousId)) SELECTED.add(m.id);
+      }
+      if (k === 'id' || k === 'label') renderChips();
     }));
     card.querySelectorAll('[data-mg]').forEach(inp => inp.addEventListener('change', () => {
       m.method_gains = (m.method_gains && typeof m.method_gains === 'object') ? m.method_gains : {};
@@ -618,6 +730,7 @@ function renderGrid(){
       if (v) v.textContent = String(+inp.value);
     }));
   });
+  filterMaterials();
 }
 
 /* id 自动 slug：英文名直接转（小写字母开头，仅小写字母/数字/下划线），撞名加 _2；非英文返回 null 回退编号 */
@@ -634,11 +747,15 @@ function slugMatId(label, existing){
 function addMaterial(){
   let n = 1;
   while (MATS.some(m => m.id === `new_material_${n}`)) n++;
-  MATS.push({id: `new_material_${n}`, label: '新材质', roughness_um: 20, thermal: 0.2, ct_affinity: 0.5,
-    aliases: [], note: '', _new: true});
-  renderGrid();
+  const material = {id: `new_material_${n}`, label: '新材质', roughness_um: 20, thermal: 0.2, ct_affinity: 0.5,
+    aliases: [], note: '', _new: true};
+  MATS.push(material);
+  materialSearch.value = '';
+  renderGrid(material);
   renderChips();
-  toast('已添加草稿材质——填中文名 id 自动生成，点顶部"保存材质库并热生效"');
+  const name = materialGrid.querySelector('.mat-card:last-child [data-k="label"]');
+  name.focus();
+  name.select();
 }
 
 /* 删除两步确认（iframe 沙箱禁 confirm，页内 armed 模式） */
@@ -657,11 +774,12 @@ document.addEventListener('click', e => {
     }, 4000);
     return;
   }
-  const mid = btn.dataset.mid;
-  MATS = MATS.filter(m => m.id !== mid);
-  SELECTED.delete(mid);
+  const index = Number(btn.closest('.mat-card').dataset.mi);
+  const [removed] = MATS.splice(index, 1);
+  SELECTED.delete(removed.id);
   renderGrid(); renderChips(); refreshCurve();
-  toast(`已删除 ${mid}（保存后生效）`);
+  materialSearch.focus({preventScroll:true});
+  toast(`已从草稿删除 ${removed.label}，保存后生效。`);
 });
 
 /* ---- 保存（前端预校验与后端同规则，最终以后端为准） ---- */
@@ -704,6 +822,7 @@ async function saveMaterials(){
   const mpErr = mpValidationError();   // 方式参数校验失败 toast 不保存（与后端 400 同向）
   if (mpErr){ toast(mpErr, true); return; }
   if (!debounceSave(document.getElementById('save-btn'))) return;
+  delete st.dataset.error;
   st.textContent = '保存中…';
   try{
     const payload = {
@@ -724,10 +843,11 @@ async function saveMaterials(){
       method_params: {rub: {...MP.rub}, tap: {...MP.tap}, stroke: {...MP.stroke}},   // 键名与后端 _METHOD_PARAM_SPEC 一字不差
     };
     const r = await apiPost('page/materials/save', payload);
-    st.textContent = `已保存 ${r.materials} 种并热生效 ✓`;
+    st.textContent = `已保存 ${r.materials} 种材质，已生效。`;
     toast('材质库已保存，运行中的会话立即使用新参数');
     await loadAll();
   }catch(e){
+    st.dataset.error = 'true';
     st.textContent = '保存失败：' + (e.message || e) + '（编辑内容已保留）';
     toast('保存失败: ' + (e.message || e), true);
   }finally{
@@ -758,10 +878,17 @@ function renderRefs(){
 loadAll();
 </script>
 <script id="asteria-leaf-script">
-(()=>{'use strict';const bar=document.getElementById('asteria-leaf-header'),jump=bar.querySelector('select'),back=bar.querySelector('button'),message=bar.querySelector('[role=status]');let headings=[];
-function fill(){headings=[...document.querySelectorAll('h2,h3')].filter(el=>!el.closest('dialog')&&el.getClientRects().length&&el.textContent.trim());jump.replaceChildren(new Option('定位本页分区',''));headings.forEach((el,i)=>jump.add(new Option(el.textContent.trim().slice(0,70),String(i))));}
-jump.addEventListener('focus',fill);jump.addEventListener('pointerdown',fill);jump.addEventListener('change',()=>{if(jump.value==='')return;const el=headings[Number(jump.value)];if(!el)return;el.scrollIntoView({block:'start'});if(!el.hasAttribute('tabindex'))el.tabIndex=-1;el.focus({preventScroll:true});});
-back.addEventListener('click',async()=>{back.disabled=true;message.textContent='';try{const bridge=window.AstrBotPluginPage;if(!bridge)throw Error('请从 AstrBot 后台重新打开此页面。');await bridge.ready();const theme=document.documentElement.dataset.theme||new URLSearchParams(location.search).get('theme')||'dark';let result=await bridge.apiGet('page/nav',{to:'console',theme,format:'json'});if(result?.data)result=result.data;const url=new URL(result.url,location.href);if(url.origin!==location.origin||url.pathname!=='/api/plugin/page/content/astrbot_plugin_asteria/console/'||!url.searchParams.get('asset_token'))throw Error('返回地址未确认，请从后台进入工作台。');url.hash=bar.dataset.area;location.assign(url.href);}catch(error){message.textContent=error.message||'工作台暂时无法打开。';}finally{back.disabled=false;}});fill();})();
+(()=>{'use strict';const bar=document.getElementById('asteria-leaf-header'),jump=bar.querySelector('select'),back=bar.querySelector('button'),message=bar.querySelector('[role=status]');const headings=[...document.querySelectorAll('[data-page-section]')];
+headings.forEach(el=>jump.add(new Option(el.textContent.trim(),el.id)));
+jump.addEventListener('change',()=>{
+  if(!jump.value)return;
+  const heading=document.getElementById(jump.value);
+  jump.value='';
+  heading.scrollIntoView({block:'start'});
+  heading.tabIndex=-1;
+  heading.focus({preventScroll:true});
+});
+back.addEventListener('click',async()=>{back.disabled=true;message.textContent='';try{const bridge=window.AstrBotPluginPage;if(!bridge)throw Error('请从 AstrBot 后台重新打开此页面。');await bridge.ready();const theme=document.documentElement.dataset.theme||new URLSearchParams(location.search).get('theme')||'dark';let result=await bridge.apiGet('page/nav',{to:'console',theme,format:'json'});if(result?.data)result=result.data;const url=new URL(result.url,location.href);if(url.origin!==location.origin||url.pathname!=='/api/plugin/page/content/astrbot_plugin_asteria/console/'||!url.searchParams.get('asset_token'))throw Error('返回地址未确认，请从后台进入工作台。');url.hash=bar.dataset.area;location.assign(url.href);}catch(error){message.textContent=error.message||'工作台暂时无法打开。';}finally{back.disabled=false;}});})();
 </script>
 </body>
 </html>

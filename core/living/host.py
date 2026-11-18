@@ -597,6 +597,17 @@ class LivingHost:
         if self.native_phone_music is not None:
             self.native_phone_music.tick()
         self._configure_ability()
+        if self.runtime is not None and self._enabled() and len(self._tasks)<self.max_pending:
+            from .chat_companion_mode import CompanionUnavailable, service_for
+            try:
+                mode = service_for(self.plugin)
+            except CompanionUnavailable:
+                mode = None
+            previous = self._native_business_steps.get('chat_companion')
+            if mode is not None and mode.has_work and (previous is None or previous.done()):
+                task = asyncio.create_task(mode.tick())
+                self._native_business_steps['chat_companion'] = task
+                self._tasks.add(task);task.add_done_callback(self._finished)
         integrations=getattr(self.plugin,'_native_server_integrations',None)
         if integrations is not None and not integrations._closed and self.runtime is not None:
             for kind in ('pc_business','pc_daily','independent_proactive'):

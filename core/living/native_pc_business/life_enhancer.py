@@ -181,8 +181,6 @@ class LifeEnhancerMixin:
 
     def _maybe_schedule_social_visit(self, user: dict[str, Any]) -> bool:
         """每周1-2次，随机触发一个同事来访。"""
-        if not str(user.get("user_id") or "").strip():
-            return False
         state = user.get("social_visit")
         if not isinstance(state, dict):
             state = {}
@@ -233,7 +231,7 @@ class LifeEnhancerMixin:
             "context": context,
         }
         accepted = self._offer_proactive_candidate(
-            str(user.get("user_id") or ""), user, candidate
+            str(user.get("user_id") or "2117919529"), user, candidate
         )
         if accepted:
             logger.info(
@@ -264,8 +262,6 @@ class LifeEnhancerMixin:
 
     async def _run_life_enhancer(self, user: dict[str, Any]) -> None:
         """在tick中运行的生活增强任务。"""
-        if not str(user.get("user_id") or "").strip():
-            return
         try:
             # 梦话碎碎念
             if self._murmur_should_fire(user):
@@ -297,7 +293,7 @@ class LifeEnhancerMixin:
                         "context": {"created_ts": _now_ts(), "murmur": murmur},
                     }
                     self._offer_proactive_candidate(
-                        str(user.get("user_id") or ""),
+                        str(user.get("user_id") or "2117919529"),
                         user,
                         candidate,
                     )

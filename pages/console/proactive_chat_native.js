@@ -5,6 +5,7 @@
   const base = 'page/proactive-chat-native/';
   let state = null, busy = false, selected = null, editor = null, pending = null, serial = 0, stateFresh = false;
   const triggerPending = new Map();
+  const editButtons = new Map();
   const copy = value => JSON.parse(JSON.stringify(value));
   const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
   const merge = (left, right) => {
@@ -17,7 +18,57 @@
     if (!window.TLSBrowserCompat) throw Error('请求编号助手尚未加载，请刷新后台。');
     return 'proactive.manual.' + window.TLSBrowserCompat.uuid();
   };
-  mount.innerHTML = `<section class="panel proactive-chat-native"><div class="panel-head"><h2>独立主动消息</h2><button type="button" data-pcn-refresh>刷新状态</button></div><p class="hint">保留原会话的计划时间、未回复次数和会话覆盖。编辑资料不授予发送权限；生成与发送仍经过实际私聊授权、冷却和统一队列。</p><p data-pcn-notice role="status" aria-live="polite">等待读取。</p><div data-pcn-stats class="pcn-stats"></div><div class="actions"><button type="button" data-pcn-inspect>读取原状态与兼容条件</button><button type="button" data-pcn-activate>接管已兼容的原任务</button><button type="button" data-pcn-stop>停止新接纳</button></div><div data-pcn-blockers class="pcn-blockers"></div><div data-pcn-sessions class="pcn-sessions"></div><form data-pcn-editor hidden><h3 data-pcn-title></h3><p data-pcn-inheritance class="hint"></p><label>显示名称<input maxlength="80" data-pcn-name></label><label class="switch-label"><input type="checkbox" data-pcn-enabled>启用此会话</label><div class="form-grid"><label>最短间隔（分钟）<input type="number" min="1" max="525600" step="1" data-pcn-min></label><label>最长间隔（分钟）<input type="number" min="1" max="525600" step="1" data-pcn-max></label></div><label>独立主动安静时段<input type="text" maxlength="143" data-pcn-quiet-hours placeholder="例如：8-12,14-18" autocapitalize="none" spellcheck="false"></label><p class="hint">按本会话原时区执行；多个时段用英文逗号分隔，最多24段。例 8-12,14-18 表示08:00–12:00和14:00–18:00保持安静，其他时间仍须通过原发送规则。结束早于开始时延续到次日，起止相同的时段不生效。</p><p data-pcn-quiet-preview class="hint" role="status"></p><label>连续未回复上限（0表示沿原配置不限）<input type="number" min="0" max="100" step="1" data-pcn-unanswered></label><label>主动开场提示词<textarea rows="6" maxlength="16000" data-pcn-prompt></textarea></label><details><summary>默认值与当前覆盖</summary><div data-pcn-sources class="pcn-sources"></div></details><div class="actions"><button type="submit" class="primary" data-pcn-save>保存并回读</button><button type="button" data-pcn-check>只读核对当前值</button><button type="button" data-pcn-inherit>恢复本会话全部继承</button><button type="button" data-pcn-cancel>取消编辑</button></div><div data-pcn-reset-confirm hidden><p class="hint">将清除本会话的所有覆盖（包括已有TTS、上下文等覆盖），恢复全局默认。已有任务的时间不会重抽。</p><button type="button" data-pcn-reset-yes>确认恢复继承</button><button type="button" data-pcn-reset-no>保留当前覆盖</button></div><p class="hint">只保存改过的字段，未修改的会话设置与继承关系保持。保存结果必须由原文件回读确认；不会取消、重排或清理当前任务。</p></form></section>`;
+  mount.innerHTML = `<section class="panel proactive-chat-native">
+    <div class="panel-head"><h2>独立主动消息</h2><button type="button" data-pcn-refresh>刷新状态</button></div>
+    <p class="hint">编辑资料不授予发送权限。实际发送仍遵守私聊授权、冷却和统一队列。</p>
+    <div data-pcn-status-home><p data-pcn-notice role="status" aria-live="polite">等待读取。</p></div>
+    <div data-pcn-stats class="pcn-stats"></div>
+    <div class="actions">
+      <button type="button" data-pcn-inspect>读取原状态与兼容条件</button>
+      <button type="button" data-pcn-activate>接管已兼容的原任务</button>
+      <button type="button" data-pcn-stop>停止新接纳</button>
+    </div>
+    <div data-pcn-blockers class="pcn-blockers"></div>
+
+    <form data-pcn-editor aria-labelledby="pcn-editor-title" hidden>
+      <header class="pcn-editor-head">
+        <div>
+          <h3 id="pcn-editor-title" data-pcn-title tabindex="-1"></h3>
+          <p data-pcn-identity class="hint"></p>
+        </div>
+        <button type="button" data-pcn-cancel>取消编辑</button>
+      </header>
+      <p data-pcn-inheritance class="hint"></p>
+
+      <label>显示名称<input maxlength="80" data-pcn-name></label>
+      <label class="switch-label"><input type="checkbox" data-pcn-enabled>启用此会话</label>
+      <div class="form-grid">
+        <label>最短间隔（分钟）<input type="number" min="1" max="525600" step="1" data-pcn-min></label>
+        <label>最长间隔（分钟）<input type="number" min="1" max="525600" step="1" data-pcn-max></label>
+      </div>
+      <label>独立主动安静时段
+        <input type="text" maxlength="143" data-pcn-quiet-hours placeholder="例如：22-7,12-13" aria-describedby="pcn-quiet-format" autocapitalize="none" spellcheck="false">
+      </label>
+      <p id="pcn-quiet-format" class="hint">按会话原时区填写起止小时，多段用英文逗号分隔。结束较早时延续到次日，起止相同的时段不生效。</p>
+      <p data-pcn-quiet-preview class="pcn-quiet-preview" role="status"></p>
+      <label>连续未回复上限（0 表示沿原配置不限）<input type="number" min="0" max="100" step="1" data-pcn-unanswered></label>
+      <label>主动开场提示词<textarea rows="6" maxlength="16000" data-pcn-prompt></textarea></label>
+      <details><summary>默认值与当前覆盖</summary><div data-pcn-sources class="pcn-sources"></div></details>
+      <p class="hint">只保存改过的字段。计划时间、未回复次数与其他会话设置保持原样。</p>
+      <div data-pcn-status-editor></div>
+      <div class="actions pcn-editor-actions">
+        <button type="submit" class="primary" data-pcn-save>保存并回读</button>
+        <button type="button" data-pcn-check>只读核对当前值</button>
+        <button type="button" data-pcn-inherit>恢复本会话全部继承</button>
+      </div>
+      <div data-pcn-reset-confirm hidden>
+        <p class="hint">将清除本会话的所有覆盖（包括已有 TTS、上下文等覆盖），恢复全局默认。已有任务的时间不会重抽。</p>
+        <button type="button" data-pcn-reset-yes>确认恢复继承</button>
+        <button type="button" data-pcn-reset-no>保留当前覆盖</button>
+      </div>
+    </form>
+    <div data-pcn-sessions class="pcn-sessions"></div>
+  </section>`;
   const $ = key => mount.querySelector('[data-pcn-' + key + ']');
   const node = (tag, value) => { const element = document.createElement(tag); if (value !== undefined) element.textContent = value; return element; };
   const quietWindows = value => typeof value === 'string' && value.length <= 143
@@ -74,10 +125,18 @@
     $('cancel').disabled = busy || !!pending;
     for (const button of mount.querySelectorAll('[data-pcn-send]')) button.disabled = busy || !state?.active || button.dataset.blocked === 'true';
   }
+  function revealEditorTarget(target, block = 'nearest') {
+    target.focus?.({preventScroll:true});
+    target.scrollIntoView?.({block});
+  }
   function drawEditor() {
     $('editor').hidden = !editor;
+    const statusHost = $(editor ? 'status-editor' : 'status-home');
+    statusHost.append($('notice'));
     if (!editor) return;
-    $('title').textContent = '编辑会话 · ' + selected;
+    const name = editor.config?.session_name;
+    $('title').textContent = name ? '编辑会话 · ' + name : '编辑会话设置';
+    $('identity').textContent = selected;
     $('inheritance').textContent = editor.persisted_verified === true ? '原会话覆盖已与磁盘文件核对；管理操作不会登记私聊授权。' : '运行值与原文件尚未一致，暂不可继续保存。';
     const config = editor.config || {};
     $('name').value = config.session_name || '';
@@ -98,6 +157,7 @@
   }
   function render() {
     $('stats').replaceChildren(); $('blockers').replaceChildren(); $('sessions').replaceChildren();
+    editButtons.clear();
     if (state) {
       for (const [label, value] of [['执行者', state.active ? 'TLS原生运行' : 'TLS未运行'], ['在途操作', state.pending_operations ?? '未知'], ['确认送达', state.counts?.confirmed ?? '未知'], ['待核对', state.counts?.unknown ?? '未知']]) {
         const card = node('div'); card.append(node('small', label), node('strong', String(value))); $('stats').append(card);
@@ -118,6 +178,7 @@
         }
         if (session.manual_review || triggerPending.has(session.session_id)) row.append(node('p', '原任务或手动请求结果待核对。请查看真实会话与发送记录；本页不会自动重发。'));
         const edit = node('button', '编辑会话设置'); edit.type = 'button'; edit.onclick = () => editSession(session.session_id); row.append(edit);
+        editButtons.set(session.session_id, edit);
         const trigger = node('button', '现在生成并按统一规则发送'); trigger.type = 'button'; trigger.dataset.pcnSend = 'true'; trigger.dataset.blocked = String(!!session.manual_review || triggerPending.has(session.session_id));
         trigger.onclick = () => triggerSession(session.session_id); row.append(trigger); $('sessions').append(row);
       }
@@ -153,7 +214,15 @@
     if (busy) return;
     if (pending) { notice('请先只读核对当前未确认的保存，原草稿保持。', true); return; }
     busy = true; controls(); const token = ++serial;
-    try { const result = await request('GET', 'session', {session_id: session}); if (token !== serial) return; selected = result.session_id; editor = result; drawEditor(); notice('已读取默认值、当前覆盖与实际文件。'); }
+    try {
+      const result = await request('GET', 'session', {session_id: session});
+      if (token !== serial) return;
+      selected = result.session_id;
+      editor = result;
+      drawEditor();
+      notice('已读取默认值、当前覆盖与实际文件。');
+      revealEditorTarget($('title'), 'start');
+    }
     catch (error) { notice(error.publicMessage || error.message || '会话配置读取失败，草稿保持。', true); }
     finally { busy = false; controls(); }
   }
@@ -201,7 +270,15 @@
   }
   $('quiet-hours').addEventListener('input', quietPreview);
   $('editor').addEventListener('submit', event => { event.preventDefault(); save(); });
-  $('cancel').onclick = () => { if (busy || pending) return; selected = editor = null; drawEditor(); controls(); };
+  $('cancel').onclick = () => {
+    if (busy || pending) return;
+    const returnTarget = editButtons.get(selected) || $('refresh');
+    selected = editor = null;
+    drawEditor();
+    notice('已收起会话设置。');
+    controls();
+    revealEditorTarget(returnTarget);
+  };
   $('check').onclick = reconcile;
   $('inherit').onclick = () => { if (!busy && !pending) $('reset-confirm').hidden = false; };
   $('reset-no').onclick = () => { $('reset-confirm').hidden = true; };

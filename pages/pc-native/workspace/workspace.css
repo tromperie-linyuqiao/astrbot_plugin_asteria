@@ -9,3 +9,191 @@ html[data-asteria-workspace] body{line-height:1.6}html[data-asteria-workspace] h
 html[data-asteria-workspace] dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto}html[data-asteria-workspace] pre{white-space:pre-wrap;overflow-wrap:anywhere}
 html[data-asteria-workspace] button:focus-visible,html[data-asteria-workspace] a:focus-visible{outline:2px solid var(--blue,var(--accent,#7385c9));outline-offset:3px}
 @media(max-width:640px){.asteria-workspace-header{padding:14px;margin:8px 0 18px;gap:10px}.asteria-workspace-header label{flex:1 1 190px;min-width:190px;white-space:nowrap}.asteria-workspace-header select{flex:1;min-width:0;width:100%;max-width:100%}.asteria-workspace-header button{flex-shrink:0}}
+
+
+/* Role workspace uses the same neutral surfaces as the dashboard and memory. */
+html[data-native-workspace="companion"] {
+  --aw-bg: #f6f5f7;
+  --aw-panel: #fff;
+  --aw-ink: #25232b;
+  --aw-muted: #615d6a;
+  --aw-line: #e2dfe6;
+  --aw-accent: #5f467f;
+  --aw-soft: #ece5f5;
+  --pc-radius: 12px;
+}
+html[data-native-workspace="companion"]:is([data-admin-theme="dark"],[data-admin-theme="custom"][data-theme="dark"]) {
+  --aw-bg: #151519;
+  --aw-panel: #1c1c22;
+  --aw-ink: #f3f1f6;
+  --aw-muted: #b5afbf;
+  --aw-line: #35323d;
+  --aw-accent: #cbb9f0;
+  --aw-soft: #30263d;
+}
+html[data-native-workspace="companion"][data-admin-theme="black"] {
+  --aw-bg: #000;
+  --aw-panel: #101014;
+  --aw-ink: #f3f1f6;
+  --aw-muted: #b5afbf;
+  --aw-line: #302d36;
+  --aw-accent: #cbb9f0;
+  --aw-soft: #292132;
+}
+html[data-native-workspace="companion"][data-admin-theme="custom"]:is([data-theme="classic"],[data-theme="dark"]) body {
+  --page-bg: var(--aw-bg);
+  --bg: var(--aw-bg);
+  --panel: var(--aw-panel);
+  --surface: var(--aw-bg);
+  --surface-strong: var(--aw-soft);
+  --ink: var(--aw-ink);
+  --muted: var(--aw-muted);
+  --line: var(--aw-line);
+  --line-soft: var(--aw-line);
+  --accent: var(--aw-accent);
+  --accent-strong: var(--aw-accent);
+  --accent-soft: var(--aw-soft);
+  --blue: var(--aw-accent);
+  --blue-soft: var(--aw-soft);
+  background: var(--aw-bg);
+}
+html[data-native-workspace="companion"] #asteriaWorkspaceHeader {
+  padding: 10px 0 13px;
+  border: 0;
+  border-bottom: 1px solid var(--aw-line);
+  border-radius: 0;
+  background: transparent;
+}
+html[data-native-workspace="companion"] .folio { margin: 0 0 17px; padding: 2px 0 14px; }
+html[data-native-workspace="companion"] .folio-title { font-size: clamp(24px, 3vw, 34px); }
+html[data-native-workspace="companion"] .folio-tools { align-self: flex-start; align-items: center; }
+html[data-native-workspace="companion"] :is(.folio-tools button,.aw-native-navigation > summary,.aw-native-navigation .tab) {
+  min-height: 44px;
+}
+html[data-native-workspace="companion"] .aw-native-navigation .tab {
+  justify-content: flex-start;
+}
+html[data-native-workspace="companion"] .aw-native-navigation .tab span {
+  padding: 0;
+  text-align: start;
+}
+html[data-native-workspace="companion"] .folio-status-details { margin-top: 2px; color: var(--muted); }
+html[data-native-workspace="companion"] .folio-status-details summary {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 7px 0;
+  cursor: pointer;
+}
+html[data-native-workspace="companion"] .folio-status-details[open] summary { margin-bottom: 6px; }
+html[data-native-workspace="companion"] .folio-stats { gap: 8px 16px; }
+html[data-native-workspace="companion"] .layout > #panel-dashboard {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+html[data-native-workspace="companion"] #panel-dashboard .dashboard-overview-head {
+  border: 0;
+  padding-block: 2px 14px;
+}
+html[data-native-workspace="companion"] #panel-dashboard .dashboard-life-desk {
+  display: grid;
+  grid-template-areas:
+    "schedule basics"
+    "schedule detail";
+  grid-template-columns: minmax(0, 1.65fr) minmax(0, .85fr);
+  gap: 14px;
+  align-items: start;
+}
+html[data-native-workspace="companion"] .dashboard-life-column-main { grid-area: schedule; }
+html[data-native-workspace="companion"] .dashboard-life-column-left { grid-area: basics; }
+html[data-native-workspace="companion"] .dashboard-life-column-right { grid-area: detail; }
+html[data-native-workspace="companion"] .dashboard-life-column {
+  min-width: 0;
+  width: 100%;
+}
+html[data-native-workspace="companion"] .life-desk-card { border-radius: var(--pc-radius); min-width: 0; }
+html[data-native-workspace="companion"] .life-desk-card-head .life-desk-dot { display: none; }
+html[data-native-workspace="companion"] .life-desk-card-head {
+  gap: 8px 12px;
+  flex-wrap: wrap;
+}
+html[data-native-workspace="companion"] .life-desk-card-head h3 { padding: 0; font-size: 17px; }
+html[data-native-workspace="companion"] .life-fact-item {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  min-height: 0;
+  min-width: 0;
+  padding: 7px 2px;
+  background: transparent;
+}
+html[data-native-workspace="companion"] :is(.life-fact-item,.life-current-activity,.life-memory-drawer) b {
+  overflow-wrap: anywhere;
+}
+html[data-native-workspace="companion"] .life-timeline-row {
+  min-width: 0;
+  color: var(--ink);
+}
+html[data-native-workspace="companion"] .life-timeline-row.is-current {
+  border-color: var(--accent);
+}
+html[data-native-workspace="companion"] :is(button,a,input,select,summary,h2):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+@media (max-width: 1050px) {
+  html[data-native-workspace="companion"] #panel-dashboard .dashboard-life-desk {
+    grid-template-areas: "schedule" "basics" "detail";
+    grid-template-columns: minmax(0,1fr);
+  }
+}
+@media (max-width: 620px) {
+  html[data-native-workspace="companion"] #asteriaWorkspaceHeader {
+    padding-block: 4px 10px;
+    margin: 0 0 12px;
+    gap: 7px 8px;
+  }
+  html[data-native-workspace="companion"] .asteria-workspace-path { min-width: 0; }
+  html[data-native-workspace="companion"] .asteria-workspace-header label { order: 4; min-width: 100%; }
+  html[data-native-workspace="companion"] .folio { gap: 8px 11px; padding-bottom: 10px; }
+  html[data-native-workspace="companion"] .aw-companion-portrait {
+    flex: 0 0 48px;
+    width: 48px;
+    height: 48px;
+    align-self: flex-start;
+  }
+  html[data-native-workspace="companion"] .folio-tools { margin-left: 59px; width: auto; }
+  html[data-native-workspace="companion"] .folio-tools .seal { width: auto; min-width: 0; }
+  html[data-native-workspace="companion"] .life-timeline-row { grid-template-columns: auto minmax(0, 1fr); }
+}
+
+/* Cache search and record inspection use the same narrow detail pattern as the role archive. */
+#imageCacheWorkspace { min-width: 0; display: grid; gap: 12px; }
+#imageCacheWorkspace #imageCacheActionResult:empty,
+#imageCacheWorkspace .image-cache-feedback:empty,
+#imageCacheWorkspace #imageCacheListStatus:empty { display: none; }
+#imageCacheWorkspace .image-cache-editor { min-width: 0; scroll-margin-top: 16px; }
+#imageCacheWorkspace .image-cache-editor :is(header, label, details, figure) { min-width: 0; }
+#imageCacheWorkspace .image-cache-editor :is(h3, p, summary, code) { overflow-wrap: anywhere; }
+#imageCacheWorkspace .image-cache-back { display: none; min-height: 42px; }
+#imageCacheWorkspace .image-cache-editor textarea { min-height: 150px; }
+#imageCacheWorkspace .image-cache-feedback { margin: 0; color: var(--ink); }
+#imageCacheWorkspace .image-cache-feedback[data-error="true"] { color: var(--danger, #ba5268); }
+#imageCacheWorkspace .image-cache-history { border-top: 1px solid var(--line-soft); padding-block: 6px; }
+#imageCacheWorkspace .image-cache-history > summary { cursor: pointer; min-height: 40px; padding-block: 8px; }
+#imageCacheWorkspace .image-cache-history dl { margin-block: 4px; }
+#imageCacheWorkspace .image-cache-history dd { margin-inline: 0; }
+#imageCacheWorkspace .image-cache-row.is-active { border-color: var(--accent); }
+#imageCacheWorkspace :where(button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 760px) {
+  #imageCacheWorkspace .image-cache-toolbar { grid-template-columns: minmax(0, 1fr); }
+  #imageCacheWorkspace .image-cache-list { min-height: 190px; max-height: 53dvh; }
+  #imageCacheWorkspace .image-cache-detail { display: none; min-height: 0; }
+  #imageCacheWorkspace[data-image-cache-pane="detail"] :is(.image-cache-summary, .image-cache-toolbar, #imageCacheListStatus, .image-cache-list) { display: none; }
+  #imageCacheWorkspace[data-image-cache-pane="detail"] .image-cache-detail { display: block; }
+  #imageCacheWorkspace .image-cache-back { display: block; margin-bottom: 8px; }
+  #imageCacheWorkspace .image-cache-editor { grid-template-columns: minmax(0, 1fr); }
+  #imageCacheWorkspace .image-cache-editor header { flex-wrap: wrap; }
+  #imageCacheWorkspace .image-cache-meta { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}

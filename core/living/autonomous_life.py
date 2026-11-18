@@ -6,6 +6,7 @@ authority; persisted records never grant a live private-session lease.
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime, tzinfo, timezone as time_zone
 import hashlib
@@ -495,14 +496,13 @@ class AutonomousLife:
             raise ValueError('bounded life page required')
         if type(include_archived) is not bool or type(include_invalid) is not bool:raise ValueError('exact life list flags required')
         if character_id is not None:_id(character_id)
-        rows=[];cache={};terms=_terms(query) if query else ()
+        rows=[];cache={};terms=_terms(_normal(query)) if query else ()
         for row in self.journal.list(_NS[kind],scope,limit=_LIMIT[kind]+1):
-            record=self._project(scope,row,cache)
-            if (not include_archived and record['archived'] or not include_invalid and record['invalid_dependencies']
-                    or status is not None and record['fields'].get('status')!=status
-                    or character_id is not None and character_id not in record['fields'].get('character_ids',[])):
+            data=row['data'];fields=data['fields']
+            if (not include_archived and data['archived']
+                    or status is not None and fields.get('status')!=status
+                    or character_id is not None and character_id not in fields.get('character_ids',[])):
                 continue
-            fields=record['fields']
             if query:
                 values=[fields.get(key,'') for key in ('title','content','name','description','relationship','detail')]
                 for identity in fields.get('character_ids',[]):
@@ -512,8 +512,11 @@ class AutonomousLife:
                     person=cache[cache_key]
                     if person is not None and not person['data']['archived']:
                         values.append(person['data']['fields']['name'])
-                text=' '.join(str(value) for value in values).casefold()
+                text=_normal(' '.join(str(value) for value in values))
                 if not any(term in text for term in terms):continue
+            # Validate dependencies and decorate receipts only for possible matches.
+            record=self._project(scope,row,cache)
+            if not include_invalid and record['invalid_dependencies']:continue
             rows.append(record)
         if kind=='event':
             rows.sort(key=lambda record:(-record['fields']['occurred_at'],record['id']))
@@ -810,27 +813,42 @@ class AutonomousLife:
                     add(kind,record,score,'current_scope' if not query else 'recent_or_open')
         # Only real stored IDs create associations; two bounded hops connect a
         # named person -> their events -> their sourced unfinished matters.
+        if not matches:
+            return []
+        character_events=defaultdict(list)
+        character_threads=defaultdict(list)
+        event_threads=defaultdict(list)
+        following_events=defaultdict(list)
+        for event in groups['event'].values():
+            for identity in event['fields']['character_ids']:
+                character_events[identity].append(event)
+            if later_question:
+                for identity in event['fields']['previous_event_ids']:
+                    following_events[identity].append(event)
+        for thread in groups['thread'].values():
+            for identity in thread['fields']['character_ids']:
+                character_threads[identity].append(thread)
+            for identity in thread['fields']['event_ids']:
+                event_threads[identity].append(thread)
+        event_order={identity:index for index,identity in enumerate(groups['event'])}
         for _ in range(2):
             for match in list(matches.values()):
                 kind,record,score=match['kind'],match['record'],match['score'];fields=record['fields']
                 if kind=='character':
-                    for event in groups['event'].values():
-                        if record['id'] in event['fields']['character_ids'] or event['id'] in fields['event_ids']:
-                            add('event',event,int(score*.65)+10,'character_event_reference')
-                    for thread in groups['thread'].values():
-                        if record['id'] in thread['fields']['character_ids']:
-                            add('thread',thread,int(score*.60)+(15 if thread['fields']['status']=='open' else 0),'character_thread_reference')
+                    linked={event['id'] for event in character_events.get(record['id'],())}
+                    linked.update(identity for identity in fields['event_ids'] if identity in event_order)
+                    for identity in sorted(linked,key=event_order.__getitem__):
+                        add('event',groups['event'][identity],int(score*.65)+10,'character_event_reference')
+                    for thread in character_threads.get(record['id'],()):
+                        add('thread',thread,int(score*.60)+(15 if thread['fields']['status']=='open' else 0),'character_thread_reference')
                 elif kind=='event':
                     for identity in fields['character_ids']:add('character',groups['character'].get(identity),int(score*.45),'event_character_reference')
-                    for thread in groups['thread'].values():
-                        if record['id'] in thread['fields']['event_ids']:
-                            add('thread',thread,int(score*.70)+(20 if thread['fields']['status']=='open' else 0),'event_thread_reference')
+                    for thread in event_threads.get(record['id'],()):
+                        add('thread',thread,int(score*.70)+(20 if thread['fields']['status']=='open' else 0),'event_thread_reference')
                     for identity in fields['previous_event_ids']:
                         add('event',groups['event'].get(identity),int(score*.35),'previous_event_reference')
-                    if later_question:
-                        for following in groups['event'].values():
-                            if record['id'] in following['fields']['previous_event_ids']:
-                                add('event',following,int(score*.80)+25,'following_event_reference')
+                    for following in following_events.get(record['id'],()):
+                        add('event',following,int(score*.80)+25,'following_event_reference')
                 else:
                     for identity in fields['event_ids']:add('event',groups['event'].get(identity),int(score*.70)+15,'thread_event_reference')
                     for identity in fields['character_ids']:add('character',groups['character'].get(identity),int(score*.45),'thread_character_reference')
@@ -940,7 +958,7 @@ class AutonomousLife:
         personal = PersonalSpace(self).context_material(scope,query=query[:300],max_chars=min(600,max_chars),limit=limit)
         if not personal['sections']: return life
         # One existing budget and at most three relevant fictional fragments.
-        personal_first=any(word in query for word in ('兴趣','收藏','房间','住处','书桌','私人空间','探索','物品','专辑'))
+        personal_first = any(row['source_kind'] in personal['preferred_kinds'] for row in personal['sections'])
         sections=(personal['sections']+life['sections']) if personal_first else (life['sections']+personal['sections'])
         chosen=[]; used=0; maximum=min(800,max_chars)
         for section in sections:

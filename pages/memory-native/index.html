@@ -13,7 +13,7 @@
   </script>
   <script>document.documentElement.dataset.overviewLayout="standard";</script>
   <link rel="stylesheet" href="./app.css?v=asteria-r163" />
-<link rel="stylesheet" href="./workspace/workspace.css?v=asteria-workspace-0757" />
+<link rel="stylesheet" href="./workspace/workspace.css?v=asteria-memory-079" />
 </head>
 <body>
 <header id="asteriaWorkspaceHeader"></header>
@@ -46,9 +46,8 @@
     <section id="standardOverview" class="standard-overview" aria-label="常规记忆总览">
       <header class="standard-overview-head">
         <div>
-          <p class="eyebrow">档案 · 来源 · 连续性</p>
-          <h1>记忆总览</h1>
-          <p class="standard-overview-summary">当前记忆库、会话范围与常用入口</p>
+          <h1 id="standardOverviewTitle" tabindex="-1">记忆概览</h1>
+          <p class="standard-overview-summary">查找最近的会话记忆，或按来源和范围查看。</p>
         </div>
         <button class="overview-primary-action" data-overview-view="microscope" type="button">
           <span>检索记忆</span>
@@ -64,75 +63,46 @@
       </section>
 
       <div class="standard-overview-body">
+        <section class="overview-recent-scopes" aria-labelledby="recentScopesTitle">
+          <div class="overview-section-head">
+            <h2 id="recentScopesTitle">最近记忆范围</h2>
+            <span id="overviewScopeMeta">正在读取</span>
+          </div>
+          <div id="standardRecentBuckets" class="overview-scope-list" aria-live="polite">
+            <p class="overview-empty">正在读取最近范围...</p>
+          </div>
+        </section>
         <section class="overview-destinations" aria-labelledby="overviewDestinationsTitle">
           <div class="overview-section-head">
-            <div>
-              <p class="eyebrow">Workspace</p>
-              <h2 id="overviewDestinationsTitle">功能入口</h2>
-            </div>
-            <span>6 个工作区</span>
+            <h2 id="overviewDestinationsTitle">按用途查看</h2>
           </div>
           <div class="overview-entry-grid">
             <button class="overview-entry is-private" data-overview-view="relations" data-user-memory-filter="private" type="button">
-              <span class="overview-entry-index">01</span>
               <span class="overview-entry-copy"><b>用户档案与记忆</b><small>私聊 · 画像 · 偏好 · 关系</small></span>
               <span class="overview-entry-arrow" aria-hidden="true">&rsaquo;</span>
             </button>
             <button class="overview-entry is-group" data-overview-view="film" type="button">
-              <span class="overview-entry-index">02</span>
               <span class="overview-entry-copy"><b>群聊记忆</b><small>群聊 · 成员 · 上下文</small></span>
               <span class="overview-entry-arrow" aria-hidden="true">&rsaquo;</span>
             </button>
             <button class="overview-entry is-personal" data-overview-view="review" type="button">
-              <span class="overview-entry-index">03</span>
               <span class="overview-entry-copy"><b>个人记忆</b><small>日程 · 相册 · 主观记忆</small></span>
               <span class="overview-entry-arrow" aria-hidden="true">&rsaquo;</span>
             </button>
             <button class="overview-entry is-graph" data-overview-view="objects" type="button">
-              <span class="overview-entry-index">04</span>
               <span class="overview-entry-copy"><b>知识图谱</b><small>节点 · 关系 · 时间线</small></span>
               <span class="overview-entry-arrow" aria-hidden="true">&rsaquo;</span>
             </button>
             <button class="overview-entry is-search" data-overview-view="microscope" type="button">
-              <span class="overview-entry-index">05</span>
               <span class="overview-entry-copy"><b>检索与召回</b><small>模拟召回 · 注入检查</small></span>
               <span class="overview-entry-arrow" aria-hidden="true">&rsaquo;</span>
             </button>
-            <button class="overview-entry is-archive is-wide" data-overview-view="archive" type="button">
-              <span class="overview-entry-index">06</span>
-              <span class="overview-entry-copy"><b>维护 / 迁移 / 配置</b><small>运行状态 · 备份 · 导入 · 配置</small></span>
+            <button class="overview-entry is-archive" data-overview-view="archive" type="button">
+              <span class="overview-entry-copy"><b>维护与配置</b><small>运行状态 · 备份 · 导入 · 配置</small></span>
               <span class="overview-entry-arrow" aria-hidden="true">&rsaquo;</span>
             </button>
           </div>
         </section>
-
-        <aside class="overview-side-column" aria-label="最近范围与快捷入口">
-          <section class="overview-recent-scopes" aria-labelledby="recentScopesTitle">
-            <div class="overview-section-head is-compact">
-              <div>
-                <p class="eyebrow">Recent</p>
-                <h2 id="recentScopesTitle">最近记忆范围</h2>
-              </div>
-              <span id="overviewScopeMeta">正在读取</span>
-            </div>
-            <div id="standardRecentBuckets" class="overview-scope-list" aria-live="polite">
-              <p class="overview-empty">正在读取最近范围...</p>
-            </div>
-          </section>
-
-          <section class="overview-quick-tools" aria-labelledby="quickToolsTitle">
-            <div class="overview-section-head is-compact">
-              <div>
-                <p class="eyebrow">Shortcuts</p>
-                <h2 id="quickToolsTitle">快捷入口</h2>
-              </div>
-            </div>
-            <div class="overview-quick-grid">
-              <button data-overview-view="microscope" type="button"><b>检索检查</b><small>查看召回结果</small></button>
-              <button data-overview-view="archive" type="button"><b>维护中心</b><small>备份与配置</small></button>
-            </div>
-          </section>
-        </aside>
       </div>
     </section>
 
@@ -156,8 +126,8 @@
     <section id="workspace" class="workspace-frame" aria-label="二级工作区">
       <div class="workspace-head">
         <div>
-          <p id="workspaceEyebrow" class="eyebrow">Locked Frame</p>
-          <h2 id="workspaceTitle">对象</h2>
+          <p id="workspaceEyebrow" class="sr-only">记忆中心</p>
+          <h2 id="workspaceTitle" tabindex="-1">对象</h2>
           <p id="workspaceHint">选择左侧对象后，所有检查视图都会收束到同一范围。</p>
         </div>
         <div class="workspace-tools">
@@ -202,11 +172,9 @@
             </section>
 
           <section id="view-film" class="view">
-            <div class="section-head">
-              <div>
-                <h3 id="groupMemoryTitle">群聊记忆</h3>
-                <p id="groupMemoryHint">查看群聊范围内可被召回和管理的结构化记忆。顶部开关作用于所有群聊窗口。</p>
-              </div>
+            <details class="memory-scope-tools">
+              <summary>记录、召回与清理</summary>
+              <p id="groupMemoryHint">查看群聊范围内可被召回和管理的结构化记忆。顶部开关作用于所有群聊窗口。</p>
               <div class="section-actions scoped-clear-actions">
                 <div class="scope-control-panel">
                   <div id="groupScopeControl" class="scope-control-host"></div>
@@ -218,15 +186,11 @@
                   <button id="clearGroupMemberMemoryBtn" class="danger subtle" type="button" disabled>清空群成员</button>
                 </div>
               </div>
-            </div>
+            </details>
             <div id="groupMemoryList" class="row-list"></div>
           </section>
 
           <section id="view-microscope" class="view">
-            <div class="section-head">
-              <h3>检索与召回</h3>
-              <p>对比全部可检索记忆与指定私聊、群聊中的实际召回结果。</p>
-            </div>
             <div class="microscope-box">
               <div class="microscope-context-bar">
                 <label class="microscope-context-field" for="microscopeContext">
@@ -237,18 +201,17 @@
                 </label>
                 <span id="microscopeContextMeta" class="microscope-context-meta" role="status">管理检索 · 全部可检索记忆</span>
               </div>
-              <textarea id="searchQuery" rows="4" placeholder="例如：你最近写了什么 / 那个蓝色渐变小猪是什么"></textarea>
+              <label class="memory-query-label" for="searchQuery">检索内容</label>
+              <textarea id="searchQuery" rows="4" placeholder="输入一句话，例如：上次提到的唱片是什么"></textarea>
               <button id="runSearchBtn" type="button">开始检索</button>
             </div>
             <div id="searchResult" class="result-grid" aria-live="polite" aria-busy="false"></div>
           </section>
 
           <section id="view-relations" class="view">
-            <div class="section-head">
-              <div>
-                <h3 id="userMemoryTitle">用户档案与记忆</h3>
-                <p id="userMemoryHint">选择左侧用户后，在同一工作区查看私聊、画像、偏好和关系记忆。</p>
-              </div>
+            <details class="memory-scope-tools">
+              <summary>记录、召回与清理</summary>
+              <p id="userMemoryHint">选择左侧用户后，在同一工作区查看私聊、画像、偏好和关系记忆。</p>
               <div class="section-actions">
                 <div class="scope-control-panel">
                   <div id="privateScopeControl" class="scope-control-host"></div>
@@ -256,7 +219,7 @@
                 </div>
                 <button id="clearCurrentPrivateMemoryBtn" class="danger subtle" type="button" disabled>清空当前用户</button>
               </div>
-            </div>
+            </details>
             <div class="user-memory-filter" role="tablist" aria-label="用户记忆分类">
               <button class="is-active" data-user-memory-filter="all" type="button" role="tab" aria-selected="true">全部</button>
               <button data-user-memory-filter="profile" type="button" role="tab" aria-selected="false">画像</button>

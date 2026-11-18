@@ -243,6 +243,8 @@ export function showGenericDetail(title, payload) {
 }
 
 export function clearDetail() {
+  state.activeMemoryId = "";
+  state.memoryDetailReadToken++;
   $("#detailDrawer").className = "detail-drawer empty";
   $("#detailDrawer").innerHTML = `
     <div class="detail-empty">

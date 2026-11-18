@@ -6,11 +6,13 @@ Normal /history remains authoritative for edits/deletes and the active run.
 """
 from __future__ import annotations
 
+from sqlalchemy import func
 from sqlmodel import select
 from astrbot.core.db.po import PlatformMessageHistory
 from astrbot.dashboard.services.chat_service import serialize_history_entry
 
 LIMIT = 100
+HISTORY_WINDOW_LIMIT = 80
 
 
 def capability():
@@ -26,6 +28,61 @@ def cursor(value, *, optional=False):
             or not 0 <= int(value) <= 9223372036854775807):
         raise ValueError('同步游标必须为实际服务器消息编号')
     return int(value)
+
+
+def _saved_companion_filters(session_id):
+    content = PlatformMessageHistory.content
+    refs = content['refs']
+    notice = refs['tls_notice']
+    return (
+        PlatformMessageHistory.platform_id == 'webchat',
+        PlatformMessageHistory.user_id == session_id,
+        content['type'].as_string() == 'bot',
+        refs['source'].as_string() == 'tls_chat_direct',
+        func.json_type(content, '$.refs.tls_notice.schema') == 'integer',
+        notice['schema'].as_integer() == 1,
+        notice['kind'].as_string() == 'proactive',
+        notice['mode'].as_string() == 'companion',
+    )
+
+
+async def has_saved_companion_delivery(database, session_id, delivery_key):
+    """Confirm one exact direct companion delivery in the caller's owned session."""
+    stored_key = PlatformMessageHistory.content['refs']['tls_delivery_key'].as_string()
+    query = select(PlatformMessageHistory.id).where(
+        *_saved_companion_filters(session_id), stored_key == delivery_key,
+    ).limit(1)
+    async with database.get_db() as db:
+        return (await db.execute(query)).scalar_one_or_none() is not None
+
+
+async def saved_latest_companion(database, session_id):
+    """Find the latest saved direct companionship turn in one owned WebChat."""
+    query = (select(PlatformMessageHistory).where(*_saved_companion_filters(session_id))
+             .order_by(PlatformMessageHistory.id.desc()).limit(1))
+    async with database.get_db() as db:
+        row = (await db.execute(query)).scalar_one_or_none()
+    return [] if row is None else [serialize_history_entry(row)]
+
+
+async def saved_window(database, session_id, *, limit, before_id=None, message_id=None):
+    """Read one bounded page from the same private WebChat history as sync."""
+    owned = (PlatformMessageHistory.platform_id == 'webchat',
+             PlatformMessageHistory.user_id == session_id)
+    query = select(PlatformMessageHistory).where(*owned)
+    mode = 'recent'
+    if message_id is not None:
+        mode = 'message'
+        query = query.where(PlatformMessageHistory.id == message_id)
+        limit = 1
+    elif before_id is not None:
+        mode = 'before'
+        query = query.where(PlatformMessageHistory.id < before_id)
+    async with database.get_db() as db:
+        rows = (await db.execute(query.order_by(PlatformMessageHistory.id.desc())
+                                 .limit(limit + 1))).scalars().all()
+    return ([serialize_history_entry(row) for row in reversed(rows[:limit])],
+            dict(schema=1, mode=mode, has_older=len(rows) > limit))
 
 
 async def saved_after(database, session_id, after_id=None, *, limit=LIMIT):

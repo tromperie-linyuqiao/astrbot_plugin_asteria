@@ -5,6 +5,8 @@ from .chat_identity import identity_service
 from .chat_workspace import ChatWorkspace
 from .personal_space import PersonalSpace
 from .life_chat_links import LifeChatLinks, resolve_reference
+from .autonomous_life import _revision
+from .journal import JournalConflict
 
 
 def resources(api, username, session):
@@ -74,9 +76,11 @@ def get(api, username, session, query):
         if query.get('view') == 'catalog':
             if targets or query.get('id'): raise ValueError('目录搜索不能同时指定资料编号')
             from .life_catalog import search
-            if query.get('shared','false') not in ('true','false'): raise ValueError('分享筛选无效')
+            shared=query.get('shared')
+            if shared not in (None,'true','false'): raise ValueError('分享筛选无效')
             result=search(service,scope,query=query.get('query',''),kind=query.get('kind','all'),
-                date_from=query.get('date_from',''),date_to=query.get('date_to',''),shared=query.get('shared')=='true',
+                date_from=query.get('date_from',''),date_to=query.get('date_to',''),
+                shared=None if shared is None else shared=='true',
                 limit=int(query.get('limit',20)),offset=int(query.get('offset',0)))
             for row in result['records']:
                 if row['kind'] not in ('event','character','thread'): row['record']=_personal_browser_record(row['record'])
@@ -146,6 +150,11 @@ def get(api, username, session, query):
         return value
 
 
+def _check_follow_up_revision(body, record):
+    if 'expected_revision' in body and _revision(body['expected_revision']) != record['revision']:
+        raise JournalConflict('life follow-up revision changed')
+
+
 def post(api, username, session, body, *, saved_message=None):
     item = resources(api, username, session)
     service, scope = item[2], item[4]
@@ -156,6 +165,8 @@ def post(api, username, session, body, *, saved_message=None):
             current(api,username,session,item)
             kind,identity=body.get('record_kind'),body.get('record_id')
             row=reference_record(service,scope,kind,identity)
+            if row:
+                _check_follow_up_revision(body, row)
             if not row or not row['valid'] or row['archived'] or row.get('deleted'):raise ValueError('请先核对这项资料')
             reference=resolve_reference(service,scope,dict(type='life_reference',record_kind=kind,record_id=identity,record_revision=row['revision']))
             current(api,username,session,item)
@@ -177,6 +188,7 @@ def post(api, username, session, body, *, saved_message=None):
             reader = {'event_id': service.get_event, 'person_id': service.get_character, 'thread_id': service.get_thread}[target]
             record = reader(scope, identity)
             if record is None: raise KeyError(identity)
+            _check_follow_up_revision(body, record)
             if not record['valid'] or record['archived']: raise ValueError('请先修正这条经历的关联来源')
             fields = record['fields']
             draft = ('想听你接着聊聊“'+fields['title']+'”，后来怎么样了？' if target == 'event_id' else

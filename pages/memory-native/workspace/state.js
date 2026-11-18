@@ -185,6 +185,8 @@ export const state = {
   microscopeBucketId: "all",
   microscopeSearchToken: 0,
   bucketLoadToken: 0,
+  activeViewReadToken: 0,
+  memoryDetailReadToken: 0,
   activeMemoryId: "",
   secondaryNav: {},
   companionPersonalAvailable: null,

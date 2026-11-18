@@ -9,7 +9,7 @@
 .goal-card p{margin-top:5px}
 .goal-card .actions{margin-top:10px}
 .goal-progress{position:relative;display:flex;align-items:center;gap:10px;height:22px;margin-top:10px;border:1px solid var(--line);border-radius:11px;background:var(--bg);overflow:hidden}
-.goal-progress-fill{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,var(--accent,#4a7),var(--accent-2,#7ad));opacity:.35;transition:width .2s ease}
+.goal-progress-fill{position:absolute;left:0;top:0;bottom:0;background:var(--accent);opacity:.35;transition:width .2s ease}
 .goal-progress strong{position:relative;margin-left:auto;padding-right:10px;font-size:12px}
 .goals-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px;border:0;padding:0;margin:16px 0;min-width:0}
 .goals-fields label{min-width:0}
@@ -36,3 +36,8 @@
 .goals-workspace [hidden],.goals-import [hidden]{display:none!important}
 @media(max-width:1000px){.goals-workspace{grid-template-columns:1fr}}
 @media(max-width:480px){.goals-fields{grid-template-columns:1fr}.goals-fields .full{grid-column:auto}.goals-toolbar>button{flex:1}.goals-pager{flex-wrap:wrap}.goals-pager span{order:3;width:100%;text-align:center}.goals-workspace .panel{padding:15px}}
+
+.goals-detail-nav{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;margin:10px 0}
+.goals-detail-nav>p{margin:0;line-height:1.55}
+.goals-detail-nav>p:empty,[data-goal-editor-line]:empty{display:none}
+[data-goal-heading]{overflow-wrap:anywhere}

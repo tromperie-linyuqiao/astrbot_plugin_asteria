@@ -160,13 +160,9 @@ class LlmToolActionsMixin:
         if not (self.enabled and self.enable_qzone_integration):
             return ""
         instruction = """
-【QQ 空间动态工具】
-当用户明确要求你查看说说、QQ 空间动态、点赞/评论说说,或要求你发一条说说时,可以使用 Private Companion 的 QQ 空间工具。
-- 查看说说：使用 `pc_qzone_view_feed`。不知道目标 QQ 时默认当前用户；可用 `selector` 传“最新”“第2条”“最后”或 fid。
-- 发布说说：使用 `pc_qzone_publish_feed`。必须把最终要发布的正文放进 `text` 参数,例如 `{"text":"今天想慢一点。"}`；如需带图,可传 `{"text":"配图说说","images":["本地图片路径或图片URL"]}`；如果用户明确要求“发布刚才/最近生成的生活说说草稿”,可传 `{"use_latest_draft":true}`；不要空调用,不要把草稿当作已发布。
-- 用户说“你发的说说/你刚发了什么/我看到你发的动态”时，“你”指 Bot 自己，不是当前用户。优先直接依据下方 Bot 自己的发布记录回答，不要反问用户内容，不要让用户自己去看，也不要用默认目标为当前用户的查看工具偷换对象。
-- 发布内容必须服从当前人格与世界观,但不要泄露私聊隐私、内部状态数值、关系网资料或插件实现。
-- 工具失败时简短说明失败原因,不要假装已经发布或点赞。
+【QQ 空间动态】
+聊天中可以依据下方 Bot 自己的已发布记录回答。没有记录时明确说明未能核实。
+查看或发布动态使用现有的管理入口。聊天草稿不能作为已发布的依据。
 """.strip()
         context_getter = getattr(self, "_qzone_recent_self_publish_chat_context", None)
         recent_context = context_getter() if callable(context_getter) else ""

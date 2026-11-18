@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>心绪编排层 · 控制台</title>
+<title>心绪与状态规则</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh;padding:12px;font-size:12px}
@@ -116,9 +116,9 @@ button:disabled{opacity:.6;cursor:wait}
 @media(max-width:639px){.xnav a{min-height:36px;display:inline-flex;align-items:center}.rowbtn{min-height:32px}}
 
 /* Follow the actual page theme, including explicit pure black navigation. */
-:root{--tls-page-bg:#0d1117;--tls-page-panel:#161b22;--tls-page-field:#0d1117;--tls-page-line:#30363d;--tls-page-text:#c9d1d9;--tls-page-muted:#8b949e;--tls-page-heading:#e6edf3;--tls-page-accent:#58a6ff}
-:root[data-theme="light"]{color-scheme:light;--tls-page-bg:#f6f5f1;--tls-page-panel:#ffffff;--tls-page-field:#fbfaf7;--tls-page-line:#d9d6cf;--tls-page-text:#292c30;--tls-page-muted:#676c73;--tls-page-heading:#202328;--tls-page-accent:#315e89}
-:root[data-theme="black"]{color-scheme:dark;--tls-page-bg:#000000;--tls-page-panel:#111111;--tls-page-field:#080808;--tls-page-line:#353535;--tls-page-text:#ededeb;--tls-page-muted:#aaa9a5;--tls-page-heading:#f1efea;--tls-page-accent:#d2bc91}
+:root{color-scheme:dark;--tls-page-bg:#151419;--tls-page-panel:#1e1c24;--tls-page-field:#1a1720;--tls-page-line:#3a3543;--tls-page-text:#eeeaf2;--tls-page-muted:#b6aebf;--tls-page-heading:#eeeaf2;--tls-page-accent:#c5b3f1}
+:root[data-theme="light"]{color-scheme:light;--tls-page-bg:#f5f4f3;--tls-page-panel:#ffffff;--tls-page-field:#faf9fa;--tls-page-line:#e0dce2;--tls-page-text:#27232d;--tls-page-muted:#625c6b;--tls-page-heading:#27232d;--tls-page-accent:#644da0}
+:root[data-theme="black"]{color-scheme:dark;--tls-page-bg:#000000;--tls-page-panel:#121116;--tls-page-field:#0a090d;--tls-page-line:#312d39;--tls-page-text:#f0edf4;--tls-page-muted:#b4abbf;--tls-page-heading:#f0edf4;--tls-page-accent:#c5b3f1}
 body{background:var(--tls-page-bg);color:var(--tls-page-text)}.card,.panel,.tab,.tab.active,.xnav a,dialog{background:var(--tls-page-panel);border-color:var(--tls-page-line);color:var(--tls-page-text)}input,select,textarea,button{background:var(--tls-page-field);border-color:var(--tls-page-line);color:var(--tls-page-text)}.card h2,.panel h3,b,strong{color:var(--tls-page-heading)}.hint,.meta,.kv,th,.xnav .xt{color:var(--tls-page-muted)}.top h1,.xnav a.cur,.tab.active{color:var(--tls-page-accent)}:root[data-theme="light"] [style*="color:#e6edf3"]{color:var(--tls-page-heading)!important}table{max-width:100%}dialog{max-height:90dvh;overflow:auto}dialog::backdrop{background:#0009}.toast{max-width:min(90vw,600px);overflow-wrap:anywhere}.toast button{margin-left:12px;min-height:30px;padding:3px 8px;color:inherit}.xnav a{min-height:36px;display:inline-flex;align-items:center}
 
 </style>
@@ -131,60 +131,125 @@ body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft Ya
 body h1{font-size:clamp(21px,2vw,28px);line-height:1.35}body h2{line-height:1.45}body .panel,body .card{border-radius:12px}body input,body textarea,body select{scroll-margin-top:24px}body button:focus-visible,body a:focus-visible{outline:2px solid var(--blue,var(--accent,#7385c9));outline-offset:3px}
 body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto}body pre{overflow-wrap:anywhere;white-space:pre-wrap}body .table-wrap,body .twrap{max-width:100%;overflow:auto}
 @media(max-width:640px){.aw-leaf-header{padding:14px;margin:8px 0 18px;gap:10px}.aw-leaf-path{font-size:12px}.aw-leaf-tools{width:100%}.aw-leaf-tools label{flex:1;min-width:0}.aw-leaf-tools select{min-width:0;width:100%;max-width:100%}.aw-leaf-tools button{flex-shrink:0}body h1{font-size:22px}}
+/* Theme and keyboard styling for the existing leaf controls. */
+body{font-size:14px}
+.aw-leaf-header{max-width:960px;background:var(--tls-page-panel);border-color:var(--tls-page-line);color:var(--tls-page-heading)}
+.aw-leaf-path,.aw-leaf-tools label{color:var(--tls-page-muted)}
+.aw-leaf-tools label{white-space:nowrap}
+.aw-leaf-tools button,.aw-leaf-tools select{background:var(--tls-page-field);border-color:var(--tls-page-line);color:var(--tls-page-heading)}
+.aw-leaf-message:empty{display:none}
+.xnav{padding-bottom:12px;border-color:var(--tls-page-line)}
+.xnav a:hover,button:hover{background:var(--tls-page-panel);color:var(--tls-page-heading)}
+.xnav a.cur{color:var(--tls-page-accent);background:var(--tls-page-field);border-color:var(--tls-page-line)}
+body :is(a,button,input,select,summary,h2):focus-visible{outline:2px solid var(--tls-page-accent);outline-offset:3px}
+.top{align-items:flex-start}
+.top-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}
+.top-controls label{display:inline-flex;align-items:center;gap:6px;color:var(--tls-page-muted)}
+.top-controls input{accent-color:var(--tls-page-accent)}
+.page-section{max-width:960px;margin:0 auto 18px;min-width:0;overflow-wrap:anywhere}
+.page-section>h2{margin:0 0 10px;color:var(--tls-page-heading);font-size:16px}
+.page-details{border:1px solid var(--tls-page-line);border-radius:12px;background:var(--tls-page-panel)}
+.page-details>summary{min-height:42px;padding:12px 16px;color:var(--tls-page-heading);font-weight:650;cursor:pointer}
+.page-details>summary::marker{color:var(--tls-page-accent)}
+.page-details[open]>summary{border-bottom:1px solid var(--tls-page-line)}
+.page-details-content{padding:14px}
+.meta,.empty,.hint{color:var(--tls-page-muted)}
+.err,.danger{color:var(--tls-status-danger)}.toast.err{color:#fff}
+:root{--tls-status-good:#8bc6ad;--tls-status-warn:#e0bd86;--tls-status-danger:#efa2ae}
+:root[data-theme="light"]{--tls-status-good:#26745a;--tls-status-warn:#7b530c;--tls-status-danger:#a52a30}
+.signal-heading{margin-bottom:10px}
+.sig-card,.rule-card,.trig,.hintline{background:var(--tls-page-field);border-color:var(--tls-page-line);overflow-wrap:anywhere}
+.panel,.cols,.sig-grid>*{min-width:0}
+.cols .panel{width:100%;margin-bottom:0}
+.cols .panel h2,.sig-card h3,.rule-id,.trig .treason{color:var(--tls-page-heading)}
+.kv,.kv .muted,.rule-body,.rule-body .muted,.switch-label,.tl-item .tt,.tl-item .rid,.foot{color:var(--tls-page-muted)}
+.sig-card .kv{display:flex;flex-wrap:wrap;gap:3px 12px}
+.kv b{color:var(--tls-page-heading)}
+.tl-item{border-color:var(--tls-page-line)}
+.tl-item>span:last-child{min-width:0;overflow-wrap:anywhere}
+.tl-item .tag,.sigtag,.prio.p3{color:var(--tls-page-accent)}
+.badge.off,.badge.na,.prio.p4,.prio.p5,.ctx-chip{color:var(--tls-page-muted);background:var(--tls-page-panel);border-color:var(--tls-page-line)}
+.badge.on{color:var(--tls-status-good)}
+.prio.p1,button.danger{color:var(--tls-status-danger)}
+.prio.p2,.tmeta b,.cond-chip .op{color:var(--tls-status-warn)}
+button.danger-armed,button.danger-armed:hover{color:#fff;background:#a52a30;border-color:#a52a30}
+button.primary,button.primary:hover{color:var(--tls-page-bg);background:var(--tls-page-accent);border-color:var(--tls-page-accent)}
+.cond-chip{color:var(--tls-page-text);background:var(--tls-page-panel);border-color:var(--tls-page-line)}
+.switch{width:36px;height:24px}
+.switch input{width:100%;height:100%;position:absolute;cursor:pointer}
+.switch i{pointer-events:none}
+.switch i:before{left:4px;top:5px}
+.switch input:focus-visible+i{outline:2px solid var(--tls-page-accent);outline-offset:2px}
+.switch input:checked+i{border-color:var(--tls-page-accent);background:var(--tls-page-line)}
+.switch input:checked+i:before{background:var(--tls-page-accent)}
+.mood-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
+.mood-actions .hint{flex-basis:100%}
+.rule-card.editing{border-color:var(--tls-page-accent)}
+.etable th{color:var(--tls-page-muted);width:96px}
+.cond-row{overflow:visible}
+.cond-row input,.cond-row select,.etable :is(input,select){min-width:0;max-width:100%}
+@media(max-width:520px){
+  .etable,.etable tbody,.etable tr,.etable th,.etable td{display:block;width:100%;padding-left:0;padding-right:0}
+  .etable td{padding-bottom:10px}
+  .mood-actions button,.panel .rowbtn{min-height:36px}
+}
 </style>
 </head>
 <body>
 <header id="asteria-leaf-header" class="aw-leaf-header" data-area="area-role"><span class="aw-leaf-brand">✧ 星栖 Asteria</span><span class="aw-leaf-path">角色与生活 / 心绪与状态规则</span><div class="aw-leaf-tools"><label>本页<select aria-label="定位本页分区"><option>定位本页分区</option></select></label><button type="button">返回角色与生活</button></div><p class="aw-leaf-message" role="status"></p></header>
-<div class="xnav">
-  <a data-pg="控制台">控制台</a><span class="xt">存在层页面</span>
-  <a data-pg="身体">身体</a>
-  <a data-pg="空间">空间</a>
-  <a data-pg="材质">材质</a>
-  <a data-pg="总览">总览</a>
-  <a class="cur" data-pg="心绪">心绪</a>
-  <a data-pg="记忆">记忆</a>
-</div>
+<nav class="xnav" aria-label="存在层相关页面">
+  <a href="#" data-pg="控制台">控制台</a><span class="xt">存在层页面</span>
+  <a href="#" data-pg="身体">身体</a>
+  <a href="#" data-pg="空间">空间</a>
+  <a href="#" data-pg="材质">材质</a>
+  <a href="#" data-pg="总览">总览</a>
+  <a class="cur" aria-current="page" data-pg="心绪">心绪</a>
+  <a href="#" data-pg="记忆">记忆</a>
+</nav>
 <div class="top">
   <div>
-    <h1>心绪编排层 · 控制台</h1>
+    <h1>心绪与状态规则</h1>
     <div class="meta" id="meta">加载中…</div>
   </div>
-  <div>
-    <button onclick="refreshAll()">刷新</button>
-    <label style="font-size:12px;color:#8b949e;margin-left:8px"><input type="checkbox" id="auto" checked> 30s 自动刷新（信号/触发/历史）</label>
-    <button class="primary" id="rules-save-btn" onclick="saveRules()">保存规则库</button>
-    <span id="rules-save-state" class="hint"></span>
+  <div class="top-controls">
+    <button type="button" onclick="refreshAll()">刷新</button>
+    <label><input type="checkbox" id="auto" checked> 每 30 秒刷新（信号/触发/历史）</label>
   </div>
 </div>
 
-<div class="panel">
-  <h2>信号源<span class="sub">四个只读来源的实时状态（编排轮询的输入）</span></h2>
-  <div class="sig-grid" id="sig-grid"><div class="empty">加载中…</div></div>
-</div>
-
-<div class="panel">
-  <h2>规则库<span class="sub" id="rules-count"></span>
-    <span class="spacer"></span>
-    <button class="rowbtn" onclick="addRule()">+ 新增规则</button>
-  </h2>
-  <p class="hint">改动先进草稿（含开关切换），点右上「保存规则库」整体写入并热生效。删除为两步确认。</p>
-  <div id="rules-list"><div class="empty">加载中…</div></div>
-</div>
-
-<div class="cols">
-  <div class="panel">
-    <h2>当前触发建议<span class="sub" id="trig-updated"></span></h2>
-    <div id="trig-list"><div class="empty">加载中…</div></div>
-  </div>
-  <div class="panel">
-    <h2>触发历史<span class="sub" id="hist-count"></span>
-      <span class="spacer"></span>
-      <button class="rowbtn danger" id="hist-reset-btn" onclick="resetState()">清空冷却与历史</button>
-    </h2>
-    <div id="hist-list"><div class="empty">加载中…</div></div>
-  </div>
-</div>
-<div class="foot">触发建议由后端按规则轮询信号源产出（含冷却/优先级），PC 主动消息 prompt 消费触发文件——本页只读展示。</div>
+<main>
+  <section class="page-section" aria-labelledby="mood-observe">
+    <h2 id="mood-observe" data-jump-section="状态观察">状态观察</h2>
+    <div class="cols">
+      <section class="panel">
+        <h2>当前触发建议<span class="sub" id="trig-updated"></span></h2>
+        <div id="trig-list"><div class="empty">加载中…</div></div>
+      </section>
+      <section class="panel">
+        <h2>触发历史<span class="sub" id="hist-count"></span></h2>
+        <div id="hist-list"><div class="empty">加载中…</div></div>
+      </section>
+    </div>
+  </section>
+  <section class="page-section panel" aria-labelledby="mood-signals">
+    <h2 id="mood-signals" class="signal-heading" data-jump-section="观察来源">观察来源</h2>
+    <div class="sig-grid" id="sig-grid"><div class="empty">加载中…</div></div>
+  </section>
+  <details class="page-section page-details" id="mood-management">
+    <summary data-jump-section="规则维护">规则维护</summary>
+    <div class="page-details-content">
+      <h2>规则库<span class="hint" id="rules-count"></span></h2>
+      <p class="hint">规则编辑和开关先保存在本页草稿，选择「保存规则库」后生效。</p>
+      <div class="mood-actions">
+        <button type="button" onclick="addRule()">新增规则</button>
+        <button type="button" class="primary" id="rules-save-btn" onclick="saveRules()">保存规则库</button>
+        <span id="rules-save-state" class="hint" role="status"></span>
+      </div>
+      <div id="rules-list"><div class="empty">加载中…</div></div>
+      <button type="button" class="rowbtn danger" id="hist-reset-btn" onclick="resetState()">清空冷却与历史</button>
+    </div>
+  </details>
+</main>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="/api/plugin/page/bridge-sdk.js"></script>
@@ -356,16 +421,16 @@ function ruleCardHtml(r, i){
       <span class="sigtag">${esc(SIGNALS[r.signal] ? SIGNALS[r.signal].label : r.signal)}</span>
       <span class="prio ${prioCls(r.priority)}">${esc(PRIO_CN[r.priority] || 'P' + r.priority)}</span>
       <label class="switch" title="启用/停用（草稿，保存后生效）">
-        <input type="checkbox" data-action="toggle" data-i="${i}" ${r.enabled ? 'checked' : ''}><i></i>
+        <input type="checkbox" aria-label="启用规则 ${esc(r.id)}" data-action="toggle" data-i="${i}" ${r.enabled ? 'checked' : ''}><i></i>
       </label>
       <span class="switch-label">${r.enabled ? '启用' : '停用'}</span>
       <span class="spacer" style="margin-left:auto"></span>
-      <button class="rowbtn" data-action="edit" data-i="${i}">编辑</button>
-      <button class="rowbtn danger" data-action="delrule" data-i="${i}">删除</button>
+      <button class="rowbtn" aria-label="编辑规则 ${esc(r.id)}" data-action="edit" data-i="${i}">编辑</button>
+      <button class="rowbtn danger" aria-label="删除规则 ${esc(r.id)}" data-action="delrule" data-i="${i}">删除</button>
     </div>
     <div class="rule-body">条件：${conds}</div>
-    <div class="rule-body">冷却 <b style="color:#e6edf3">${esc(r.cooldown_minutes ?? '-')} 分钟</b>｜template_hint：<span class="muted" style="color:#8b949e">${esc(r.template_hint || '')}</span></div>
-    ${r.note ? `<div class="rule-body" style="color:#8b949e">备注：${esc(r.note)}</div>` : ''}
+    <div class="rule-body">冷却 <b style="color:#e6edf3">${esc(r.cooldown_minutes ?? '-')} 分钟</b>｜template_hint：<span class="muted">${esc(r.template_hint || '')}</span></div>
+    ${r.note ? `<div class="rule-body">备注：${esc(r.note)}</div>` : ''}
   </div>`;
 }
 
@@ -375,9 +440,9 @@ function fieldOptions(signal){
 function condRowHtml(c, j){
   const disabled = c.op === 'changed' ? 'disabled' : '';
   return `<div class="cond-row" data-cr="${j}">
-    <input list="field-opts" data-cf placeholder="signal.field" value="${esc(c.field || '')}">
-    <select data-co>${OPS.map(o => `<option value="${o}" ${o === c.op ? 'selected' : ''}>${esc(OPS_CN[o])} ${o}</option>`).join('')}</select>
-    <input data-cv placeholder="值" value="${esc(c.op === 'changed' ? '' : String(c.value ?? ''))}" ${disabled}>
+    <input aria-label="条件字段" list="field-opts" data-cf placeholder="signal.field" value="${esc(c.field || '')}">
+    <select aria-label="条件比较方式" data-co>${OPS.map(o => `<option value="${o}" ${o === c.op ? 'selected' : ''}>${esc(OPS_CN[o])} ${o}</option>`).join('')}</select>
+    <input aria-label="条件值" data-cv placeholder="值" value="${esc(c.op === 'changed' ? '' : String(c.value ?? ''))}" ${disabled}>
     <button class="rowbtn danger" data-action="delcond" data-j="${j}">删</button>
   </div>`;
 }
@@ -385,27 +450,27 @@ function ruleEditorHtml(i){
   const r = EDIT_COPY;
   return `<div class="rule-card editing">
     <table class="etable">
-      <tr><th>id</th><td><input type="text" data-e="id" value="${esc(r.id)}" placeholder="rule_id（唯一）"></td></tr>
+      <tr><th>规则标识</th><td><input type="text" aria-label="规则标识" data-e="id" value="${esc(r.id)}" placeholder="rule_id（唯一）"></td></tr>
       <tr><th>信号源</th><td>
-        <select data-e="signal">${Object.keys(SIGNALS).map(s => `<option value="${s}" ${s === r.signal ? 'selected' : ''}>${esc(SIGNALS[s].label)}（${s}）</option>`).join('')}</select>
+        <select aria-label="信号源" data-e="signal">${Object.keys(SIGNALS).map(s => `<option value="${s}" ${s === r.signal ? 'selected' : ''}>${esc(SIGNALS[s].label)}（${s}）</option>`).join('')}</select>
       </td></tr>
       <tr><th>条件</th><td>
         <datalist id="field-opts">${fieldOptions(r.signal)}</datalist>
         <div id="cond-rows">${(r.conditions || []).map((c, j) => condRowHtml(c, j)).join('') || '<span class="hint">至少一条</span>'}</div>
         <button class="rowbtn" data-action="addcond">+ 加条件</button>
       </td></tr>
-      <tr><th>冷却分钟</th><td><input type="number" min="1" max="10080" step="1" data-e="cooldown_minutes" value="${esc(r.cooldown_minutes)}" style="width:110px"></td></tr>
+      <tr><th>冷却分钟</th><td><input type="number" min="1" max="10080" step="1" aria-label="冷却分钟" data-e="cooldown_minutes" value="${esc(r.cooldown_minutes)}" style="width:110px"></td></tr>
       <tr><th>优先级</th><td>
-        <select data-e="priority">${[1, 2, 3, 4, 5].map(p => `<option value="${p}" ${+r.priority === p ? 'selected' : ''}>${esc(PRIO_CN[p])}</option>`).join('')}</select>
+        <select aria-label="优先级" data-e="priority">${[1, 2, 3, 4, 5].map(p => `<option value="${p}" ${+r.priority === p ? 'selected' : ''}>${esc(PRIO_CN[p])}</option>`).join('')}</select>
       </td></tr>
       <tr><th>情境提示</th><td>
         <div class="phbar">${[
           ['她房间', '{she_room}'], ['城市', '{city}'], ['下雨', '{is_rain}'], ['心境', '{mood_word}'],
           ['同室', '{same_room}'], ['阶段', '{phase}'], ['章节', '{chapter}'], ['移动中', '{she_moving}'],
         ].map(([lbl, ph]) => `<button type="button" class="rowbtn" data-action="insph" data-ph="${esc(ph)}" title="在光标处插入 ${esc(ph)}">${esc(lbl)}</button>`).join('')}</div>
-        <input type="text" class="w-mid" data-e="template_hint" value="${esc(r.template_hint || '')}" placeholder="给 PC 主动消息的一句情境提示">
+        <input type="text" class="w-mid" aria-label="情境提示" data-e="template_hint" value="${esc(r.template_hint || '')}" placeholder="给 PC 主动消息的一句情境提示">
       </td></tr>
-      <tr><th>备注</th><td><input type="text" class="w-mid" data-e="note" value="${esc(r.note || '')}"></td></tr>
+      <tr><th>备注</th><td><input type="text" class="w-mid" aria-label="备注" data-e="note" value="${esc(r.note || '')}"></td></tr>
     </table>
     <div class="rule-foot">
       <button class="rowbtn primary" data-action="committedit" data-i="${i}">完成编辑</button>
@@ -480,13 +545,16 @@ document.addEventListener('click', e => {
   if (RULES_SAVING){ toast('规则正在保存，请等待完成', true); return; }
   const i = +btn.dataset.i;
   if (act === 'toggle'){
+    const hadFocus = btn === document.activeElement;
     RULES[i].enabled = !RULES[i].enabled;
     renderRules();
+    if (hadFocus) document.querySelector(`[data-action="toggle"][data-i="${i}"]`)?.focus();
   } else if (act === 'edit'){
     if (EDIT_IDX >= 0){ toast('先完成或取消当前正在编辑的规则', true); return; }
     EDIT_IDX = i;
     EDIT_COPY = JSON.parse(JSON.stringify(RULES[i]));
     renderRules();
+    document.querySelector('[data-e="id"]')?.focus();
   } else if (act === 'delrule'){
     if (btn.dataset.armed !== '1'){
       btn.dataset.armed = '1';
@@ -759,8 +827,19 @@ setInterval(() => { if (!document.hidden && document.getElementById('auto').chec
 </script>
 <script id="asteria-leaf-script">
 (()=>{'use strict';const bar=document.getElementById('asteria-leaf-header'),jump=bar.querySelector('select'),back=bar.querySelector('button'),message=bar.querySelector('[role=status]');let headings=[];
-function fill(){headings=[...document.querySelectorAll('h2,h3')].filter(el=>!el.closest('dialog')&&el.getClientRects().length&&el.textContent.trim());jump.replaceChildren(new Option('定位本页分区',''));headings.forEach((el,i)=>jump.add(new Option(el.textContent.trim().slice(0,70),String(i))));}
-jump.addEventListener('focus',fill);jump.addEventListener('pointerdown',fill);jump.addEventListener('change',()=>{if(jump.value==='')return;const el=headings[Number(jump.value)];if(!el)return;el.scrollIntoView({block:'start'});if(!el.hasAttribute('tabindex'))el.tabIndex=-1;el.focus({preventScroll:true});});
+function fill(){
+  headings=[...document.querySelectorAll('[data-jump-section]')];
+  jump.replaceChildren(new Option('定位本页分区',''));
+  headings.forEach((el,i)=>jump.add(new Option(el.dataset.jumpSection,String(i))));
+}
+jump.addEventListener('change',()=>{
+  if(jump.value==='')return;
+  const el=headings[Number(jump.value)];
+  if(el.parentElement.tagName==='DETAILS')el.parentElement.open=true;
+  el.tabIndex=-1;
+  el.focus({preventScroll:true});
+  el.scrollIntoView({block:'start'});
+});
 back.addEventListener('click',async()=>{back.disabled=true;message.textContent='';try{const bridge=window.AstrBotPluginPage;if(!bridge)throw Error('请从 AstrBot 后台重新打开此页面。');await bridge.ready();const theme=document.documentElement.dataset.theme||new URLSearchParams(location.search).get('theme')||'dark';let result=await bridge.apiGet('page/nav',{to:'console',theme,format:'json'});if(result?.data)result=result.data;const url=new URL(result.url,location.href);if(url.origin!==location.origin||url.pathname!=='/api/plugin/page/content/astrbot_plugin_asteria/console/'||!url.searchParams.get('asset_token'))throw Error('返回地址未确认，请从后台进入工作台。');url.hash=bar.dataset.area;location.assign(url.href);}catch(error){message.textContent=error.message||'工作台暂时无法打开。';}finally{back.disabled=false;}});fill();})();
 </script>
 </body>

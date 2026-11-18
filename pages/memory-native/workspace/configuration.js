@@ -1256,20 +1256,27 @@ export async function saveRetrievalConfig(form) {
   }
 }
 
-export async function showMemory(id) {
+export async function showMemory(id, origin = null) {
   state.activeMemoryId = id;
-  $("#detailDrawer").className = "detail-drawer memory-record-detail";
-  $("#detailDrawer").innerHTML = loadingState("正在展开详情...");
+  const ticket = ++state.memoryDetailReadToken;
+  const drawer = $("#detailDrawer");
+  const current = () => ticket === state.memoryDetailReadToken && state.activeMemoryId === id;
+  drawer.className = "detail-drawer memory-record-detail";
+  drawer.innerHTML = loadingState("正在展开详情...");
   let memory;
   try {
     const data = await apiGet(`/memory?id=${encodeURIComponent(id)}`);
     memory = data.memory;
-    if (state.activeMemoryId !== id) return;
+    if (!current()) return;
   } catch (error) {
-    if (state.activeMemoryId !== id) return;
-    $("#detailDrawer").innerHTML = panelError(error, "重新读取");
-    const retry = $("#detailDrawer [data-retry-active]");
-    if (retry) retry.addEventListener("click", () => showMemory(id));
+    if (!current()) return;
+    drawer.innerHTML = panelError(error, "重新读取");
+    const retry = drawer.querySelector("[data-retry-active]");
+    if (retry) {
+      retry.addEventListener("click", () => showMemory(id, origin));
+      if (origin) retry.focus({preventScroll: true});
+    }
+    if (origin) drawer.scrollIntoView({block: "start"});
     showToast(error.message || "详情读取失败", "error");
     return;
   }
@@ -1277,7 +1284,7 @@ export async function showMemory(id) {
   $("#detailDrawer").innerHTML = `
     <div class="memory-manage-head">
       <div>
-        <h3>${escapeHtml(memoryFieldLabel("memory_type", memory.memory_type))}</h3>
+        <h3 tabindex="-1">${escapeHtml(memoryFieldLabel("memory_type", memory.memory_type))}</h3>
         <button type="button" data-memory-back>返回当前列表</button>
         <p class="item-meta">${escapeHtml(memory.id)} · ${escapeHtml(formatTime(memory.occurred_at || memory.created_at))}</p>
       </div>
@@ -1410,14 +1417,22 @@ export async function showMemory(id) {
   `;
   const form = $("#memoryManageForm");
   $("[data-memory-back]").addEventListener("click", () => {
-    ($(".view.is-active .memory-browser") || $("#workspace")).scrollIntoView({block: "start"});
+    const list = $(".view.is-active .memory-browser");
+    const row = origin?.isConnected ? origin
+      : [...(list?.querySelectorAll("[data-memory-id]") || [])].find(item => item.dataset.memoryId === id);
+    if (row) row.focus({preventScroll: true});
+    (row || list || $("#workspace"))?.scrollIntoView({block: row ? "nearest" : "start"});
   });
+  if (origin) {
+    drawer.querySelector("h3")?.focus({preventScroll: true});
+    drawer.scrollIntoView({block: "start"});
+  }
   $("#memoryRevisions")?.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-revision-offset]");
     if (!button) return;
     await withButton(button, "读取中", async () => {
       const result = await apiGet(`/memory?id=${encodeURIComponent(id)}&revision_offset=${Number(button.dataset.revisionOffset)}`);
-      if (state.activeMemoryId !== id) return;
+      if (!current()) return;
       $("#memoryRevisions").innerHTML = renderMemoryRevisions(result.memory.revisions, true);
     });
   });
@@ -1426,6 +1441,16 @@ export async function showMemory(id) {
     withButton($("#saveMemoryBtn"), "保存中", () => saveMemoryManagement(id, form));
   });
   $("#detailDrawer [data-delete]").addEventListener("click", () => {
+    const showDeleteReadback = () => {
+      if (!current()) return;
+      drawer.innerHTML = `<div class="empty-state error-state" role="status">
+        <b>删除结果未确认</b><span>请先重新读取这条记忆，再决定是否继续。</span>
+        <button type="button" data-memory-delete-read>重新读取原记录</button>
+      </div>`;
+      const readButton = drawer.querySelector("[data-memory-delete-read]");
+      readButton.addEventListener("click", () => showMemory(id, origin));
+      readButton.focus({preventScroll: true});
+    };
     showInlineConfirmation({
       host: "#detailDrawer",
       title: "删除这条记忆",
@@ -1434,11 +1459,28 @@ export async function showMemory(id) {
       busyText: "正在删除记忆...",
       dangerous: true,
       onConfirm: async () => {
-        await apiPost("/memory/delete", { id });
+        if (!current()) return;
+        drawer.querySelectorAll("[data-inline-confirm], [data-inline-cancel]").forEach(button => { button.disabled = true; });
+        try {
+          const result = await apiPost("/memory/delete", { id });
+          if (result?.deleted !== true) {
+            showDeleteReadback();
+            return;
+          }
+        } catch {
+          showDeleteReadback();
+          return;
+        }
+        showToast("这条记忆已删除");
+        if (!current()) return;
         clearDetail();
-        await refreshAll();
+        try {
+          await refreshAll();
+        } catch {
+          showToast("这条记忆已删除，列表或统计暂未刷新。", "error");
+        }
       },
-      onCancel: () => showMemory(id),
+      onCancel: () => showMemory(id, origin),
     });
   });
 }

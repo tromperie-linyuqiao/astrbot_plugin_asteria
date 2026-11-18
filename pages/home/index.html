@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>存在层总览 · 虚拟存在层</title>
+<title>存在状态 · 星栖 Asteria</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh;padding:12px;font-size:12px}
@@ -12,10 +12,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans
 .top .meta{font-size:12px;color:#8b949e}
 button{background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px}
 button:hover{background:#30363d}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));gap:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:16px}
 .card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px}
 .card h2{font-size:13px;color:#e6edf3;display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.card h2 .who{font-size:11px;color:#8b949e;font-weight:400}
 .badge{font-size:11px;padding:2px 8px;border-radius:10px;background:#1f6feb33;color:#58a6ff;border:1px solid #1f6feb55}
 .badge.afterglow{color:#d29922;border-color:#d2992255;background:#d2992222}
 .badge.cooldown{color:#8b949e;border-color:#30363d;background:#21262d}
@@ -77,9 +76,9 @@ button:disabled{opacity:.6;cursor:wait}
 @media(max-width:639px){.xnav a{min-height:36px;display:inline-flex;align-items:center}.rowbtn{min-height:32px}}
 
 /* Follow the actual page theme, including explicit pure black navigation. */
-:root{--tls-page-bg:#0d1117;--tls-page-panel:#161b22;--tls-page-field:#0d1117;--tls-page-line:#30363d;--tls-page-text:#c9d1d9;--tls-page-muted:#8b949e;--tls-page-heading:#e6edf3;--tls-page-accent:#58a6ff}
-:root[data-theme="light"]{color-scheme:light;--tls-page-bg:#f6f5f1;--tls-page-panel:#ffffff;--tls-page-field:#fbfaf7;--tls-page-line:#d9d6cf;--tls-page-text:#292c30;--tls-page-muted:#676c73;--tls-page-heading:#202328;--tls-page-accent:#315e89}
-:root[data-theme="black"]{color-scheme:dark;--tls-page-bg:#000000;--tls-page-panel:#111111;--tls-page-field:#080808;--tls-page-line:#353535;--tls-page-text:#ededeb;--tls-page-muted:#aaa9a5;--tls-page-heading:#f1efea;--tls-page-accent:#d2bc91}
+:root{color-scheme:dark;--tls-page-bg:#151419;--tls-page-panel:#1e1c24;--tls-page-field:#1a1720;--tls-page-line:#3a3543;--tls-page-text:#eeeaf2;--tls-page-muted:#b6aebf;--tls-page-heading:#eeeaf2;--tls-page-accent:#c5b3f1}
+:root[data-theme="light"]{color-scheme:light;--tls-page-bg:#f5f4f3;--tls-page-panel:#ffffff;--tls-page-field:#faf9fa;--tls-page-line:#e0dce2;--tls-page-text:#27232d;--tls-page-muted:#625c6b;--tls-page-heading:#27232d;--tls-page-accent:#644da0}
+:root[data-theme="black"]{color-scheme:dark;--tls-page-bg:#000000;--tls-page-panel:#121116;--tls-page-field:#0a090d;--tls-page-line:#312d39;--tls-page-text:#f0edf4;--tls-page-muted:#b4abbf;--tls-page-heading:#f0edf4;--tls-page-accent:#c5b3f1}
 body{background:var(--tls-page-bg);color:var(--tls-page-text)}.card,.panel,.tab,.tab.active,.xnav a,dialog{background:var(--tls-page-panel);border-color:var(--tls-page-line);color:var(--tls-page-text)}input,select,textarea,button{background:var(--tls-page-field);border-color:var(--tls-page-line);color:var(--tls-page-text)}.card h2,.panel h3,b,strong{color:var(--tls-page-heading)}.hint,.meta,.kv,th,.xnav .xt{color:var(--tls-page-muted)}.top h1,.xnav a.cur,.tab.active{color:var(--tls-page-accent)}:root[data-theme="light"] [style*="color:#e6edf3"]{color:var(--tls-page-heading)!important}table{max-width:100%}dialog{max-height:90dvh;overflow:auto}dialog::backdrop{background:#0009}.toast{max-width:min(90vw,600px);overflow-wrap:anywhere}.toast button{margin-left:12px;min-height:30px;padding:3px 8px;color:inherit}.xnav a{min-height:36px;display:inline-flex;align-items:center}
 
 </style>
@@ -92,33 +91,91 @@ body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft Ya
 body h1{font-size:clamp(21px,2vw,28px);line-height:1.35}body h2{line-height:1.45}body .panel,body .card{border-radius:12px}body input,body textarea,body select{scroll-margin-top:24px}body button:focus-visible,body a:focus-visible{outline:2px solid var(--blue,var(--accent,#7385c9));outline-offset:3px}
 body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto}body pre{overflow-wrap:anywhere;white-space:pre-wrap}body .table-wrap,body .twrap{max-width:100%;overflow:auto}
 @media(max-width:640px){.aw-leaf-header{padding:14px;margin:8px 0 18px;gap:10px}.aw-leaf-path{font-size:12px}.aw-leaf-tools{width:100%}.aw-leaf-tools label{flex:1;min-width:0}.aw-leaf-tools select{min-width:0;width:100%;max-width:100%}.aw-leaf-tools button{flex-shrink:0}body h1{font-size:22px}}
+/* Theme and keyboard styling for the existing leaf controls. */
+body{font-size:14px}
+.aw-leaf-header{max-width:960px;background:var(--tls-page-panel);border-color:var(--tls-page-line);color:var(--tls-page-heading)}
+.aw-leaf-path,.aw-leaf-tools label{color:var(--tls-page-muted)}
+.aw-leaf-tools label{white-space:nowrap}
+.aw-leaf-tools button,.aw-leaf-tools select{background:var(--tls-page-field);border-color:var(--tls-page-line);color:var(--tls-page-heading)}
+.aw-leaf-message:empty{display:none}
+.xnav{padding-bottom:12px;border-color:var(--tls-page-line)}
+.xnav a:hover,button:hover{background:var(--tls-page-panel);color:var(--tls-page-heading)}
+.xnav a.cur{color:var(--tls-page-accent);background:var(--tls-page-field);border-color:var(--tls-page-line)}
+body :is(a,button,input,select,summary,h2):focus-visible{outline:2px solid var(--tls-page-accent);outline-offset:3px}
+.top{align-items:flex-start}
+.top-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}
+.top-controls label{display:inline-flex;align-items:center;gap:6px;color:var(--tls-page-muted)}
+.top-controls input{accent-color:var(--tls-page-accent)}
+.page-section{max-width:960px;margin:0 auto 18px;min-width:0;overflow-wrap:anywhere}
+.page-section>h2{margin:0 0 10px;color:var(--tls-page-heading);font-size:16px}
+.page-details{border:1px solid var(--tls-page-line);border-radius:12px;background:var(--tls-page-panel)}
+.page-details>summary{min-height:42px;padding:12px 16px;color:var(--tls-page-heading);font-weight:650;cursor:pointer}
+.page-details>summary::marker{color:var(--tls-page-accent)}
+.page-details[open]>summary{border-bottom:1px solid var(--tls-page-line)}
+.page-details-content{padding:14px}
+.meta,.empty,.hint{color:var(--tls-page-muted)}
+.err,.danger{color:var(--tls-status-danger)}.toast.err{color:#fff}
+:root{--tls-status-good:#8bc6ad;--tls-status-warn:#e0bd86;--tls-status-danger:#efa2ae}
+:root[data-theme="light"]{--tls-status-good:#26745a;--tls-status-warn:#7b530c;--tls-status-danger:#a52a30}
+.presence-links{margin:12px 0 0}
+.presence-links:empty{display:none}
+.presence-diagnostics{display:grid;gap:10px}
+.presence-diagnostics .card{margin:0;width:100%;min-width:0}
+.card,.grid>*{min-width:0;overflow-wrap:anywhere}
+.card h2{gap:8px;justify-content:flex-start;flex-wrap:wrap;font-size:16px}
+.place{background:var(--tls-page-field);border-color:var(--tls-page-line)}
+.place .tag,.band.far,.band.unknown,.badge.cooldown{color:var(--tls-page-muted);background:var(--tls-page-panel);border-color:var(--tls-page-line)}
+.place .arrow,.mats .t,.badge{color:var(--tls-page-accent)}
+.place .eta,.lowconf,.band.near,.badge.afterglow,.prow .tier.react,.run-warning{color:var(--tls-status-warn)}
+.place .fresh,.band.same,.state-on{color:var(--tls-status-good)}
+.prow .tier.lose,.prow .tier.overload{color:var(--tls-status-danger)}
+.prow .pl,.prow .pv,.mats .at,.mats,.foot,td .raw,.muted{color:var(--tls-page-muted)}
+.bar,.prow .pbar{background:var(--tls-page-line)}
+.matword{color:#deaec9}
+:root[data-theme="light"] .matword{color:#7b3055}
+.session-detail summary{min-height:34px;padding-block:6px;color:var(--tls-page-muted);cursor:pointer}
+.session-detail code{overflow-wrap:anywhere}
+.kv b,.card h3{color:var(--tls-page-heading)}
+.card h3{font-size:14px;margin:0 0 8px}
+th,td{border-color:var(--tls-page-line)}
+td .raw{display:block;margin-left:0}
 </style>
 </head>
 <body>
-<header id="asteria-leaf-header" class="aw-leaf-header" data-area="area-role"><span class="aw-leaf-brand">✧ 星栖 Asteria</span><span class="aw-leaf-path">角色与生活 / 存在状态</span><div class="aw-leaf-tools"><label>本页<select aria-label="定位本页分区"><option>定位本页分区</option></select></label><button type="button">返回角色与生活</button></div><p class="aw-leaf-message" role="status"></p></header>
-<div class="xnav">
-  <a data-pg="控制台">控制台</a><span class="xt">存在层页面</span>
-  <a data-pg="身体">身体</a>
-  <a data-pg="空间">空间</a>
-  <a data-pg="材质">材质</a>
-  <a class="cur" data-pg="总览">总览</a>
-  <a data-pg="心绪">心绪</a>
-  <a data-pg="记忆">记忆</a>
-</div>
+<header id="asteria-leaf-header" class="aw-leaf-header" data-area="area-perception"><span class="aw-leaf-brand">✧ 星栖 Asteria</span><span class="aw-leaf-path">感知中心 / 存在状态</span><div class="aw-leaf-tools"><label>本页<select aria-label="定位本页分区"><option>定位本页分区</option></select></label><button type="button">返回感知中心</button></div><p class="aw-leaf-message" role="status"></p></header>
+<nav class="xnav" aria-label="存在层相关页面">
+  <a href="#" data-pg="控制台">控制台</a><span class="xt">存在层页面</span>
+  <a href="#" data-pg="身体">身体</a>
+  <a href="#" data-pg="空间">空间</a>
+  <a href="#" data-pg="材质">材质</a>
+  <a class="cur" aria-current="page" data-pg="总览">总览</a>
+  <a href="#" data-pg="心绪">心绪</a>
+  <a href="#" data-pg="记忆">记忆</a>
+</nav>
 <div class="top">
   <div>
-    <h1>存在层总览 · 空间 × 身体</h1>
+    <h1>存在状态</h1>
     <div class="meta" id="meta">加载中…</div>
   </div>
-  <div>
-    <button onclick="load()">刷新</button>
-    <label style="font-size:12px;color:#8b949e;margin-left:8px"><input type="checkbox" id="auto" checked> 30s 自动刷新</label>
+  <div class="top-controls">
+    <button type="button" onclick="load()">刷新</button>
+    <label><input type="checkbox" id="auto" checked> 每 30 秒刷新</label>
   </div>
 </div>
-<div class="grid" id="grid"><div class="empty">加载中…</div></div>
-      <div class="card" id="links-card" style="margin-top:14px"></div>
-      <div class="card" id="runtime-card" style="margin-top:14px;display:none"></div>
-      <div class="card" id="config-card" style="margin-top:14px"></div>
+<main>
+  <section class="page-section" aria-labelledby="presence-heading">
+    <h2 id="presence-heading" data-jump-section="当前状态">当前状态</h2>
+    <div class="grid" id="grid"><div class="empty">加载中…</div></div>
+    <div class="card presence-links" id="links-card"></div>
+  </section>
+  <details class="page-section page-details" id="presence-details">
+    <summary data-jump-section="运行诊断与配置">运行诊断与配置</summary>
+    <div class="page-details-content presence-diagnostics">
+      <div class="card" id="runtime-card" style="display:none"></div>
+      <div class="card" id="config-card"></div>
+    </div>
+  </details>
+</main>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="/api/plugin/page/bridge-sdk.js"></script>
@@ -207,21 +264,21 @@ function bandHtml(band){
 }
 
 function sheHtml(s){
-  if (!s) return '<span style="color:#8b949e">位置未知</span>';
+  if (!s) return '<span class="muted">位置未知</span>';
   if (s.moving){
     return `<span class="arrow">${esc(s.from_label || '?')} ⟶ ${esc(s.to_label || '?')}</span>` +
       `<span class="eta">（${esc(s.eta_band || '得走一阵')}）</span>`;
   }
   const fresh = s.fresh ? '<span class="fresh">刚到</span>' : '';
-  return `${fresh}在 <b style="color:#e6edf3">${esc(s.room_label || '未知房间')}</b>` +
-    `<span style="color:#8b949e">${esc(s.props_hint || '')}</span>`;
+  return `${fresh}在 <b>${esc(s.room_label || '未知房间')}</b>` +
+    `<span class="muted">${esc(s.props_hint || '')}</span>`;
 }
 
 function heHtml(s){
-  if (!s || !s.room_label) return '<span style="color:#8b949e">位置未知</span>';
+  if (!s || !s.room_label) return '<span class="muted">位置未知</span>';
   const low = (+s.confidence < 0.5) ? '<span class="lowconf">低置信</span>' : '';
   const mv = s.moving ? '<span class="eta">（走动中）</span>' : '';
-  return `在 <b style="color:#e6edf3">${esc(s.room_label)}</b>${mv}${low}`;
+  return `在 <b>${esc(s.room_label)}</b>${mv}${low}`;
 }
 
 function stateCard(st){
@@ -232,7 +289,7 @@ function stateCard(st){
     ? `<span class="badge ${esc(phase)}">${esc(PHASE_CN[phase] || phase)}${b.phase_until ? ' · ' + esc(String(b.phase_until).slice(11, 16)) : ''}</span>` : '';
   let bodyHtml;
   if (!b){
-    bodyHtml = '<div class="place"><span style="color:#8b949e">无身体档案（profile 不存在或未建档）——仅显示空间态</span></div>';
+    bodyHtml = '<div class="place"><span class="muted">无身体档案（profile 不存在或未建档）——仅显示空间态</span></div>';
   }else{
     const topParts = (b.top_parts || []).map(p => {
       const tier = p.tier ? `<span class="tier ${esc(p.tier)}">${esc(TIER_CN[p.tier] || p.tier)}</span>` : '';
@@ -254,32 +311,34 @@ function stateCard(st){
         ${b.tier ? `<span>档位 <b>${esc(TIER_CN[b.tier] || b.tier)}</b></span>` : ''}
       </div>
       <div class="bar"><i style="width:${Math.min(100, (b.arousal ?? 0) * 100).toFixed(1)}%"></i></div>
-      <div class="parts">${topParts || '<span style="color:#8b949e;font-size:12px">暂无部位数值</span>'}</div>
+      <div class="parts">${topParts || '<span class="muted" style="font-size:12px">暂无部位数值</span>'}</div>
       ${mats}
       <div class="foot">身体态更新 ${esc(String(b.updated_at || '').slice(11, 19))} UTC</div>`;
   }
   return `<div class="card">
-    <h2>${esc(name)} <span class="who">${esc(st.session)}</span> ${badge}</h2>
+    <h2>${esc(name)} ${badge}</h2>
     <div class="place"><span class="tag">她</span>${sheHtml({...she, props_hint: st.props_hint})}</div>
     <div class="place"><span class="tag">他</span>${heHtml(he)}${bandHtml(he.band)}</div>
     ${bodyHtml}
+    ${st.session ? `<details class="session-detail"><summary>会话标识</summary><code>${esc(st.session)}</code></details>` : ''}
   </div>`;
 }
 
 async function linksCard(links){
   const el = document.getElementById('links-card');
   if(!el) return;
-  if(!links){ el.style.display = 'none'; return; }
+  el.hidden = !links;
+  if (!links) return;
   const rows = [];
   rows.push(links.rainy_active
-    ? '<span class="badge" style="background:#1f6feb33;color:#58a6ff">雨天动线生效中</span>' +
-      (links.weather_city ? ' <small style="color:#8b949e">' + esc(links.weather_city) + ' · 户外兜底转室内</small>' : '')
-    : '<span class="badge" style="background:#21262d;color:#8b949e">雨天动线待命</span> <small style="color:#8b949e">天气查询后自动激活</small>');
+    ? '<span class="badge state-on">雨天动线生效中</span>' +
+      (links.weather_city ? ' <small class="muted">' + esc(links.weather_city) + ' · 户外兜底转室内</small>' : '')
+    : '<span class="badge cooldown">雨天动线待命</span> <small class="muted">天气查询后自动激活</small>');
   rows.push((links.triggers_active || 0) > 0
-    ? '<span class="badge" style="background:#23863633;color:#3fb950">情境触发 ×' + links.triggers_active + '</span>' +
-      (links.last_trigger_hint ? ' <small style="color:#8b949e">' + esc(String(links.last_trigger_hint).slice(0, 40)) + '</small>' : '')
-    : '<span class="badge" style="background:#21262d;color:#8b949e">无活动触发</span>');
-  el.innerHTML = '<h3 style="margin:0 0 10px;font-size:14px;color:#c9d1d9">当前联动</h3>' +
+    ? '<span class="badge state-on">情境触发 ×' + links.triggers_active + '</span>' +
+      (links.last_trigger_hint ? ' <small class="muted">' + esc(String(links.last_trigger_hint).slice(0, 40)) + '</small>' : '')
+    : '<span class="badge cooldown">无活动触发</span>');
+  el.innerHTML = '<h3>当前联动</h3>' +
     '<div style="display:flex;flex-direction:column;gap:8px">' + rows.map(r => '<div>' + r + '</div>').join('') + '</div>';
 }
 
@@ -307,8 +366,7 @@ const CONFIG_LABELS = {
 function configCard(cfg){
   const el = document.getElementById('config-card');
   if (!el) return;
-  const head = '<h3 style="margin:0 0 10px;font-size:14px;color:#c9d1d9">自定义参数速览' +
-    '<span style="font-size:11px;color:#8b949e;font-weight:400;margin-left:8px">只读——在 AstrBot WebUI 插件配置中修改</span></h3>';
+  const head = '<h3>自定义参数速览</h3><p class="muted">在 AstrBot WebUI 的插件配置中修改。</p>';
   const entries = (cfg && typeof cfg === 'object') ? Object.entries(cfg) : [];
   if (!entries.length){
     el.innerHTML = head + '<div class="empty" style="padding:16px 0">后端版本未下发</div>';
@@ -316,13 +374,13 @@ function configCard(cfg){
   }
   const rows = entries.map(([k, v]) => {
     let val;
-    if (v === null || v === undefined) val = '<span style="color:#8b949e">—</span>';
-    else if (v === true) val = '<span style="color:#3fb950">开</span>';
-    else if (v === false) val = '<span style="color:#8b949e">关</span>';
+    if (v === null || v === undefined) val = '<span class="muted">—</span>';
+    else if (v === true) val = '<span class="state-on">开</span>';
+    else if (v === false) val = '<span class="muted">关</span>';
     else if (typeof v === 'object') val = esc(JSON.stringify(v));
     else val = esc(String(v));
     const known = CONFIG_LABELS[k];
-    return `<tr><td style="color:#c9d1d9">${esc(known || k)}${known ? `<span class="raw">${esc(k)}</span>` : ''}</td><td style="width:90px">${val}</td></tr>`;
+    return `<tr><td>${esc(known || k)}${known ? `<span class="raw">${esc(k)}</span>` : ''}</td><td style="width:90px">${val}</td></tr>`;
   }).join('');
   el.innerHTML = head + '<table><tr><th>参数</th><th style="width:90px">值</th></tr>' + rows + '</table>';
 }
@@ -335,7 +393,7 @@ function runtimeCard(runtime){
   const counts = runtime.counts || {}, observation = runtime.observation || {};
   const moduleNames = {body:'身体', space:'空间', mood:'心绪'};
   const enabled = Object.entries(moduleNames).map(([k, label]) =>
-    esc(label) + ' ' + (modules[k] ? '<b style="color:#3fb950">开</b>' : '<span style="color:#8b949e">关</span>')).join(' · ');
+    esc(label) + ' ' + (modules[k] ? '<b class="state-on">开</b>' : '<span class="muted">关</span>')).join(' · ');
   const budget = fallback.enabled
     ? '今日动作兜底 ' + esc(fallback.used ?? 0) + ' / ' + esc(fallback.daily_limit ?? '-') +
       '，剩余 ' + esc(fallback.remaining ?? '-') + '，处理中 ' + esc(fallback.pending_requests ?? 0)
@@ -349,7 +407,7 @@ function runtimeCard(runtime){
   const warnings = [];
   if (tick.last_error_type) warnings.push('心跳最近异常：' + tick.last_error_type);
   if (fallback.budget_error_type) warnings.push('兜底预算保存异常：' + fallback.budget_error_type);
-  el.innerHTML = '<h3 style="margin:0 0 10px;font-size:14px;color:#c9d1d9">运行健康 ' +
+  el.innerHTML = '<h3>运行健康 ' +
     '<span class="badge">' + (runtime.lifecycle?.stopping ? '正在停止' : '运行中') + '</span></h3>' +
     '<div class="kv"><span>' + enabled + '</span></div>' +
     '<div class="kv"><span>' + budget + '</span></div>' +
@@ -358,7 +416,7 @@ function runtimeCard(runtime){
     ' 次</span><span>已忽略重复消息 ' + esc(observation.duplicate_messages_ignored ?? 0) +
     ' 条</span><span>身体 ' + esc(counts.body_sessions ?? 0) + ' / 空间 ' +
     esc(counts.space_sessions ?? 0) + ' 个会话</span></div>' +
-    (warnings.length ? '<div style="color:#d29922">' + warnings.map(esc).join('；') + '</div>' : '');
+    (warnings.length ? '<div class="run-warning">' + warnings.map(esc).join('；') + '</div>' : '');
 }
 
 let LOAD_PENDING = false, HAS_LOADED = false;
@@ -400,8 +458,19 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && do
 </script>
 <script id="asteria-leaf-script">
 (()=>{'use strict';const bar=document.getElementById('asteria-leaf-header'),jump=bar.querySelector('select'),back=bar.querySelector('button'),message=bar.querySelector('[role=status]');let headings=[];
-function fill(){headings=[...document.querySelectorAll('h2,h3')].filter(el=>!el.closest('dialog')&&el.getClientRects().length&&el.textContent.trim());jump.replaceChildren(new Option('定位本页分区',''));headings.forEach((el,i)=>jump.add(new Option(el.textContent.trim().slice(0,70),String(i))));}
-jump.addEventListener('focus',fill);jump.addEventListener('pointerdown',fill);jump.addEventListener('change',()=>{if(jump.value==='')return;const el=headings[Number(jump.value)];if(!el)return;el.scrollIntoView({block:'start'});if(!el.hasAttribute('tabindex'))el.tabIndex=-1;el.focus({preventScroll:true});});
+function fill(){
+  headings=[...document.querySelectorAll('[data-jump-section]')];
+  jump.replaceChildren(new Option('定位本页分区',''));
+  headings.forEach((el,i)=>jump.add(new Option(el.dataset.jumpSection,String(i))));
+}
+jump.addEventListener('change',()=>{
+  if(jump.value==='')return;
+  const el=headings[Number(jump.value)];
+  if(el.parentElement.tagName==='DETAILS')el.parentElement.open=true;
+  el.tabIndex=-1;
+  el.focus({preventScroll:true});
+  el.scrollIntoView({block:'start'});
+});
 back.addEventListener('click',async()=>{back.disabled=true;message.textContent='';try{const bridge=window.AstrBotPluginPage;if(!bridge)throw Error('请从 AstrBot 后台重新打开此页面。');await bridge.ready();const theme=document.documentElement.dataset.theme||new URLSearchParams(location.search).get('theme')||'dark';let result=await bridge.apiGet('page/nav',{to:'console',theme,format:'json'});if(result?.data)result=result.data;const url=new URL(result.url,location.href);if(url.origin!==location.origin||url.pathname!=='/api/plugin/page/content/astrbot_plugin_asteria/console/'||!url.searchParams.get('asset_token'))throw Error('返回地址未确认，请从后台进入工作台。');url.hash=bar.dataset.area;location.assign(url.href);}catch(error){message.textContent=error.message||'工作台暂时无法打开。';}finally{back.disabled=false;}});fill();})();
 </script>
 </body>

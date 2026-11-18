@@ -592,18 +592,35 @@ export async function restoreConfigBackup(id) {
   await executeConfigMigration("restore", backupId, { id: backupId });
 }
 
-export function imageCacheActionResult(message, error = false) {
-  const result = $("#imageCacheActionResult");
-  if (result) { result.textContent = message; result.dataset.error = String(error); }
-  showToast(message, error ? "error" : undefined);
+export function imageCacheActionResult(key, label, message, error = false) {
+  const editor = $("[data-image-cache-editor]");
+  const editorFeedback = editor?.dataset.imageCacheEditor === key && editor.querySelector("[data-image-cache-feedback]");
+  const result = editorFeedback || $("#imageCacheActionResult");
+  const text = editorFeedback ? message : `${label} · ${message}`;
+  if (result) { result.textContent = text; result.dataset.error = String(error); }
+  showToast(text, error ? "error" : undefined);
 }
 
-export async function loadImageCache() {
+let imageCacheRead = 0;
+export async function loadImageCache(operationKey = "") {
+  const request = ++imageCacheRead;
+  const query = state.imageCacheFilter;
+  const scope = state.imageCacheScope;
+  const current = () => request === imageCacheRead && query === state.imageCacheFilter && scope === state.imageCacheScope;
   const params = new URLSearchParams();
+  const status = $("#imageCacheListStatus");
+  if (status) status.textContent = "正在读取缓存…";
   params.set("limit", "300");
-  if (state.imageCacheFilter) params.set("q", state.imageCacheFilter);
-  if (state.imageCacheScope && state.imageCacheScope !== "all") params.set("scope", state.imageCacheScope);
-  const data = await fetchJson(`/image_cache/list?${params.toString()}`);
+  if (query) params.set("q", query);
+  if (scope && scope !== "all") params.set("scope", scope);
+  let data;
+  try { data = await fetchJson(`/image_cache/list?${params.toString()}`); }
+  catch (error) {
+    if (!current()) return null;
+    if (status) status.textContent = state.imageCacheLoaded ? "读取失败，仍显示上次成功读取的缓存。" : "缓存读取失败，可选择刷新。";
+    throw error;
+  }
+  if (!current()) return null;
   const result = $("#imageCacheActionResult");
   if (result) { result.textContent = ""; result.dataset.error = "false"; }
   invalidateImageCachePreviews();
@@ -614,10 +631,10 @@ export async function loadImageCache() {
   if (state.selectedImageCacheKey && !state.imageCacheItems.some((item) => item.key === state.selectedImageCacheKey)) {
     state.selectedImageCacheKey = "";
   }
-  if (!state.selectedImageCacheKey && state.imageCacheItems[0]) {
-    state.selectedImageCacheKey = state.imageCacheItems[0].key;
-  }
-  renderImageCache();
+  renderImageCache(operationKey);
+  if (status) status.textContent = params.has("q")
+    ? "找到 "+state.imageCacheTotal+" 条匹配缓存。"
+    : "已读取 "+state.imageCacheItems.length+" 条缓存。";
   return data;
 }
 

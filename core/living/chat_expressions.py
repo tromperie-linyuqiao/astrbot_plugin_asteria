@@ -41,9 +41,11 @@ SETTING_DEFAULTS = {'frequency': 'expressive', 'per_unit': True,
 _LOCK = threading.RLock()
 _HEX = re.compile(r'[0-9a-f]{64}\Z')
 _CLIENT_ID = re.compile(r'[A-Za-z0-9_.:-]{8,128}\Z')
+_TEXAS_HEADPAT = '轻轻摸摸德克萨斯的头'
+_TEXAS_ROLE_NAMES = frozenset({'texas', '德克萨斯', '缄默德克萨斯'})
 DEFAULT_ACTIONS = (
     {'id': 'end_contact', 'label': '结束接触', 'description': '我松开手，结束当前接触。', 'enabled': True, 'quick': True, 'order': 4},
-    {'id': 'headpat', 'label': '摸头', 'description': '轻轻摸摸德克萨斯的头', 'enabled': True, 'quick': True, 'order': 0},
+    {'id': 'headpat', 'label': '摸头', 'description': _TEXAS_HEADPAT, 'enabled': True, 'quick': True, 'order': 0},
     {'id': 'poke', 'label': '轻戳', 'description': '轻轻戳一下德克萨斯，想引起她的注意', 'enabled': True, 'quick': True, 'order': 1},
     {'id': 'hold_hands', 'label': '牵手', 'description': '伸手牵住德克萨斯的手，陪她待一会儿', 'enabled': True, 'quick': True, 'order': 2},
     {'id': 'lean', 'label': '靠一会儿', 'description': '轻轻靠着德克萨斯休息一会儿', 'enabled': True, 'quick': True, 'order': 3},
@@ -670,7 +672,22 @@ class ChatExpressions:
             values.append(part)
         return values
 
-    def user_parts(self, scope, parts, message, *, references=None, attachments=None, life_references=None):
+    def _action_touch(self, action, scope, persona_name):
+        if action.get('native_touch'):
+            return action['native_touch']
+        role = (persona_name or scope['character_id']).strip().casefold()
+        if (role not in _TEXAS_ROLE_NAMES or action['id'] != 'headpat'
+                or action['label'] != '摸头' or action['description'] != _TEXAS_HEADPAT
+                or action['group'] != 'character' or action.get('target_part')):
+            return None
+        from .chat_sessions import validate_touch
+        try:
+            return validate_touch(self.touch_catalog(), {'character': 'texas', 'verb': '摸', 'part': 'head_top'})
+        except ChatExpressionError:
+            return None
+
+    def user_parts(self, scope, parts, message, *, references=None, attachments=None, life_references=None,
+                   persona_name=None):
         if parts is None:
             parts = [{'type': 'text', 'text': message}] if message.strip() else []
         if not isinstance(parts, list) or len(parts) > 24:
@@ -700,15 +717,16 @@ class ChatExpressions:
                     raise ChatExpressionError('动作执行者或对象与已保存定义不一致，请刷新动作面板')
                 if part.get('group', action['group']) != action['group']:
                     raise ChatExpressionError('动作分类与已保存定义不一致，请刷新动作面板')
+                touch = self._action_touch(action, scope, persona_name)
                 action_count += 1
                 result.append({'type': 'action', 'action_id': identity, 'label': action['label'],
                     'description': action['description'], 'actor': 'user', 'target': target,
                     'group': action['group'],
                     'character_id': scope['character_id'],
-                    'target_part': action.get('target_part', action.get('native_touch', {}).get('part', '')),
+                    'target_part': action.get('target_part', (touch or {}).get('part', '')),
                     'source': 'user_self_action' if target == 'self' else 'user_action', 'fragment_id': fragment,
                     **({'self_template': action['self_template']} if target == 'self' and action.get('self_template') else {}),
-                    **({'native_touch': self._action_record(action, 0)['native_touch']} if action.get('native_touch') else {})})
+                    **({'native_touch': touch} if touch else {})})
                 projection.append(('【用户自身动作描述（叙事输入，非现实感知）：' if target == 'self' else '【用户角色互动输入（非现实感知）：') + action['label'] + '】' + action['description'])
             elif kind == 'sticker':
                 asset = self.asset(part.get('asset_id'))

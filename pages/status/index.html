@@ -92,48 +92,153 @@ body h1{font-size:clamp(21px,2vw,28px);line-height:1.35}body h2{line-height:1.45
 body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto}body pre{overflow-wrap:anywhere;white-space:pre-wrap}body .table-wrap,body .twrap{max-width:100%;overflow:auto}
 @media(max-width:640px){.aw-leaf-header{padding:14px;margin:8px 0 18px;gap:10px}.aw-leaf-path{font-size:12px}.aw-leaf-tools{width:100%}.aw-leaf-tools label{flex:1;min-width:0}.aw-leaf-tools select{min-width:0;width:100%;max-width:100%}.aw-leaf-tools button{flex-shrink:0}body h1{font-size:22px}}
 </style>
+<style id="asteria-body-workspace-style">
+:root {
+  color-scheme: dark;
+  --tls-page-bg: #151519; --tls-page-panel: #1d1d24; --tls-page-field: #19191f;
+  --tls-page-line: #393944; --tls-page-text: #e8e7ef; --tls-page-muted: #b1afc0;
+  --tls-page-heading: #f1eff6; --tls-page-accent: #c4b9ed;
+  --body-selected: #30283f; --body-danger: #ff9da7; --body-success: #8ed7a1;
+}
+:root[data-theme="black"] {
+  --tls-page-bg: #000; --tls-page-panel: #131318; --tls-page-field: #17171f; --tls-page-line: #31313b;
+  --tls-page-text: #ededf0; --tls-page-muted: #b2afbf; --tls-page-heading: #f1eff6; --tls-page-accent: #c4b9ed;
+}
+:root[data-theme="light"] {
+  --tls-page-bg: #f6f5f7; --tls-page-panel: #fff; --tls-page-field: #f2f1f5; --tls-page-line: #d8d6e0;
+  --tls-page-text: #272534; --tls-page-muted: #5c586e; --tls-page-heading: #22202b; --tls-page-accent: #514182;
+  --body-selected: #ede8f7; --body-danger: #a5263e; --body-success: #256445;
+}
+body { padding: 18px 22px 32px; font-size: 14px; }
+.aw-leaf-header, .xnav, .top, .tabs, .grid, .panel, .body-overview-tools { max-width: 1120px; }
+.aw-leaf-header { padding: 8px 0 12px; margin: 0 auto 12px; border: 0; border-bottom: 1px solid var(--tls-page-line); border-radius: 0; background: none; color: var(--tls-page-heading); }
+.aw-leaf-path { color: var(--tls-page-muted); }
+.aw-leaf-tools button, .aw-leaf-tools select { background: var(--tls-page-field); color: var(--tls-page-text); border-color: var(--tls-page-line); }
+.aw-leaf-message:empty { display: none; }
+.xnav { gap: 4px 6px; padding: 0 0 9px; margin-bottom: 18px; border-color: var(--tls-page-line); }
+.xnav button, .xnav .cur { min-height: 36px; padding: 3px 10px; display: inline-flex; align-items: center; background: transparent; color: var(--tls-page-muted); border-color: transparent; font-size: 12px; }
+.xnav button:hover, button:not(.danger):not(.primary):hover { background: var(--body-selected); color: var(--tls-page-accent); }
+.xnav .cur { background: var(--body-selected); color: var(--tls-page-accent); border-radius: 6px; }
+.top { margin-bottom: 14px; }
+.top h1 { color: var(--tls-page-heading); font-size: clamp(23px, 3vw, 31px); margin: 0 0 3px; }
+.top .meta { color: var(--tls-page-muted); font-size: 13px; }
+.body-runtime { color: var(--tls-page-muted); font-size: 13px; }
+.body-runtime summary { cursor: pointer; width: fit-content; }
+.body-runtime p { margin-top: 4px; }
+.tabs { gap: 6px; padding: 4px 0 10px; border-bottom: 1px solid var(--tls-page-line); }
+.tabs .tab { min-height: 40px; padding: 6px 13px; border-color: transparent; background: transparent; color: var(--tls-page-muted); font-weight: 600; }
+.tabs .tab.active { color: var(--tls-page-accent); background: var(--body-selected); }
+body button:focus-visible, body a:focus-visible, summary:focus-visible, label > select:focus-visible, input:focus-visible {
+  outline: 2px solid var(--tls-page-accent); outline-offset: 2px;
+}
+button.primary, button.primary:hover { background: var(--tls-page-accent); color: var(--tls-page-bg); border-color: var(--tls-page-accent); font-weight: 600; }
+button.danger { color: var(--body-danger); }
+button.danger.danger-armed { color: #fff; }
+.body-overview-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 auto 12px; }
+.body-overview-tools h2 { margin-right: auto; font-size: 17px; color: var(--tls-page-heading); }
+.body-overview-tools label { display: inline-flex; align-items: center; gap: 6px; color: var(--tls-page-muted); min-height: 36px; }
+.body-overview-tools button { min-height: 36px; }
+.grid { grid-template-columns: repeat(auto-fill,minmax(min(100%,370px),1fr)); align-items: start; gap: 12px; }
+.body-state-card { padding: 15px; min-width: 0; }
+.body-state-head { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: start; column-gap: 10px; margin-bottom: 12px; }
+.body-state-head h3 { color: var(--tls-page-heading); font-size: 17px; }
+.body-state-head p { grid-column: 1/-1; overflow-wrap: anywhere; font-size: 12px; color: var(--tls-page-muted); }
+.body-state-head .badge { background: var(--body-selected); border-color: transparent; color: var(--tls-page-accent); }
+.body-state-card .kv { gap: 6px 12px; margin-bottom: 8px; }
+.bar { height: 5px; margin-bottom: 8px; background: var(--tls-page-line); }
+.bar > i { background: var(--tls-page-accent); }
+.body-state-card table { font-size: 13px; white-space: nowrap; }
+td, th { border-color: var(--tls-page-line); }
+td { color: var(--tls-page-text); }
+.up { color: var(--body-success); }
+.down, .err { color: var(--body-danger); }
+.flat { color: var(--tls-page-muted); }
+.empty { grid-column: 1/-1; color: var(--tls-page-muted); padding: 28px 12px; text-align: left; }
+.body-state-footer { display: flex; justify-content: flex-end; padding-top: 10px; }
+.body-history, .body-editor-block, .body-quick-add { border-top: 1px solid var(--tls-page-line); margin-top: 14px; }
+.body-history summary, .body-editor-block > summary { cursor: pointer; color: var(--tls-page-heading); padding: 10px 0; font-weight: 600; }
+.body-quick-add { padding-top: 12px; margin-bottom: 16px; }
+.body-quick-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,285px),1fr)); gap: 14px; margin-top: 12px; }
+.body-quick-form { background: var(--tls-page-field); border: 1px solid var(--tls-page-line); border-radius: 10px; padding: 11px; min-width: 0; }
+.body-quick-form > label { display: block; color: var(--tls-page-heading); font-weight: 600; margin-bottom: 8px; }
+.body-profile-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.body-profile-tools label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.body-edit-note { color: var(--tls-page-muted); margin: 8px 0; }
+.panel h3, .panel summary[style*="color:#58a6ff"] { color: var(--tls-page-heading) !important; }
+.panel [style*="background:#161b22"], .panel [style*="background:#0d1117"] { background: var(--tls-page-field) !important; border-color: var(--tls-page-line) !important; }
+.panel [style*="color:#8b949e"], .panel textarea[style] { color: var(--tls-page-muted) !important; }
+.toast { background: var(--tls-page-panel); color: var(--tls-page-heading); border: 1px solid var(--tls-page-line); }
+.toast.err { color: var(--body-danger); background: var(--tls-page-panel); }
+@media (max-width: 640px) {
+  body { padding: 10px 12px 22px; }
+  .aw-leaf-header { margin: 0 auto 10px; }
+  .aw-leaf-path { min-width: 0; white-space: normal; }
+  .xnav { margin-bottom: 10px; }
+  .top { margin-bottom: 9px; }
+  .tabs { margin-bottom: 11px; }
+  .tabs .tab { padding-inline: 8px; }
+  .body-overview-tools { gap: 4px 8px; }
+  .body-overview-tools h2 { flex-basis: 100%; }
+  .panel, .body-state-card { padding: 12px; }
+}
+</style>
 </head>
 <body>
 <header id="asteria-leaf-header" class="aw-leaf-header" data-area="area-role"><span class="aw-leaf-brand">✧ 星栖 Asteria</span><span class="aw-leaf-path">角色与生活 / 虚拟身体</span><div class="aw-leaf-tools"><label>本页<select aria-label="定位本页分区"><option>定位本页分区</option></select></label><button type="button">返回角色与生活</button></div><p class="aw-leaf-message" role="status"></p></header>
-<div class="xnav">
-  <a data-pg="控制台">控制台</a><span class="xt">存在层页面</span>
-  <a class="cur" data-pg="身体">身体</a>
-  <a data-pg="空间">空间</a>
-  <a data-pg="材质">材质</a>
-  <a data-pg="总览">总览</a>
-  <a data-pg="心绪">心绪</a>
-  <a data-pg="记忆">记忆</a>
-</div>
+<nav class="xnav" aria-label="相关页面">
+  <button type="button" data-pg="控制台">控制台</button>
+  <span class="cur" aria-current="page">身体</span>
+  <button type="button" data-pg="空间">空间</button>
+  <button type="button" data-pg="材质">材质</button>
+  <button type="button" data-pg="总览">总览</button>
+  <button type="button" data-pg="心绪">心绪</button>
+  <button type="button" data-pg="记忆">记忆</button>
+</nav>
 <div class="top">
   <div>
-    <h1>虚拟身体 · 状态总览</h1>
-    <div class="meta" id="meta">加载中…</div>
+    <h1>虚拟身体</h1>
+    <div class="meta" id="meta" role="status">加载中…</div>
   </div>
-  <div>
-    <button onclick="load()">刷新</button>
-    <label style="font-size:12px;color:#8b949e;margin-left:8px"><input type="checkbox" id="auto" checked> 30s 自动刷新</label>
-  </div>
+  <details class="body-runtime">
+    <summary>运行信息</summary>
+    <p id="runtime-meta">加载中…</p>
+  </details>
 </div>
-<div class="tabs">
-  <div class="tab" data-tab="overview" onclick="switchTab('overview')">总览</div>
-  <div class="tab active" data-tab="parts" onclick="switchTab('parts')">部位</div>
-  <div class="tab" data-tab="link" onclick="switchTab('link')">联动</div>
-  <div class="tab" data-tab="params" onclick="switchTab('params')">参数</div>
-  <div class="tab" data-tab="doc" onclick="switchTab('doc')">说明</div>
-</div>
+<nav class="tabs" aria-label="虚拟身体工作区">
+  <button type="button" class="tab active" data-tab="overview" aria-current="true" aria-controls="view-overview" onclick="switchTab('overview')">状态</button>
+  <button type="button" class="tab" data-tab="parts" aria-controls="view-parts" onclick="switchTab('parts')">部位与动作</button>
+  <button type="button" class="tab" data-tab="link" aria-controls="view-link" onclick="switchTab('link')">联动</button>
+  <button type="button" class="tab" data-tab="params" aria-controls="view-params" onclick="switchTab('params')">参数</button>
+  <button type="button" class="tab" data-tab="doc" aria-controls="view-doc" onclick="switchTab('doc')">绑定与说明</button>
+</nav>
 
-<div id="view-overview" style="display:none">
+<section id="view-overview" aria-labelledby="overview-heading">
+  <div class="body-overview-tools">
+    <h2 id="overview-heading">会话状态</h2>
+    <label><input type="checkbox" id="auto" checked> 自动刷新（30 秒）</label>
+    <button type="button" onclick="load()">刷新状态</button>
+  </div>
   <div class="grid" id="grid"><div class="empty">加载中…</div></div>
-</div>
+</section>
 
-<div id="view-parts" class="panel">
+<div id="view-parts" class="panel" style="display:none">
+    <h2>编辑角色</h2>
+    <div class="body-profile-tools">
+      <label>角色 <select id="edit-char" onchange="loadEditor()"></select></label>
+      <button class="primary" onclick="saveProfile(this)">保存并热生效</button>
+      <button onclick="exportProfile()">导出 JSON</button>
+      <button onclick="document.getElementById('import-file').click()">导入 JSON</button>
+      <input type="file" id="import-file" accept=".json" style="display:none" onchange="importProfile(this)">
+      <span id="save-state" class="hint"></span>
+    </div>
+    <p class="hint body-edit-note">保存后立即生效，系统会备份旧档案。删除或改名会清掉该部位的已有数值。</p>
     <!-- 0.28.1 快速添加（推荐）：输中文名一步完成，不进下面的表格找格子 -->
-    <div style="border:1px solid #1f6feb66;border-radius:10px;padding:14px 16px;margin-bottom:16px;background:#161b22">
-      <h3 style="margin-top:0;color:#58a6ff">快速添加（推荐）</h3>
-      <p class="hint" style="margin:0 0 10px">输中文名一步完成——id、参数、落点全自动，点添加直接保存生效。</p>
-      <div style="display:flex;gap:16px;flex-wrap:wrap">
-        <div style="flex:1;min-width:280px;border:1px solid #30363d;border-radius:8px;padding:10px">
-          <div style="font-size:12px;color:#e6edf3;margin-bottom:6px"><b>加部位</b>（如"后腰"）</div>
+    <div class="body-quick-add">
+      <h3>快速添加</h3>
+      <p class="hint">输入名称即可添加。每次添加会保存到当前角色。</p>
+      <div class="body-quick-grid">
+        <div class="body-quick-form">
+          <label for="qa-part-name">部位名称</label>
           <input id="qa-part-name" placeholder="部位名（中文直接输入）" style="width:100%;font-size:14px;padding:8px">
           <details style="margin-top:6px">
             <summary style="font-size:11px;color:#8b949e;cursor:pointer">可选：别名 / 敏感度 / 半衰</summary>
@@ -145,8 +250,8 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
           <button class="primary" style="margin-top:8px;padding:8px 18px" onclick="quickAddPart(this)">添加部位</button>
           <span id="qa-part-state" class="hint"></span>
         </div>
-        <div style="flex:1;min-width:280px;border:1px solid #30363d;border-radius:8px;padding:10px">
-          <div style="font-size:12px;color:#e6edf3;margin-bottom:6px"><b>加动作词</b>（聊天里认得的动作，如"薅""rua"）</div>
+        <div class="body-quick-form">
+          <label for="qa-word">动作词</label>
           <input id="qa-word" placeholder="动作词" style="width:100%;font-size:14px;padding:8px">
           <div class="hint" style="margin:6px 0">强度：<input type="range" id="qa-strength" min="0.05" max="1" step="0.05" value="0.5" oninput="document.getElementById('qa-strength-val').textContent=this.value" style="vertical-align:middle">
             <span id="qa-strength-val" style="color:#8b949e">0.5</span>（0-1，越大反应越强）</div>
@@ -186,23 +291,14 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
       </div>
     </div>
 
-    <h3>编辑对象（选角色 → 改内容 → 保存）</h3>
-    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-      <select id="edit-char" onchange="loadEditor()"></select>
-      <span class="hint">保存写入 plugin_data/profiles/&lt;id&gt;.json 覆盖层并热生效（旧文件自动备份 .bak）。<b style="color:#d29922">删除或改名部位会清掉该部位的已有数值</b>；敏感部位请自行在此新增——框架不预设、不做过滤。</span>
-      <button class="primary" onclick="saveProfile(this)">保存并热生效</button>
-      <button onclick="exportProfile()">导出 JSON</button>
-      <button onclick="document.getElementById('import-file').click()">导入 JSON</button>
-      <input type="file" id="import-file" accept=".json" style="display:none" onchange="importProfile(this)">
-      <span id="save-state" class="hint"></span>
-    </div>
-
-    <h3>部位命名</h3>
+    <details class="body-editor-block">
+      <summary>详细编辑</summary>
+      <h3>部位命名</h3>
     <p class="hint">给部位起只有你俩懂的私名——名称存独立文件（与参数分离，改参数不影响名字）；「当前显示」为编号的就是待命名部位，填名称即命名。</p>
     <div class="twrap"><table id="names-table"><tr><th style="width:70px">id 标识</th><th style="width:110px">当前显示</th><th style="width:150px">名称</th><th>别名（逗号分隔）</th></tr></table></div>
     <div style="margin-top:6px"><button class="primary" id="names-save-btn" onclick="saveNames(this)">保存命名并热生效</button> <span id="names-state" class="hint"></span></div>
 
-    <h3>部位（专业编辑区——表格逐项改；简单添加请用上方「快速添加」卡）</h3>
+    <h3>部位参数</h3>
     <p class="hint">id＝英文标识（新行留空自动生成拼音）｜label＝显示名称｜敏感度＝天生反应强度（1 麻木-10 极敏感）｜半衰秒＝无刺激时数值消退一半的时长｜别名＝聊天里也叫它的词｜传导＝刺激扩散到哪、传多少（目标id:倍率）。</p>
     <div id="sens-legend" class="hint"></div>
     <div class="twrap"><table id="parts-table"><tr>
@@ -213,9 +309,14 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
     <p class="hint only-s-hint">小屏下 id / 半衰 / 别名 三列已收进「详情」弹层（点行尾按钮编辑），PC 端仍显示全列。</p>
     <div style="margin-top:8px"><button onclick="addPartRow()">+ 新增部位</button></div>
     <div id="radiate-preview" style="margin-top:12px"></div>
+    </details>
 
-    <h3>人体神经图（专家视图：点部位改参数；双击空白区新增部位；拖拽节点定位；箭头=传导线。画联动推荐用「联动」tab 的联动编辑器）
-      <button id="btn-3d" style="margin-left:12px;font-size:11px;padding:2px 10px" onclick="toggle3D()">切换 3D 视图</button></h3>
+    <details class="body-editor-block">
+      <summary>身体图谱</summary>
+      <div class="body-profile-tools">
+        <p class="hint">点选部位可编辑参数，双击空白处可添加，拖动节点可调整位置。</p>
+        <button type="button" id="btn-3d" onclick="toggle3D()">切换 3D 视图</button>
+      </div>
     <div style="display:flex;gap:16px;flex-wrap:wrap">
       <div style="position:relative;width:100%;max-width:250px;flex-shrink:0">
         <svg id="body-map" viewBox="0 0 200 460" style="width:100%;height:auto;background:#0d1117;border:1px solid #30363d;border-radius:10px;touch-action:none;user-select:none"></svg>
@@ -224,10 +325,10 @@ body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow
       </div>
       <div id="map-panel" style="flex:1;min-width:min(100%,280px);max-width:420px"></div>
     </div>
+    </details>
 
-    <h3>AI 快速填写（agent 通道）</h3>
-    <details>
-      <summary style="font-size:12px;color:#58a6ff;cursor:pointer">粘贴部位 JSON 批量合并（给 AI 生成用）</summary>
+    <details class="body-editor-block">
+      <summary>批量导入与模板</summary>
       <p class="hint">格式：JSON 数组，每项 {id, label, sens, half_life, aliases, radiate, viz:[x,y,(z)]}；id 已存在则覆盖该项，否则新增。viz 二维用 2D 图坐标（0-200, 0-460），三维 z 可省略。</p>
       <textarea id="agent-json" rows="6" style="width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;font-size:12px" placeholder='[{"id":"shoulder_blade","label":"肩胛","sens":4,"half_life":120,"aliases":["肩胛骨"],"radiate":{},"viz":[100,140]}]'></textarea>
       <div style="margin-top:6px;display:flex;gap:8px">
@@ -362,7 +463,7 @@ function tlsPageTheme(){const theme=document.documentElement.dataset.theme;retur
 
   var PAGE = { "控制台": "console", "身体": "status", "空间": "manor", "材质": "materials", "总览": "home", "心绪": "mood", "记忆": "memory" };
   function bindNav() {
-    document.querySelectorAll(".xnav a[data-pg]").forEach(function (a) {
+    document.querySelectorAll(".xnav button[data-pg]").forEach(function (a) {
       var target = PAGE[a.getAttribute("data-pg")];
       if (!target || a.classList.contains("cur")) return;
       a.addEventListener("click", async function (ev) {
@@ -513,10 +614,15 @@ function releaseEditSave(btn){
   });
 }
 function arrow(d){ return d > 0.01 ? '<span class="up">↑</span>' : (d < -0.01 ? '<span class="down">↓</span>' : '<span class="flat">→</span>'); }
-let CUR_TAB = 'parts';   // 页内 tab 内存记忆（iframe sandbox 无 allow-same-origin，localStorage 访问抛 SecurityError——只用内存变量，刷新回默认「部位」）
+let CUR_TAB = 'overview';
 function switchTab(name){
   CUR_TAB = name;
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab').forEach(tab => {
+    const selected = tab.dataset.tab === name;
+    tab.classList.toggle('active', selected);
+    if (selected) tab.setAttribute('aria-current', 'true');
+    else tab.removeAttribute('aria-current');
+  });
   ['overview','parts','link','params','doc'].forEach(v => {
     const el = document.getElementById('view-' + v);
     if (el) el.style.display = (v === name) ? '' : 'none';
@@ -529,7 +635,8 @@ function switchTab(name){
 /* ---- 总览 ---- */
 function stateCard(s){
   const phase = s.phase || 'building';
-  const badge = phase === 'building' ? '' : `<span class="badge ${phase}">${phase}${s.phase_until ? ' · ' + esc(s.phase_until.slice(11,16)) : ''}</span>`;
+  const phaseName = {building: '稳定', afterglow: '余韵', cooldown: '平复中'}[phase] || '其他状态';
+  const badge = `<span class="badge ${esc(phase)}">${phaseName}${s.phase_until ? ' · ' + esc(s.phase_until.slice(11,16)) + ' UTC' : ''}</span>`;
   const parts = Object.entries(s.parts || {}).sort((a,b) => b[1].value - a[1].value).map(([pid, p]) => {
     const bits = [];
     if (p.tier) bits.push(TIER_CN[p.tier] || p.tier);
@@ -539,8 +646,12 @@ function stateCard(s){
       `<td>${p.sens ?? '-'}</td><td>${p.half_life ?? '-'}s</td><td>${bits.length ? '（' + bits.join('·') + '）' : ''}</td>` +
       `<td class="num">${p.streak_count || 0}</td></tr>`;
   }).join('');
-  return `<div class="card">
-    <h2>${esc(s.character_name)} <span style="font-size:11px;color:#8b949e">${esc(s.session)}</span> ${badge}</h2>
+  const key = JSON.stringify([s.character, s.session]);
+  return `<article class="card body-state-card" data-state-key="${esc(key)}">
+    <header class="body-state-head">
+      <h3>${esc(s.character_name)}</h3>${badge}
+      <p>${esc(s.session)}</p>
+    </header>
     <div class="kv">
       <span>兴奋度 <b>${(s.arousal ?? 0).toFixed(2)}</b> / ${s.overload_threshold ?? 0.85}</span>
       <span>耐受 <b>${(s.tolerance ?? 0).toFixed(2)}</b></span>
@@ -548,15 +659,15 @@ function stateCard(s){
       <span>更新 <b>${esc((s.updated_at || '').slice(11,19))}</b> UTC</span>
     </div>
     <div class="bar"><i style="width:${Math.min(100, (s.arousal ?? 0) * 100).toFixed(1)}%"></i></div>
-    <table><tr><th>部位</th><th>数值</th><th>sens</th><th>τ</th><th>状态</th><th>连击</th></tr>${parts}</table>
-    ${(s.history || []).length ? `<details style="margin-top:8px"><summary style="font-size:11px;color:#8b949e;cursor:pointer">数值流水（最近 ${s.history.length} 条）</summary>
-      <table style="margin-top:6px">${s.history.slice().reverse().map(h =>
+    <div class="twrap"><table><tr><th>部位</th><th>数值</th><th>敏感度</th><th>半衰期</th><th>状态</th><th>连击</th></tr>${parts}</table></div>
+    ${(s.history || []).length ? `<details class="body-history"><summary>数值流水（最近 ${s.history.length} 条）</summary>
+      <div class="twrap"><table>${s.history.slice().reverse().map(h =>
         `<tr><td class="num">${esc((h.t || '').slice(11,19))}</td><td>${esc(h.part)}</td>` +
-        `<td class="num">${(h.old ?? 0).toFixed(2)} → ${(h.new ?? 0).toFixed(2)}</td><td>${esc(h.src || '')}</td></tr>`).join('')}</table></details>` : ''}
-    <div style="margin-top:10px;text-align:right">
-      <button class="danger" data-action="reset" data-character="${esc(s.character)}" data-session="${esc(s.session)}">重置此会话</button>
-    </div>
-  </div>`;
+        `<td class="num">${(h.old ?? 0).toFixed(2)} → ${(h.new ?? 0).toFixed(2)}</td><td>${esc(h.src || '')}</td></tr>`).join('')}</table></div></details>` : ''}
+    <footer class="body-state-footer">
+      <button type="button" class="danger" data-action="reset" data-character="${esc(s.character)}" data-session="${esc(s.session)}">重置此会话</button>
+    </footer>
+  </article>`;
 }
 
 let OVERVIEW_PENDING = false, OVERVIEW_LOADED = false;
@@ -566,11 +677,19 @@ async function load(){
   try{
     const data = await apiGet('page/overview');
     document.getElementById('meta').textContent =
-      `v${data.version} ｜ 角色: ${(data.profiles || []).map(p => p.name).join('、') || '无'} ｜ tick ${data.config?.vb_tick_seconds ?? '-'}s ｜ 注入${data.config?.vb_inject_enabled ? '开' : '关'}`;
+      `角色 ${(data.profiles || []).map(p => p.name).join('、') || '无'} · 对话联动${data.config?.vb_inject_enabled ? '已开启' : '已关闭'}`;
+    document.getElementById('runtime-meta').textContent =
+      `版本 ${data.version} · 后台计算间隔 ${data.config?.vb_tick_seconds ?? '-'} 秒`;
     const states = data.states || [];
-    document.getElementById('grid').innerHTML = states.length
+    const grid = document.getElementById('grid');
+    const expanded = new Set(Array.from(grid.querySelectorAll('.body-history[open]'),
+      history => history.closest('.body-state-card').dataset.stateKey));
+    grid.innerHTML = states.length
       ? states.map(stateCard).join('')
-      : '<div class="empty">暂无会话状态——白名单用户在私聊里互动后这里会出现卡片</div>';
+      : '<div class="empty">暂无会话状态。允许的会话发生身体互动后，状态会显示在这里。</div>';
+    for (const history of grid.querySelectorAll('.body-history')) {
+      history.open = expanded.has(history.closest('.body-state-card').dataset.stateKey);
+    }
     OVERVIEW_LOADED = true;
   }catch(e){
     document.getElementById('meta').textContent = '刷新失败：' + (e.message || e) + (OVERVIEW_LOADED ? '（保留上次成功快照）' : '');
@@ -2277,11 +2396,11 @@ function showNameBubble(anchorX, anchorY, viz, onConfirm){
    ../<name>/ 相对跳转不可行，点击给出一致引导。 */
 // Navigation is handled by the authenticated SDK listener above.
 
-load();
-switchTab(CUR_TAB);   // 默认进「部位」tab（内存变量，刷新回默认）
+switchTab(CUR_TAB);
 setInterval(() => {
-  const cb = document.getElementById('auto');
-  if (!document.hidden && cb && cb.checked && document.getElementById('view-overview').style.display !== 'none') load();
+  const grid = document.getElementById('grid');
+  if (!document.hidden && CUR_TAB === 'overview' && document.getElementById('auto').checked &&
+      !grid.contains(document.activeElement) && !grid.querySelector('.body-history[open]')) load();
 }, 30000);
 </script>
 <script id="asteria-leaf-script">

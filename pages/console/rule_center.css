@@ -2,6 +2,7 @@
 .rule-center h2, .rule-center h3, .rule-center p { margin: 0; }
 .rule-center-hint { color: var(--muted, #64748b); font-size: .92rem; line-height: 1.65; }
 .rule-center-status { min-height: 1.6em; font-size: .94rem; line-height: 1.6; }
+.rule-center-status[data-error=true] { color: var(--red, #b04336); }
 .rule-center form { display: grid; gap: 10px; padding: 18px; border: 1px solid var(--line, #dbe2ea); border-radius: 14px; }
 .rule-center label { display: grid; gap: 8px; font-weight: 600; }
 .rule-center textarea { box-sizing: border-box; width: 100%; min-height: 100px; resize: vertical; padding: 12px; font: inherit; border: 1px solid var(--line, #cbd5e1); border-radius: 9px; background: var(--input, var(--panel, #181e29)); color: var(--text, inherit); }

@@ -7,12 +7,13 @@ import hashlib
 import ipaddress
 import mimetypes
 import re
-import socket
 import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
+
+import aiohttp
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -32,6 +33,21 @@ class QzoneIntegrationError(RuntimeError):
     def __init__(self, stage: str, message: str):
         self.stage = stage
         super().__init__(f"{stage}：{message}")
+
+
+class _QzoneMediaConnector(aiohttp.TCPConnector):
+    async def _resolve_host(self, host, port, traces=None):
+        resolved = await super()._resolve_host(host, port, traces)
+        for entry in resolved:
+            try:
+                address = ipaddress.ip_address(entry["host"])
+            except ValueError:
+                raise QzoneIntegrationError("图片读取失败", "图片地址不可安全解析") from None
+            if QzoneMediaMixin._qzone_is_unsafe_media_host(str(address)):
+                raise QzoneIntegrationError("图片读取失败", "图片 URL 指向本机、内网或不可安全解析的地址")
+        if not resolved:
+            raise QzoneIntegrationError("图片读取失败", "图片地址不可安全解析")
+        return resolved
 
 
 class QzoneMediaMixin:
@@ -377,7 +393,7 @@ class QzoneMediaMixin:
             return
 
     @staticmethod
-    def _qzone_is_unsafe_media_host(host: str) -> bool:
+    def _qzone_is_unsafe_media_host(host: str | None) -> bool:
         normalized = str(host or "").strip().lower().rstrip(".")
         if not normalized or normalized in QZONE_UNSAFE_MEDIA_HOSTS or normalized.endswith(".localhost"):
             return True
@@ -385,41 +401,26 @@ class QzoneMediaMixin:
             address = ipaddress.ip_address(normalized.strip("[]"))
         except ValueError:
             return False
-        return bool(
-            address.is_private
-            or address.is_loopback
-            or address.is_link_local
-            or address.is_multicast
-            or address.is_reserved
-            or address.is_unspecified
-        )
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+            address = address.ipv4_mapped
+        return not address.is_global or address.is_multicast or address.is_reserved
 
     @classmethod
-    async def _qzone_remote_media_url_allowed(cls, source: str) -> bool:
-        parsed = urlparse(str(source or "").strip())
-        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
-            return False
-        host = parsed.hostname
-        if not host or cls._qzone_is_unsafe_media_host(host):
-            return False
+    def _qzone_remote_media_url_allowed(cls, source: str) -> bool:
         try:
-            ipaddress.ip_address(host.strip("[]"))
-            return True
+            parsed = urlparse(source)
+            host = parsed.hostname
         except ValueError:
-            pass
-        try:
-            infos = await asyncio.get_running_loop().getaddrinfo(host.rstrip("."), None, type=socket.SOCK_STREAM)
-        except OSError:
             return False
-        addresses = {item[4][0] for item in infos if item and item[4]}
-        return bool(addresses) and not any(cls._qzone_is_unsafe_media_host(address) for address in addresses)
+        return parsed.scheme in {"http", "https"} and not cls._qzone_is_unsafe_media_host(host)
 
     @classmethod
-    async def _qzone_safe_redirect_url(cls, current_url: str, location: str) -> str:
-        if not location:
+    def _qzone_safe_redirect_url(cls, current_url: str, location: str) -> str:
+        try:
+            target = urljoin(current_url, location) if location else ""
+        except ValueError:
             return ""
-        target = urljoin(current_url, location)
-        return target if await cls._qzone_remote_media_url_allowed(target) else ""
+        return target if cls._qzone_remote_media_url_allowed(target) else ""
 
     async def _qzone_load_image_bytes(
         self,
@@ -428,8 +429,6 @@ class QzoneMediaMixin:
         *,
         cookie_header: str,
     ) -> tuple[bytes, str, str]:
-        import aiohttp
-
         if isinstance(source, bytes):
             return source, "image.jpg", "image/jpeg"
         text = str(source or "").strip().strip('"')
@@ -455,7 +454,7 @@ class QzoneMediaMixin:
             image_type, content_type = self._qzone_guess_image_type(str(path), data)
             return data, path.name or f"image.{image_type}", content_type
         if re.match(r"^https?://", text, flags=re.I):
-            if not await self._qzone_remote_media_url_allowed(text):
+            if not self._qzone_remote_media_url_allowed(text):
                 raise QzoneIntegrationError("图片读取失败", "图片 URL 指向本机、内网或不可安全解析的地址")
             timeout = aiohttp.ClientTimeout(total=30)
             headers = {
@@ -463,13 +462,15 @@ class QzoneMediaMixin:
                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
                 "Referer": f"https://user.qzone.qq.com/{self._qzone_context_from_cookies(cookie_header)['uin']}",
             }
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async with aiohttp.ClientSession(
+                connector=_QzoneMediaConnector(), timeout=timeout, headers=headers
+            ) as session:
                 current_url = text
                 for _redirect in range(4):
                     async with session.get(current_url, allow_redirects=False) as response:
                         if response.status in {301, 302, 303, 307, 308}:
                             location = response.headers.get("Location") or response.headers.get("location") or ""
-                            redirected = await self._qzone_safe_redirect_url(current_url, location)
+                            redirected = self._qzone_safe_redirect_url(current_url, location)
                             if not redirected:
                                 raise QzoneIntegrationError("图片读取失败", "图片重定向目标不安全，已拒绝下载")
                             current_url = redirected
@@ -480,9 +481,12 @@ class QzoneMediaMixin:
                         length = _safe_int(response.headers.get("Content-Length"), 0, 0)
                         if length and length > QZONE_REMOTE_IMAGE_MAX_BYTES:
                             raise QzoneIntegrationError("图片校验失败", "图片过大，已跳过上传")
-                        data = await response.read()
-                        if len(data) > QZONE_REMOTE_IMAGE_MAX_BYTES:
-                            raise QzoneIntegrationError("图片校验失败", "图片过大，已跳过上传")
+                        buffer = bytearray()
+                        async for chunk in response.content.iter_chunked(64 * 1024):
+                            if len(buffer) + len(chunk) > QZONE_REMOTE_IMAGE_MAX_BYTES:
+                                raise QzoneIntegrationError("图片校验失败", "图片过大，已跳过上传")
+                            buffer.extend(chunk)
+                        data = bytes(buffer)
                         image_type, guessed_type = self._qzone_guess_image_type(current_url, data, content_type)
                         name = Path(urlparse(current_url).path).name or f"image.{image_type}"
                         return data, name, content_type or guessed_type

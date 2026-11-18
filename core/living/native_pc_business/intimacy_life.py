@@ -505,8 +505,6 @@ class IntimacyLifeMixin:
 
     async def _maybe_distill_intimacy_corpus(self, user: dict[str, Any]) -> None:
         """每日一次：从真实对话蒸馏高质量亲密回合与新词汇。"""
-        if not _single_line(user.get("umo"), 80):
-            return
         if not self._intimacy_enabled():
             return
         if not bool(getattr(self, "intimacy_distill_enabled", True)):

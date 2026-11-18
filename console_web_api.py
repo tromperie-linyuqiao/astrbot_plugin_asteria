@@ -244,6 +244,26 @@ class NativeConsoleWebApi:
                 'state': 'attached' if result else 'not_attached',
                 'note': '仅显示当前 TLS 原生队列；未接入的旧调度任务不在此列表中'}
 
+    async def _chat_companion_status(self, scope):
+        if scope is None:
+            return {'state': 'no_scope'}
+        if scope['platform'] != 'webchat' or scope['bot_id'] != 'webchat':
+            return {'state': 'unsupported_scope'}
+        from .core.living.native_proactive_chat_host import NativeProactiveChatHost
+        try:
+            username, session_id = NativeProactiveChatHost._app_identity(scope)
+        except PermissionError:
+            return {'state': 'unavailable'}
+        host = getattr(getattr(self.plugin, '_presence', None), 'living_host', None)
+        mode = getattr(host, 'chat_companion_mode', None)
+        if mode is None or not session_id:
+            return {'state': 'unavailable'}
+        try:
+            status = await mode.inspect_status(username, session_id, scope)
+        except (RuntimeError, OSError, sqlite3.Error):
+            return {'state': 'unavailable'}
+        return status if status is not None else {'state': 'unavailable'}
+
     def _capabilities(self, overview, scope, *, authenticated=False):
         """Only existing runtime snapshots and registry metadata; no calls."""
         runtime = self._runtime()
@@ -566,6 +586,8 @@ class NativeConsoleWebApi:
                     result = await asyncio.to_thread(read_config)
                 else:
                     result = await asyncio.to_thread(self._tasks if action == 'tasks' else self._overview, scope)
+                    if action == 'tasks':
+                        result['chat_companion'] = await self._chat_companion_status(scope)
                     if action=='overview' and getattr(self._runtime(),'native_services',None) is not None:
                         from .core.living.native_legacy_companion_inspection import inspect_legacy_companion, inspect_random_handoff
                         result['native_proactive']['legacy']=inspect_legacy_companion(getattr(self.plugin,'context',None))
@@ -574,6 +596,14 @@ class NativeConsoleWebApi:
                                 'random_gate_confirmed':False})
                     if action=='overview':
                         result.update(self._capabilities(result, scope, authenticated=True))
+                        registration = getattr(self.plugin, '_web_api_registration', None) or {}
+                        status = registration.get('state')
+                        missing = registration.get('missing_core')
+                        result['web_api_registration'] = {
+                            'state': status if status in ('ready', 'degraded', 'unavailable') else 'unknown',
+                            'core_ready': registration.get('core_ready') is True,
+                            'missing_core_count': len(missing) if isinstance(missing, list) else None,
+                        }
                         services=getattr(self._runtime(),'native_services',None)
                         if services is not None:
                             result['queue_authority']=services.queue_authority_status(scope)

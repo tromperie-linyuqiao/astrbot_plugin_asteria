@@ -67,7 +67,7 @@ export async function hydrateImageCachePreview(image) {
 
 export function hydrateImageCachePreviews() {
   asteriaWorkspaceState.imageCachePreviewObserver?.disconnect();
-  const list = $("#imageCacheList"), detail = $("#imageCacheDetail");
+  const list = $("#imageCacheList");
   const images = list ? [...list.querySelectorAll("img[data-image-cache-preview-key]")] : [];
   if (typeof IntersectionObserver === "function") {
     asteriaWorkspaceState.imageCachePreviewObserver = new IntersectionObserver((entries, observer) => {
@@ -84,17 +84,91 @@ export function hydrateImageCachePreviews() {
     // 300-record list just to replace the browser's lazy-image behavior.
     images.slice(0, 12).forEach(image => { void hydrateImageCachePreview(image); });
   }
-  detail?.querySelectorAll("img[data-image-cache-preview-key]").forEach(image => { void hydrateImageCachePreview(image); });
 }
 
-export function renderImageCache() {
+const imageCacheDrafts = new Map();
+
+export function imageCacheFormValues(form) {
+  const values = new FormData(form);
+  return {text: values.get("text"), scope: values.get("scope"), provider_id: values.get("provider_id")};
+}
+
+export function keepImageCacheDraft(form) {
+  const key = form.dataset.imageCacheEditor;
+  const item = state.imageCacheItems.find(row => row.key === key);
+  if (!item) return;
+  const values = imageCacheFormValues(form);
+  const dirty = values.text !== (item.text || "") || values.scope !== item.scope ||
+    values.provider_id !== (item.provider_id || "");
+  if (dirty) imageCacheDrafts.set(key, values);
+  else imageCacheDrafts.delete(key);
+}
+
+export function forgetImageCacheDraft(key, committed = null) {
+  const draft = imageCacheDrafts.get(key);
+  if (!committed || !draft || Object.keys(draft).every(field => draft[field] === committed[field])) imageCacheDrafts.delete(key);
+}
+
+function renderImageCacheSelection(operationKey = "") {
+  const workspace = $("#imageCacheWorkspace");
+  const detail = $("#imageCacheDetail");
+  const selected = state.imageCacheItems.find(item => item.key === state.selectedImageCacheKey);
+  workspace.dataset.imageCachePane = selected ? "detail" : "list";
+  for (const row of $("#imageCacheList").querySelectorAll("[data-image-cache-key]")) {
+    const active = row.dataset.imageCacheKey === selected?.key;
+    row.classList.toggle("is-active", active);
+    if (active) row.setAttribute("aria-current", "true");
+    else row.removeAttribute("aria-current");
+  }
+  const editor = detail.querySelector("[data-image-cache-editor]");
+  if (operationKey && selected && selected.key !== operationKey && editor?.dataset.imageCacheEditor === selected.key) return;
+  detail.innerHTML = selected ? imageCacheDetailMarkup(selected) :
+    '<div class="empty image-cache-empty"><b>选择一条缓存</b><span>可以查看压缩预览和视觉摘要。</span></div>';
+  const draft=selected&&imageCacheDrafts.get(selected.key);
+  if (draft) {
+    const form=detail.querySelector("[data-image-cache-editor]");
+    for (const [field,value] of Object.entries(draft)) form.elements.namedItem(field).value=value;
+    form.querySelector("[data-image-cache-feedback]").textContent="已恢复这条缓存的未保存编辑。";
+  }
+  const preview = detail.querySelector("img[data-image-cache-preview-key]");
+  if (preview) void hydrateImageCachePreview(preview);
+}
+
+export function selectImageCacheEntry(key) {
+  if (key === state.selectedImageCacheKey) {
+    if (key) $("#imageCacheDetail h3")?.focus();
+    return;
+  }
+  const list = $("#imageCacheList");
+  const previous = state.selectedImageCacheKey;
+  const position = key ? list.scrollTop : asteriaWorkspaceState.imageCacheListPosition;
+  if (key) asteriaWorkspaceState.imageCacheListPosition = position;
+  state.selectedImageCacheKey = key;
+  const status = $("#imageCacheActionResult");
+  status.textContent = "";
+  status.dataset.error = "false";
+  renderImageCacheSelection();
+  if (key) {
+    const title = $("#imageCacheDetail h3");
+    title?.focus({preventScroll: true});
+    title?.closest("form")?.scrollIntoView({block: "start"});
+  } else {
+    list.scrollTop = position || 0;
+    const row = Array.from(list.querySelectorAll("[data-image-cache-key]"))
+      .find(button => button.dataset.imageCacheKey === previous);
+    const target = row || $("#imageCacheFilter");
+    target?.focus({preventScroll: true});
+    target?.scrollIntoView({block: "nearest"});
+  }
+}
+
+export function renderImageCache(operationKey = "") {
   const summaryEl = $("#imageCacheSummary");
   const listEl = $("#imageCacheList");
   const detailEl = $("#imageCacheDetail");
   if (!summaryEl || !listEl || !detailEl) return;
   const overviewCache = state.overview?.cache?.private_image_vision || {};
   const items = state.imageCacheItems || [];
-  const selected = items.find((item) => item.key === state.selectedImageCacheKey) || null;
   const hasActiveCacheQuery = Boolean(state.imageCacheLoaded || state.imageCacheFilter || (state.imageCacheScope && state.imageCacheScope !== "all") || state.imageCacheTotal || items.length);
   const totalDisplay = hasActiveCacheQuery ? state.imageCacheTotal : (overviewCache.items || 0);
   summaryEl.innerHTML = `
@@ -130,13 +204,12 @@ export function renderImageCache() {
   }
   listEl.innerHTML = items.length
     ? items.map((item) => imageCacheListItemMarkup(item)).join("")
-    : `<div class="empty image-cache-empty"><b>暂无缓存条目</b><span>收到图片或表情包并完成视觉转述后会出现在这里。</span></div>`;
-  detailEl.innerHTML = selected ? imageCacheDetailMarkup(selected) : `
-    <div class="empty image-cache-empty">
-      <b>选择一条缓存</b>
-      <span>左侧点击图片/表情包缓存后，可以编辑摘要或删除。</span>
-    </div>
-  `;
+    : !state.imageCacheLoaded
+      ? '<div class="empty image-cache-empty"><b>缓存待读取</b></div>'
+      : state.imageCacheFilter || state.imageCacheScope !== "all"
+      ? '<div class="empty image-cache-empty"><b>没有匹配的缓存</b><span>可换一个关键词或范围。</span></div>'
+      : '<div class="empty image-cache-empty"><b>暂无缓存条目</b><span>收到图片或表情包并完成视觉转述后会出现在这里。</span></div>';
+  renderImageCacheSelection(operationKey);
   hydrateImageCachePreviews();
 }
 
@@ -174,8 +247,9 @@ export function imageCacheDetailMarkup(item) {
     <form class="image-cache-editor" data-image-cache-editor="${escapeHtml(item.key)}">
       <header>
         <div>
+          <button type="button" class="image-cache-back" data-image-cache-back>返回缓存列表</button>
           <span class="module-badge">${escapeHtml(imageCacheScopeLabel(item.scope))}</span>
-          <h3>${escapeHtml(item.image_type || "图片缓存")}</h3>
+          <h3 tabindex="-1">${escapeHtml(item.image_type || "图片缓存")}</h3>
           <p>${escapeHtml(item.intent || item.visible || "可编辑这张图片/表情包的视觉摘要。")}</p>
         </div>
         <button type="button" class="danger" data-image-cache-delete="${escapeHtml(item.key)}">删除缓存</button>
@@ -187,14 +261,17 @@ export function imageCacheDetailMarkup(item) {
           ${previewMeta ? `<figcaption>${escapeHtml(previewMeta)} · 压缩预览</figcaption>` : `<figcaption>压缩预览</figcaption>`}
         </figure>
       ` : ""}
-      <div class="image-cache-meta">
-        <div><dt>Provider</dt><dd>${escapeHtml(item.provider_id || "未记录")}</dd></div>
+      <details class="image-cache-history wide-field">
+        <summary>创建与命中记录</summary>
+        <dl class="image-cache-meta">
+        <div><dt>识图服务</dt><dd>${escapeHtml(item.provider_id || "未记录")}</dd></div>
         <div><dt>创建</dt><dd>${escapeHtml(item.created || "-")}</dd></div>
         <div><dt>最近命中</dt><dd>${escapeHtml(item.last_hit || "未命中")}</dd></div>
         <div><dt>编辑</dt><dd>${escapeHtml(item.edited || "未编辑")}</dd></div>
         <div><dt>图片数</dt><dd>${escapeHtml(item.image_count || keys.length || 1)}</dd></div>
-        <div><dt>Prompt</dt><dd>${escapeHtml(item.prompt_sig || "-")}</dd></div>
-      </div>
+        <div><dt>提示词签名</dt><dd>${escapeHtml(item.prompt_sig || "-")}</dd></div>
+        </dl>
+      </details>
       <label>缓存范围
         <select name="scope">
           ${["private_image", "private_image_query", "forward_image", "screen_peek"].map((scope) => `
@@ -218,6 +295,7 @@ export function imageCacheDetailMarkup(item) {
         <button type="button" data-copy-text="${escapeHtml(item.text || "")}">复制摘要</button>
         <button type="submit">保存缓存</button>
       </div>
+      <p class="image-cache-feedback wide-field" role="status" data-image-cache-feedback></p>
     </form>
   `;
 }

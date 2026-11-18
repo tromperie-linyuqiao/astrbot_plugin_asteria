@@ -162,7 +162,8 @@
 <div class="goals-pager"><button type="button" data-goal-action="prev">上一页</button><span data-goal-range></span><button type="button" data-goal-action="next">下一页</button></div>
 </section>
 <section class="panel" data-goal-editor>
-<div class="panel-head"><h2 data-goal-heading>目标详情</h2><span data-goal-badge class="tag">尚未选择</span></div>
+<div class="panel-head"><h2 data-goal-heading tabindex="-1">目标详情</h2><span data-goal-badge class="tag">尚未选择</span></div>
+<div class="goals-detail-nav"><button type="button" data-goal-action="return">返回列表</button><p data-goal-detail-status class="goals-status" role="status" aria-live="polite"></p></div>
 <p data-goal-editor-scope class="hint"></p>
 <p data-goal-source class="goals-source"></p>
 <form data-goal-form>
@@ -177,6 +178,7 @@
 <label class="full">备注<textarea data-goal-field="note" maxlength="160"></textarea></label>
 <label class="full">匹配词（逗号或换行分隔，最多 16 个）<textarea data-goal-field="keywords" maxlength="900"></textarea></label>
 </fieldset>
+<p data-goal-editor-line class="goals-status" role="status" aria-live="polite"></p>
 <div class="goals-buttons">
 <button type="button" data-goal-action="edit" hidden>编辑</button>
 <button type="button" data-goal-action="save" class="primary" hidden>保存</button>
@@ -191,7 +193,7 @@
 <button type="button" data-goal-action="restore" hidden>恢复归档</button>
 </div>
 <div data-goal-confirm class="goals-confirm" hidden><span data-goal-confirm-text></span><button type="button" data-goal-action="confirm-state" class="primary">确认</button><button type="button" data-goal-action="cancel-state">取消</button></div>
-<p data-goal-editor-line class="goals-status" role="status" aria-live="polite"></p>
+
 <p data-goal-comparison class="goals-comparison" hidden></p>
 <h3>推进记录</h3>
 <div data-goal-history class="goals-history"></div>
@@ -305,7 +307,7 @@
       root.dataset.goalPhase = !scope ? 'no-scope' : e && e.busy ? 'saving'
         : e && e.pending ? 'uncertain' : e && e.conflict ? 'conflict' : (e && e.mode) || 'ready';
       $('fieldset').disabled = !e || e.mode === 'view' || e.busy || !!e.pending || !!e.conflict;
-      $('[data-goal-heading]').textContent = e ? (e.base ? '目标详情' : '新建目标') : '目标详情';
+      $('[data-goal-heading]').textContent = e?.base?.fields.title || (e ? '新建目标' : '目标详情');
       $('[data-goal-badge]').textContent = e && e.base
         ? (e.base.archived ? '已归档 · ' : '') + (STATUS_LABEL[e.base.status] || e.base.status) + ' · v' + e.base.revision
         : '尚未保存';
@@ -437,15 +439,23 @@
     function mayLeave() {
       const e = current && current.e;
       if (e && (e.busy || e.pending || (e.mode !== 'view' && changed(e)))) {
-        status('[data-goal-editor-line]', '当前草稿或原请求已保留，请先保存、取消编辑或核查原请求，再选择另一条目标。', true);
+        status('[data-goal-detail-status]', '当前草稿或原请求已保留，请先保存、取消编辑或核查原请求，再选择另一条目标。', true);
         return false;
       }
       return true;
     }
     async function select(id) {
-      if (!scope || !mayLeave()) return;
+      if (!scope) return;
+      const entry = current?.e;
+      if (entry?.base?.id === id && (entry.mode !== 'view' || entry.pending)) {
+        status('[data-goal-detail-status]', '已恢复此目标的编辑或待核查状态。');
+        $('[data-goal-heading]').focus({ preventScroll: true });
+        return;
+      }
+      if (!mayLeave()) return;
       const state = current, token = epoch, at = { ...scope }, editorToken = ++state.editorToken;
-      status('[data-goal-editor-line]', '正在按记录读取…');
+      state.returnId = id;
+      status('[data-goal-detail-status]', '正在读取所选目标…');
       try {
         const row = record((await call('GET', 'detail', { ...at, id })).record, at);
         if (row.id !== id) throw Error('detail identity');
@@ -456,15 +466,19 @@
         $('[data-goal-comparison]').hidden = true;
         status('[data-goal-editor-line]', '已读取当前记录；编辑和状态变更都会校验版本。');
         editor();
+        status('[data-goal-detail-status]', '');
+        $('[data-goal-heading]').focus({ preventScroll: true });
       } catch (error) {
         if (alive(state, token) && state.editorToken === editorToken) {
-          status('[data-goal-editor-line]', message(error), true);
+          status('[data-goal-detail-status]', message(error) + (state.e?.base ? ' 下方仍是上次读取的目标。' : ''), true);
         }
       }
     }
     function newGoal() {
       if (!scope || !mayLeave()) return;
       current.editorToken++;
+      current.returnId = null;
+      status('[data-goal-detail-status]', '');
       current.e = { base: null, mode: 'new', busy: false };
       setForm({
         fields: {
@@ -869,6 +883,14 @@
       }
     }
     $('[data-goal-form]').addEventListener('submit', event => { event.preventDefault(); save(); });
+    action('return').addEventListener('click', () => {
+      const wrapper = $('[data-goal-heading]').closest('.ap-editor');
+      if (wrapper) wrapper.open = false;
+      const id = current?.returnId;
+      const target = (id && $('[data-goal-id="' + id + '"] button')) || $('[data-goal-search]');
+      target.focus({ preventScroll: true });
+      target.scrollIntoView({ block: 'center' });
+    });
     action('new').addEventListener('click', newGoal);
     action('refresh').addEventListener('click', load);
     action('export').addEventListener('click', exportGoals);
@@ -956,6 +978,7 @@
       scope = value && SCOPE.every(key => typeof value[key] === 'string' && value[key])
         ? Object.fromEntries(SCOPE.map(key => [key, value[key]])) : null;
       epoch++;
+      status('[data-goal-detail-status]', '');
       current = scope ? (states.get(JSON.stringify(scope)) || newState()) : null;
       if (scope) states.set(JSON.stringify(scope), current);
       $('[data-goal-scope]').textContent = scopeText();

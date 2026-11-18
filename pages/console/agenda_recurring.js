@@ -19,6 +19,14 @@
   const hint = node('p', '首个时间使用上方显示的本地时间。周期按此时区保留当地钟点；月底不足时取当月最后一天，之后恢复原日期。投递确认或已过期后安排下一次，未知或失败不自动重发。', 'hint');
   controls.style.marginTop = '12px'; form.insertBefore(controls, form.querySelector('.actions'));
   controls.after(hint);
+  const receipt = $('agenda-create-status');
+  form.querySelector('.actions').before(receipt);
+  function showReceipt(text, error = false) {
+    receipt.textContent = text;
+    receipt.classList.toggle('error-text', error);
+    receipt.classList.toggle('hint', !error);
+  }
+  showReceipt('');
   const heading = document.querySelector('#view-agenda > .panel h2');
   if (heading) heading.textContent = 'TLS 日程表';
   const intro = document.querySelector('#view-agenda > .panel .hint');
@@ -43,12 +51,12 @@
   }
   repeat.addEventListener('change', () => { zone.disabled = repeat.value === 'none'; });
   const resetOriginal = resetAgendaEditor;
-  resetAgendaEditor = function() { resetOriginal(); setRule(null); $('agenda-form-title').textContent='创建日程'; };
+  resetAgendaEditor = function() { resetOriginal(); setRule(null); showReceipt(''); $('agenda-form-title').textContent='创建日程'; };
   const editOriginal = beginAgendaEdit;
   beginAgendaEdit = async function(id, scope, generation) {
     await editOriginal(id, scope, generation);
     if (current(generation) && state.agendaEditing?.row.id === id) {
-      setRule(state.agendaEditing.row); $('agenda-form-title').textContent = '编辑日程';
+      setRule(state.agendaEditing.row); showReceipt(''); $('agenda-form-title').textContent = '编辑日程';
     }
   };
   const dialogOriginal = openAgendaDialog;
@@ -73,7 +81,7 @@
       state.agendaEditing = {row,scope:{...scope},generation,originalLocal:localInput(due),restore:true};
       state.agendaDraft = null; $('agenda-due').value = localInput(due); $('agenda-content').value = row.content;
       setRule(row); $('agenda-form-title').textContent = '恢复日程'; $('agenda-create').textContent = '保存并恢复';
-      $('agenda-edit-cancel').hidden = false; $('agenda-create-status').textContent = '';
+      $('agenda-edit-cancel').hidden = false; showReceipt('');
       $('agenda-edit-context').textContent = '请选择新的未来时间；原执行记录保留，恢复只建立新版本。';
       updateZone('agenda-zone',$('agenda-due').value);
       openCommonEditor('agenda-create-form','恢复日程',currentScopeText()+' · 保存后重新进入同一提醒队列。');
@@ -82,8 +90,8 @@
   async function requestIdentity(scope, requestId) {
     const s = {bot_id:scope.bot_id,character_id:scope.character_id,platform:scope.platform,
       private:true,session_id:scope.session_id,user_id:scope.user_id};
-    const digest = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(['tls.agenda.request.v1',s,requestId])));
-    return 'tls.agenda.' + Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2,'0')).join('');
+    const bytes = new TextEncoder().encode(JSON.stringify(['tls.agenda.request.v1',s,requestId]));
+    return 'tls.agenda.' + await window.TLSBrowserCompat.sha256Hex(bytes);
   }
   const normalizedContent = value => value.trim().startsWith('【日程】') ? value.trim() : '【日程】'+value.trim();
   const sameSaved = (row,payload) => row && row.content === normalizedContent(payload.content)
@@ -97,7 +105,10 @@
     try {
       const result = await api('GET','page/agenda/detail',{...scope,id:pending.id});
       if (current(generation) && pendingRequests.get(key)===pending && result.record?.id===pending.id && sameSaved(result.record,pending.payload)) {
-        pendingRequests.delete(key); $('agenda-create-status').textContent = '之前的保存已从后台回读确认。';
+        pendingRequests.delete(key);
+        const confirmed = '之前的保存已从后台回读确认。';
+        showReceipt(confirmed);
+        $('agenda-status').textContent = '已重新读取日程。' + confirmed;
       }
     } catch (_) { /* Read-only reconciliation never replays a save. */ }
   }
@@ -157,7 +168,7 @@
         payload=state.agendaDraft.payload;path='page/agenda/create'; id=await requestIdentity(scope,payload.request_id);
       }
       if (!current(generation)) return;
-      $('agenda-create-status').textContent='正在保存日程并重新读取…';
+      showReceipt('正在保存日程并重新读取…');
       pendingRequests.set(key,{id,scope,payload});
       let saved;
       try { saved=await api('POST',path,payload); }
@@ -174,10 +185,10 @@
       } else resetAgendaEditor();
       state.agendaOffset=0; await loadAgenda();
       if (!current(generation)) return;
-      $('agenda-create-status').textContent=editing?.restore?'日程已恢复，并从后台重新读取确认。':editing?'日程已修改，并从后台重新读取确认。':payload.repeat==='none'?'单次日程已创建，并从后台重新读取确认。':'周期日程已创建，并从后台重新读取确认。';
+      showReceipt(editing?.restore?'日程已恢复，并从后台重新读取确认。':editing?'日程已修改，并从后台重新读取确认。':payload.repeat==='none'?'单次日程已创建，并从后台重新读取确认。':'周期日程已创建，并从后台重新读取确认。');
       notify('日程已保存；实际投递仍由原生提醒服务核验。');
     } catch (error) {
-      if (current(generation)) $('agenda-create-status').textContent=scopeOperationError(error,'agenda')+(pendingRequests.has(key)?' 保存结果待确认，请刷新列表核对。':'');
+      if (current(generation)) showReceipt(scopeOperationError(error,'agenda')+(pendingRequests.has(key)?' 保存结果待确认，请刷新列表核对。':''), true);
     } finally {
       state.agendaCreating=false;$('agenda-create').disabled=!state.scope || state.busy>0;
       $('agenda-edit-cancel').disabled=false;$('agenda-new').disabled=false;

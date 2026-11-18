@@ -3,76 +3,235 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>原生记忆 · 管理</title>
+<title>记忆记录维护 · 星栖 Asteria</title>
 <script>
 try{const theme=new URLSearchParams(location.search).get('theme');document.documentElement.dataset.theme=['light','dark','black'].includes(theme)?theme:'dark';}catch(_){document.documentElement.dataset.theme='dark';}
 </script>
 <style>
-:root{color-scheme:dark;--bg:#0d1117;--panel:#161b22;--edge:#30363d;--text:#e6edf3;--muted:#9ba6b4;--blue:#58a6ff;--red:#ff938a}
-:root[data-theme="light"]{color-scheme:light;--bg:#f5f7fa;--panel:#fff;--edge:#d5dbe3;--text:#17202c;--muted:#566375;--blue:#245cab;--red:#a52c33}
-:root[data-theme="black"]{color-scheme:dark;--bg:#000;--panel:#111;--edge:#333;--text:#ededed;--muted:#aaa;--blue:#9bb4d5;--red:#f0a0a0}
-*{box-sizing:border-box}body{margin:0;padding:18px;background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",sans-serif}main{max-width:1040px;margin:auto}h1,h2,p{margin:0}h1{font-size:25px;letter-spacing:.03em}h2{font-size:16px}button,input,select,textarea{font:inherit;color:inherit;border:1px solid var(--edge);border-radius:7px;background:var(--bg);min-height:40px;padding:8px 11px}input,select,textarea{width:100%;min-width:0}textarea{resize:vertical;min-height:112px}button{cursor:pointer;background:#21262d;white-space:nowrap}button:hover{border-color:var(--blue)}button:disabled{opacity:.5;cursor:default}.primary{background:#1f6feb;border-color:#1f6feb}.danger{color:var(--red)}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.xnav{display:flex;gap:7px;flex-wrap:wrap;border-bottom:1px solid var(--edge);padding-bottom:14px;margin-bottom:22px}.xnav a{color:var(--muted);text-decoration:none;border:1px solid var(--edge);padding:6px 12px;border-radius:7px;cursor:pointer}.xnav a.cur{background:#1f6feb22;border-color:#1f6feb88;color:var(--blue)}.heading{display:flex;align-items:start;justify-content:space-between;gap:12px;margin-bottom:18px}.eyebrow{font-size:11px;letter-spacing:.15em;color:var(--blue);margin-bottom:4px}.muted,.hint{color:var(--muted);font-size:12px}.panel{background:var(--panel);border:1px solid var(--edge);border-radius:12px;padding:20px;margin-bottom:16px}.panel-title{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}.scope-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px}label{display:block;font-size:12px;color:var(--muted)}label>input,label>select,label>textarea{display:block;margin-top:5px;color:var(--text)}.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.scope-summary{margin-top:14px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;color:var(--muted);border-left:2px solid var(--blue);padding-left:12px}.toolbar{display:flex;gap:9px;align-items:end;flex-wrap:wrap}.toolbar .query{flex:1;min-width:170px}.check{display:flex;align-items:center;gap:7px;min-height:40px}.check input{width:16px;min-height:auto;margin:0}.stats{font-size:12px;color:var(--muted);margin:12px 0;white-space:pre-wrap;overflow-wrap:anywhere}.record{border:1px solid var(--edge);border-radius:9px;padding:16px;margin-top:12px;background:var(--bg)}.record-content{white-space:pre-wrap;overflow-wrap:anywhere;margin-bottom:10px}.record-meta{font-size:12px;color:var(--muted);overflow-wrap:anywhere}.record-buttons{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.record.deleted{opacity:.65}.empty{padding:24px 0;color:var(--muted);text-align:center}.status{position:sticky;top:8px;z-index:2;padding:10px 14px;border-radius:8px;background:#143221;border:1px solid #2c6745;margin-bottom:16px;overflow-wrap:anywhere}.status.error{background:#391d22;border-color:#71323d}.status[hidden]{display:none}.add-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}.add-content{grid-column:1/-1}.badge{border:1px solid #388bfd66;border-radius:99px;padding:3px 10px;color:var(--blue);font-size:12px;white-space:nowrap}dialog{width:min(560px,calc(100vw - 28px));color:var(--text);background:var(--panel);border:1px solid var(--edge);border-radius:12px;padding:22px}dialog::backdrop{background:#0009}dialog h2{margin-bottom:10px}.dialog-info{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted);font-size:12px;margin-bottom:12px}.dialog-error{color:var(--red);margin-top:10px}.footer{font-size:12px;color:var(--muted);padding:2px 2px 20px}.pagination{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:15px}.source-details{font-size:12px;overflow-wrap:anywhere;margin-top:10px}.source-details pre{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted)}
-@media(max-width:680px){body{padding:12px}.panel{padding:16px}.scope-grid{grid-template-columns:1fr 1fr}.heading{flex-wrap:wrap}h1{font-size:22px}.toolbar>button{flex:1}.add-grid{grid-template-columns:1fr}.add-content{grid-column:auto}.actions>button{flex:1}.badge{margin-top:4px}}
-@media(max-width:420px){.scope-grid{grid-template-columns:1fr}.xnav a{padding:7px 10px}.panel-title{flex-wrap:wrap}}
-:root[data-theme="light"] button:not(.primary){background:#e9edf3}:root[data-theme="light"] .status{background:#e6f3e9;color:#235036}:root[data-theme="light"] .status.error{background:#fae9ec;color:#7d2935}
-:root[data-theme="black"] button:not(.primary){background:#1b1b1b}:root[data-theme="black"] .primary{background:#29425f;border-color:#536a85}:root[data-theme="black"] .status{background:#18221d;border-color:#38483f}:root[data-theme="black"] .status.error{background:#28191d;border-color:#634148}
-</style>
-<style id="asteria-leaf-style">
-body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.6}
-.aw-leaf-header{max-width:1560px;margin:0 auto 22px;padding:16px 18px;border:1px solid var(--line,var(--edge,#475569));border-radius:12px;background:var(--panel,#161b22);color:var(--text,var(--ink,#e6edf3));display:flex;align-items:center;gap:18px;flex-wrap:wrap}
-.aw-leaf-brand{font-weight:650;letter-spacing:.04em;font-size:16px;white-space:nowrap}.aw-leaf-path{flex:1;min-width:180px;font-size:13px;color:var(--muted,#94a3b8)}
-.aw-leaf-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.aw-leaf-tools button,.aw-leaf-tools select{font:inherit;font-size:13px;min-height:38px;border-radius:8px;padding:8px 12px;max-width:260px;width:auto;background:var(--panel,#161b22);color:inherit;border:1px solid var(--line,var(--edge,#475569))}
-.aw-leaf-tools label{display:flex;align-items:center;gap:8px}.aw-leaf-message{flex-basis:100%;margin:0;font-size:13px;color:var(--red,#c65364)}
-body h1{font-size:clamp(21px,2vw,28px);line-height:1.35}body h2{line-height:1.45}body .panel,body .card{border-radius:12px}body input,body textarea,body select{scroll-margin-top:24px}body button:focus-visible,body a:focus-visible{outline:2px solid var(--blue,var(--accent,#7385c9));outline-offset:3px}
-body dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto}body pre{overflow-wrap:anywhere;white-space:pre-wrap}body .table-wrap,body .twrap{max-width:100%;overflow:auto}
-@media(max-width:640px){.aw-leaf-header{padding:14px;margin:8px 0 18px;gap:10px}.aw-leaf-path{font-size:12px}.aw-leaf-tools{width:100%}.aw-leaf-tools label{flex:1;min-width:0}.aw-leaf-tools select{min-width:0;width:100%;max-width:100%}.aw-leaf-tools button{flex-shrink:0}body h1{font-size:22px}}
+:root {
+  color-scheme: dark;
+  --bg: #151419; --panel: #1e1c24; --surface: #292630; --input: #1a1720;
+  --line: #3a3543; --text: #eeeaf2; --muted: #b6aebf;
+  --accent: #c5b3f1; --accent-ink: #211633; --danger: #efa2ae;
+  --accent-soft: #30263f; --message: #25332e; --error: #39252f;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f4f3; --panel: #fff; --surface: #eeecef; --input: #faf9fa;
+  --line: #e0dce2; --text: #27232d; --muted: #625c6b;
+  --accent: #644da0; --accent-ink: #fff; --danger: #a23647;
+  --accent-soft: #eee8f7; --message: #e5f2ed; --error: #fae7eb;
+}
+:root[data-theme="black"] {
+  --bg: #000; --panel: #121116; --surface: #1d1a22; --input: #0a090d;
+  --line: #312d39; --text: #f0edf4; --muted: #b4abbf;
+  --accent: #c5b3f1; --accent-ink: #211633; --danger: #e9a2ae;
+  --accent-soft: #2a2237; --message: #192822; --error: #30202a;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { scroll-padding-top: 12px; }
+body {
+  margin: 0; padding: 0 clamp(12px, 3vw, 32px);
+  background: var(--bg); color: var(--text);
+  font: .875rem/1.65 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+main, .aw-leaf-header { max-width: 1080px; margin-inline: auto; }
+main { padding: 18px 0 24px; }
+h1, h2, p { margin: 0; }
+h1 { font-size: 1.65rem; line-height: 1.3; font-weight: 650; }
+h2 { font-size: 1.0625rem; line-height: 1.35; font-weight: 650; }
+button, input, select, textarea {
+  padding: 8px 11px; min-height: 44px; max-width: 100%; min-width: 0; border: 1px solid var(--line);
+  border-radius: 9px; background: var(--input); color: var(--text); font: inherit;
+}
+button { background: var(--surface); cursor: pointer; overflow-wrap: anywhere; }
+button:disabled { opacity: .55; cursor: default; }
+button:hover:enabled { border-color: var(--accent); }
+input, select, textarea { width: 100%; }
+textarea { resize: vertical; min-height: 112px; }
+.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.danger { color: var(--danger); }
+:is(button, a, input, select, textarea, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+details > summary { width: fit-content; max-width: 100%; color: var(--muted); cursor: pointer; overflow-wrap: anywhere; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.muted, .hint, .record-meta, .scope-summary, .dialog-info, .footer { color: var(--muted); font-size: .8125rem; }
+.aw-leaf-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  flex-wrap: wrap; min-height: 60px; padding: 8px 0; border-bottom: 1px solid var(--line);
+}
+.aw-leaf-path { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+.aw-leaf-brand { color: var(--text); font-weight: 650; }
+.aw-leaf-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.aw-leaf-tools :is(select, button) { max-width: 100%; width: auto; }
+.aw-leaf-message { flex-basis: 100%; color: var(--danger); overflow-wrap: anywhere; }
+.aw-leaf-message:empty, .compact-title { display: none; }
+.heading { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
+.heading .muted { margin-top: 4px; }
+.related-pages { position: relative; }
+.related-pages summary { display: list-item; }
+.xnav {
+  position: absolute; z-index: 3; inset-inline-end: 0; top: calc(100% + 6px);
+  display: grid; width: 11rem; max-width: min(80vw, 340px); padding: 6px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+}
+.xnav a { padding: 8px; color: var(--text); text-decoration: none; border-radius: 6px; overflow-wrap: anywhere; }
+.xnav a:hover { background: var(--accent-soft); }
+.panel { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.workspace { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(285px, 1fr); gap: 12px; align-items: start; }
+.scope-panel { margin-bottom: 12px; }
+.scope-form { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.scope-form .query { flex: 1; min-width: 0; }
+.scope-options { margin-top: 8px; }
+.scope-options > p { margin: 8px 0; }
+.scope-summary { margin-top: 8px; padding-inline-start: 10px; border-inline-start: 2px solid var(--accent); }
+.scope-summary, .record-content, .dialog-info { white-space: pre-wrap; overflow-wrap: anywhere; }
+.scope-grid, .add-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.add-grid { grid-template-columns: minmax(0, 1fr); }
+label { display: block; min-width: 0; color: var(--muted); font-size: .8125rem; }
+label > :is(input,select,textarea) { margin-top: 4px; font-size: .875rem; }
+.scope-form label > select, .records-toolbar label > input { margin-top: 0; }
+.panel-title { display: flex; gap: 6px 12px; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.records-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
+.check { display: flex; width: fit-content; align-items: center; gap: 8px; min-height: 38px; }
+.check input { flex: none; width: 18px; min-height: 18px; margin: 0; accent-color: var(--accent); }
+.records-toolbar .check { grid-column: 1/-1; }
+.actions, .record-buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.record { border-top: 1px solid var(--line); padding: 14px 0 12px; }
+.record:last-child { border-bottom: 1px solid var(--line); }
+.record-content { margin-bottom: 6px; font-size: .9375rem; }
+.record-meta { overflow-wrap: anywhere; }
+.record.deleted .record-content { color: var(--muted); }
+.source-details { font-size: .8125rem; margin-top: 4px; }
+.source-details summary { min-height: 38px; padding-block: 8px; }
+.source-details :is(p,pre) { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 0; color: var(--muted); }
+.record-buttons button { padding-inline: 12px; }
+.empty { padding: 24px 8px; color: var(--muted); text-align: center; }
+.pagination { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-top: 12px; }
+.search-help { margin-top: 10px; }
+.search-help .hint { margin-top: 6px; }
+.stats { color: var(--muted); font-size: .8125rem; margin-top: 4px; overflow-wrap: anywhere; }
+.status { position: sticky; top: 8px; z-index: 2; padding: 8px 12px; border-radius: 9px; background: var(--message); margin-bottom: 12px; overflow-wrap: anywhere; }
+.status.error { color: var(--danger); background: var(--error); }
+#add-title + .hint, #add-request-state:not(:empty) { margin-top: 8px; }
+dialog {
+  width: min(600px, calc(100% - 24px)); max-width: none; max-height: calc(100dvh - 24px); overflow: auto;
+  padding: 20px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+}
+dialog::backdrop { background: #0009; }
+dialog :is(h2, .dialog-info) { margin-bottom: 10px; }
+.dialog-info { background: var(--input); border-radius: 8px; padding: 10px; }
+.dialog-error { color: var(--danger); margin-top: 8px; }
+.dialog-error:empty { display: none; }
+.footer { padding-top: 14px; }
+@media (max-width: 780px) {
+  .workspace { grid-template-columns: minmax(0, 1fr); }
+  .panel { padding: 12px; }
+}
+@media (max-width: 540px) {
+  .aw-leaf-path { display: none; }
+  .aw-leaf-tools { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) minmax(0, auto); }
+  .aw-leaf-tools button { width: 100%; }
+  main { padding-top: 13px; }
+  h1 { font-size: 1.45rem; }
+  .heading { margin-bottom: 10px; }
+  .related-pages { margin-inline-start: auto; }
+  .scope-form > button { flex: 0 1 auto; }
+  .scope-grid { grid-template-columns: minmax(0, 1fr); }
+  .records-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, auto); }
+  .records-toolbar .check { grid-column: auto; }
+  dialog { padding: 16px; }
+  dialog .actions > button { flex: 1 1 auto; }
+}
+@media (max-width: 375px) {
+  .aw-leaf-tools .full-title { display: none; }
+  .aw-leaf-tools .compact-title { display: inline; }
+}
 </style>
 </head>
 <body>
-<header id="asteria-leaf-header" class="aw-leaf-header" data-area="area-memory"><span class="aw-leaf-brand">✧ 星栖 Asteria</span><span class="aw-leaf-path">记忆中心 / 记忆记录维护</span><div class="aw-leaf-tools"><label>本页<select aria-label="定位本页分区"><option>定位本页分区</option></select></label><button type="button">返回记忆中心</button></div><p class="aw-leaf-message" role="status"></p></header><main>
-<nav class="xnav" aria-label="存在层页面">
-<a href="#" data-page="console">功能工作台</a>
-<a href="#" data-page="status">身体</a><a href="#" data-page="manor">空间</a><a href="#" data-page="materials">材质</a><a href="#" data-page="home">总览</a><a href="#" data-page="mood">心绪</a><a class="cur" aria-current="page">记忆</a>
-</nav>
-<header class="heading"><div><p class="eyebrow">PRESENCE / NATIVE MEMORY</p><h1>原生记忆管理</h1><p class="muted">查看来源，修正事实，让每条记忆有据可查。</p></div><span class="badge">独立原生存储</span></header>
-<div id="status" class="status" role="status" aria-live="polite" hidden></div>
-<section class="panel" aria-labelledby="scope-title">
-<h2 id="scope-title">选择会话</h2>
-<p class="hint">后台管理员可管理历史私聊范围；每次仅查看一个用户、角色和会话。这里的操作不会授予聊天自动读写权限。</p>
-<div class="toolbar" style="margin-top:14px"><label class="query">会话与历史记忆范围<select id="scope-select" disabled><option>正在读取会话…</option></select></label><button type="button" id="scope-refresh">刷新会话</button></div>
-<p class="hint" id="scope-help">列出当前已授权的真实入站私聊，以及原生存储中的历史范围，最多 100 个。</p>
-<details id="advanced-scope" style="margin-top:14px"><summary>高级：指定或新建数据范围</summary>
-<p class="hint">五项身份必须完整匹配。手动指定范围仅适用于管理员已核实的完整身份，不会建立聊天授权。</p>
-<form id="scope-form">
-<div class="scope-grid">
-<label>平台 · platform<input name="platform" required maxlength="256" autocomplete="off" placeholder="例如 aiocqhttp"></label>
-<label>机器人 · bot_id<input name="bot_id" required maxlength="256" autocomplete="off"></label>
-<label>用户 · user_id<input name="user_id" required maxlength="256" autocomplete="off"></label>
-<label>角色 · character_id<input name="character_id" required maxlength="256" autocomplete="off"></label>
-<label>会话 · session_id<input name="session_id" required maxlength="256" autocomplete="off"></label>
-</div><div class="actions"><button class="primary" type="submit">载入此范围</button><span class="hint">不提供“全部用户”查询。</span></div>
-</form></details><details style="margin-top:14px"><summary>查看当前数据范围</summary><div class="scope-summary" id="scope-summary">尚未载入数据范围。</div></details>
-</section>
-<section class="panel" aria-labelledby="records-title">
-<div class="panel-title"><h2 id="records-title">记忆记录</h2><span class="hint" id="result-label">等待指定范围</span></div>
-<form id="search-form" class="toolbar">
-<label class="query">关键词<input id="query" maxlength="512" placeholder="在当前范围内查找内容" autocomplete="off"></label>
-<button type="submit" data-requires-scope disabled>检索</button><button type="button" id="list-button" data-requires-scope disabled>显示列表</button>
-<label class="check"><input id="include-deleted" type="checkbox">含已删除</label>
-</form>
-<p class="hint">当前使用本地关键词检索，最多返回 8 条有效记录；不保证语义召回。列表每页 50 条，可显示软删除记录。</p>
-<div class="stats" id="stats"></div><div id="records" aria-live="polite"><p class="empty">填写五项身份后载入。</p></div>
-<div class="pagination"><button id="previous" disabled>上一页</button><span class="hint" id="page-label"></span><button id="next" disabled>下一页</button></div>
-</section>
-<section class="panel" aria-labelledby="add-title"><h2 id="add-title">手动补充记忆</h2>
-<p class="hint">手动新增的来源固定为 webui.admin。证据类型会随记录保存，推测和角色扮演内容应标注对应类型。</p>
-<form id="add-form"><div class="add-grid">
-<label>记忆类型<input name="memory_type" value="fact" maxlength="64" required autocomplete="off"></label>
-<label>证据类型<select name="evidence_kind"><option value="user_reported">用户陈述</option><option value="real_observation">真实观察</option><option value="model_inference">模型推测</option><option value="roleplay_event">角色扮演</option><option value="action_result">动作结果</option></select></label>
-<label class="add-content">内容<textarea name="content" maxlength="6000" required placeholder="写下具体事实，并尽量保留发生时间和适用条件。"></textarea></label>
-</div><div class="actions"><button id="add-save" class="primary" type="submit" data-requires-scope disabled>保存到当前范围</button><button id="add-check" type="button" hidden>只读核对原新建请求</button></div><p id="add-request-state" class="hint" role="status"></p></form>
-</section>
-<p class="footer">本页通过 AstrBot 已认证的插件页面接口访问原生记忆。原生后端关闭或不可用时会明确报错；编辑和删除按记录版本检查冲突。</p>
+<header id="asteria-leaf-header" class="aw-leaf-header" data-area="area-memory">
+  <span class="aw-leaf-path"><span class="aw-leaf-brand">星栖 Asteria</span> / 记忆中心</span>
+  <div class="aw-leaf-tools">
+    <select aria-label="定位本页分区"><option>定位本页分区</option></select>
+    <button type="button" aria-label="返回记忆中心"><span class="full-title">返回记忆中心</span><span class="compact-title">返回</span></button>
+  </div>
+  <p class="aw-leaf-message" role="status"></p>
+</header>
+<main>
+  <header class="heading">
+    <div><h1>记忆记录维护</h1><p class="muted">检索记录、查看来源或修正内容。</p></div>
+    <details class="related-pages"><summary>其他页面</summary>
+      <nav class="xnav" aria-label="存在层页面">
+        <a href="#" data-page="console">功能工作台</a>
+        <a href="#" data-page="status">身体</a>
+        <a href="#" data-page="manor">空间</a>
+        <a href="#" data-page="materials">材质</a>
+        <a href="#" data-page="home">总览</a>
+        <a href="#" data-page="mood">心绪</a>
+      </nav>
+    </details>
+  </header>
+  <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+  <section class="panel scope-panel" aria-labelledby="scope-title">
+    <h2 id="scope-title">当前会话</h2>
+    <div class="scope-form">
+      <label class="query"><span class="sr-only">会话与历史记忆范围</span>
+        <select id="scope-select" disabled><option>正在读取会话…</option></select>
+      </label>
+      <button type="button" id="scope-refresh">刷新会话</button>
+    </div>
+    <details id="advanced-scope" class="scope-options">
+      <summary>查看或指定完整数据范围</summary>
+      <div class="scope-summary" id="scope-summary">尚未载入数据范围。</div>
+      <p class="hint" id="scope-help">列出已授权的真实入站私聊，以及原生存储中的历史范围。</p>
+      <p class="hint">五项身份须完整匹配。手动指定范围供管理员使用，不会建立聊天授权。</p>
+      <form id="scope-form">
+        <div class="scope-grid">
+          <label>平台 · platform<input name="platform" required maxlength="256" autocomplete="off" placeholder="例如 aiocqhttp"></label>
+          <label>机器人 · bot_id<input name="bot_id" required maxlength="256" autocomplete="off"></label>
+          <label>用户 · user_id<input name="user_id" required maxlength="256" autocomplete="off"></label>
+          <label>角色 · character_id<input name="character_id" required maxlength="256" autocomplete="off"></label>
+          <label>会话 · session_id<input name="session_id" required maxlength="256" autocomplete="off"></label>
+        </div>
+        <div class="actions"><button class="primary" type="submit">载入此范围</button></div>
+      </form>
+    </details>
+  </section>
+  <div class="workspace">
+    <section class="panel" aria-labelledby="records-title">
+      <div class="panel-title"><h2 id="records-title">记忆记录</h2><span class="hint" id="result-label" role="status">等待指定范围</span></div>
+      <form id="search-form" class="records-toolbar">
+        <label class="query"><span class="sr-only">关键词</span>
+          <input id="query" maxlength="512" placeholder="在当前会话内检索" autocomplete="off">
+        </label>
+        <button type="submit" class="primary" data-requires-scope disabled>检索</button>
+        <button type="button" id="list-button" data-requires-scope disabled>显示列表</button>
+        <label class="check"><input id="include-deleted" type="checkbox">含已删除</label>
+      </form>
+      <div id="records"><p class="empty">选择会话后查看记忆。</p></div>
+      <div class="pagination"><button id="previous" disabled>上一页</button><span class="hint" id="page-label"></span><button id="next" disabled>下一页</button></div>
+      <details class="search-help">
+        <summary>检索说明与统计</summary>
+        <p class="hint">关键词检索最多返回 8 条有效记录。列表每页 50 条，可选择查看软删除记录。</p>
+        <div class="stats" id="stats"></div>
+      </details>
+    </section>
+    <section class="panel" aria-labelledby="add-title">
+      <h2 id="add-title">手动补充记忆</h2>
+      <p class="hint">保存来源为 webui.admin。推测或角色扮演请在证据类型中标明。</p>
+      <form id="add-form">
+        <div class="add-grid">
+          <label>记忆类型<input name="memory_type" value="fact" maxlength="64" required autocomplete="off"></label>
+          <label>证据类型<select name="evidence_kind"><option value="user_reported">用户陈述</option><option value="real_observation">真实观察</option><option value="model_inference">模型推测</option><option value="roleplay_event">角色扮演</option><option value="action_result">动作结果</option></select></label>
+          <label>内容<textarea name="content" maxlength="6000" required placeholder="记录事实、时间及适用条件。"></textarea></label>
+        </div>
+        <div class="actions"><button id="add-save" class="primary" type="submit" data-requires-scope disabled>保存到当前范围</button><button id="add-check" type="button" hidden>只读核对原新建请求</button></div>
+        <p id="add-request-state" class="hint" role="status"></p>
+      </form>
+    </section>
+  </div>
+  <p class="footer">数据来自当前会话的原生记忆。修正、删除和恢复时会核对记录版本。</p>
 </main>
 <dialog id="edit-dialog" aria-labelledby="edit-title"><form id="edit-form"><h2 id="edit-title">确认修正记忆</h2><p class="dialog-info" id="edit-info"></p><label>修正后的内容<textarea id="edit-content" required maxlength="6000"></textarea></label><p class="hint">保存后生成新版本。若记录已被其他操作修改，请刷新后重新编辑。</p><p id="edit-error" class="dialog-error" role="alert"></p><div class="actions"><button type="button" id="edit-cancel">取消</button><button type="submit" class="primary" id="edit-save">确认保存修正</button></div></form></dialog>
 <dialog id="delete-dialog" aria-labelledby="delete-title"><form id="delete-form"><h2 id="delete-title">确认删除这条记忆？</h2><p class="dialog-info" id="delete-info"></p><p class="hint">记录将标为已删除，并退出正常检索与聊天上下文。来源与修订历史保留供审计。</p><p id="delete-error" class="dialog-error" role="alert"></p><div class="actions"><button type="button" id="delete-cancel">取消</button><button type="submit" class="danger" id="delete-save">确认删除</button></div></form></dialog>
@@ -130,9 +289,9 @@ function renderRows(rows,scope,generation){
     const deleted=row.lifecycle==='deleted' || row.deleted===true || !!row.deleted_at;
     card.classList.toggle('deleted',deleted);
     const content=document.createElement('p');content.className='record-content';content.textContent=String(row.content || '');card.append(content);
-    const meta=document.createElement('p');meta.className='record-meta';meta.textContent='来源 '+String(row.source_id || row.source || '未知')+' · '+evidenceLabel(row.evidence_kind)+' · '+String(row.memory_type || 'fact')+' · 版本 '+String(row.revision)+' · '+(deleted?'已删除':String(row.lifecycle || '有效'));card.append(meta);
-    const identity=document.createElement('p');identity.className='record-meta';identity.textContent='ID '+String(row.id || '');card.append(identity);
-    const details=document.createElement('details');details.className='source-details';const summary=document.createElement('summary');summary.textContent='查看时间与来源详情';details.append(summary);const pre=document.createElement('pre');pre.textContent=JSON.stringify({occurred_at:row.occurred_at,created_at:row.created_at,updated_at:row.updated_at,expires_at:row.expires_at,confidence:row.confidence,importance:row.importance,metadata:row.metadata},null,2);details.append(pre);card.append(details);
+    const meta=document.createElement('p');meta.className='record-meta';meta.textContent=[evidenceLabel(row.evidence_kind),'来源 '+String(row.source_id || row.source || '未知'),'版本 '+String(row.revision),deleted?'已删除':''].filter(Boolean).join(' · ');card.append(meta);
+    const identity=document.createElement('p');identity.className='record-meta';identity.textContent='ID '+String(row.id || '');
+    const details=document.createElement('details');details.className='source-details';const summary=document.createElement('summary');summary.textContent='查看时间与来源详情';details.append(summary,identity);const pre=document.createElement('pre');pre.textContent=JSON.stringify({memory_type:row.memory_type,lifecycle:row.lifecycle,occurred_at:row.occurred_at,created_at:row.created_at,updated_at:row.updated_at,expires_at:row.expires_at,confidence:row.confidence,importance:row.importance,metadata:row.metadata},null,2);details.append(pre);card.append(details);
     if(!deleted){const actions=document.createElement('div');actions.className='record-buttons';const edit=document.createElement('button');edit.type='button';edit.textContent='修正';edit.addEventListener('click',()=>{if(generation!==state.generation)return;state.editing={row,scope,generation};$('edit-info').textContent=scopeLabel(scope)+'\n记忆 '+row.id+' · 版本 '+row.revision;$('edit-content').value=String(row.content || '');$('edit-error').textContent='';$('edit-dialog').showModal();});const del=document.createElement('button');del.type='button';del.className='danger';del.textContent='删除';del.addEventListener('click',()=>{if(generation!==state.generation)return;state.deleting={row,scope,generation};$('delete-info').textContent=scopeLabel(scope)+'\n\n'+String(row.content || '');$('delete-error').textContent='';$('delete-dialog').showModal();});actions.append(edit,del);card.append(actions);}
     if(deleted){const actions=document.createElement('div');actions.className='record-buttons';const restore=document.createElement('button');restore.type='button';restore.textContent='恢复记忆';restore.addEventListener('click',()=>{if(generation!==state.generation)return;state.restoring={row,scope,generation};$('restore-info').textContent=scopeLabel(scope)+'\n\n'+String(row.content||'')+'\n版本 '+row.revision;$('restore-error').textContent='';$('restore-dialog').showModal();});actions.append(restore);card.append(actions);}
     $('records').append(card);
@@ -143,12 +302,12 @@ async function loadRecords(){
   if(!state.scope)return;
   const generation=state.generation,request=++state.readRequest,scope={...state.scope},mode=state.mode,query=$('query').value.trim();
   if(mode==='search' && !query){showStatus('请先填写检索关键词。',true);return;}
-  busy(1);$('result-label').textContent='读取中…';
+  $('status').hidden=true;busy(1);$('result-label').textContent='读取中…';
   try{
     const params=mode==='search'?{...scope,q:query,limit:8}:{...scope,limit:50,offset:state.offset,include_deleted:$('include-deleted').checked};
     const [result,stats]=await Promise.all([api('GET','page/memory/'+mode,params),api('GET','page/memory/stats',scope)]);
     if(generation!==state.generation||request!==state.readRequest)return;
-    state.rows=Array.isArray(result.records)?result.records:[];renderRows(state.rows,scope,generation);renderStats(stats.stats);$('result-label').textContent=(mode==='search'?'检索结果':'当前页')+' · '+state.rows.length+' 条';$('page-label').textContent=mode==='list'?'第 '+(Math.floor(state.offset/50)+1)+' 页':'关键词结果';showStatus('已载入当前范围的原生记忆。');
+    state.rows=Array.isArray(result.records)?result.records:[];renderRows(state.rows,scope,generation);renderStats(stats.stats);$('result-label').textContent=(mode==='search'?'检索结果':'当前页')+' · '+state.rows.length+' 条';$('page-label').textContent=mode==='list'?'第 '+(Math.floor(state.offset/50)+1)+' 页':'关键词结果';
   }catch(error){if(generation!==state.generation||request!==state.readRequest)return;state.rows=[];clearRecords('读取失败。请检查页面上方提示后重试。');$('result-label').textContent='读取失败';$('stats').textContent='';showStatus(displayError(error),true);}
   finally{busy(-1);}
 }

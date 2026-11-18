@@ -512,125 +512,101 @@ class AsteriaPlugin(Star):
             len(self._manor.get("rooms") or []), self._manor_source))
 
     def _register_web_api_if_available(self) -> None:
-        """AstrBot 官方插件拓展页面 API（模式照搬 PC integration_status.py）。"""
-        if not hasattr(self.context, "register_web_api"):
-            logger.debug("[Asteria] 当前 AstrBot 版本未提供 register_web_api，跳过 WebUI 注册")
+        """Register independent extensions and report core routes from the SDK registry."""
+        from importlib import import_module
+        from .identity import LEGACY_PLUGIN_NAME
+
+        readiness = self._web_api_registration = dict(state='unavailable', core_ready=False, failed={})
+        if not callable(getattr(self.context, 'register_web_api', None)):
+            logger.debug('[Asteria] 当前 AstrBot 版本未提供 register_web_api，跳过 WebUI 注册')
             return
-        try:
-            from .web_api import VirtualBodyWebApi
 
-            from .special_occasions_web_api import SpecialOccasionsWebApi
-            self._special_occasions_web_api = SpecialOccasionsWebApi(self)
-            self._special_occasions_web_api.register_routes()
+        registry = getattr(self.context, 'registered_web_apis', None)
 
-            self._web_api = VirtualBodyWebApi(self)
-            self._web_api.register_routes()
-            integrations = getattr(self, '_native_server_integrations', None)
-            if integrations is not None:
-                integrations.register_routes()
-            from .memory_web_api import NativeMemoryWebApi
-            self._memory_web_api = NativeMemoryWebApi(self)
-            self._memory_web_api.register_routes()
-            from .memory_transfer_web_api import NativeMemoryTransferWebApi
-            self._native_memory_transfer_web_api = NativeMemoryTransferWebApi(self)
-            self._native_memory_transfer_web_api.register_routes()
-            self._native_memory_transfer_web_api.register_admin_routes()
-            from .material_maintenance_web_api import NativeMaterialMaintenanceWebApi
-            self._native_material_maintenance_web_api = NativeMaterialMaintenanceWebApi(self)
-            self._native_material_maintenance_web_api.register_routes()
-            from .personal_materials_web_api import NativePersonalMaterialsWebApi
-            self._native_personal_materials_web_api = NativePersonalMaterialsWebApi(self)
-            self._native_personal_materials_web_api.register_routes()
-            from .core_tools_web_api import NativeCoreToolsWebApi
-            self._native_core_tools_web_api=NativeCoreToolsWebApi(self)
-            self._native_core_tools_web_api.register_routes()
-            from .console_web_api import NativeConsoleWebApi
-            self._native_console_web_api = NativeConsoleWebApi(self)
-            self._native_console_web_api.register_routes()
-            from .history_web_api import NativeHistoryWebApi
-            self._native_history_web_api = NativeHistoryWebApi(self)
-            self._native_history_web_api.register_routes()
-            from .history_adoption_web_api import NativeHistoryAdoptionWebApi
-            self._native_history_adoption_web_api = NativeHistoryAdoptionWebApi(self)
-            self._native_history_adoption_web_api.register_routes()
-            from .expression_web_api import NativeExpressionWebApi
-            self._native_expression_web_api = NativeExpressionWebApi(self)
-            self._native_expression_web_api.register_routes()
-            self._native_expression_web_api.register_admin_routes()
-            from .phone_web_api import NativePhoneWebApi
-            self._native_phone_web_api = NativePhoneWebApi(self)
-            self._native_phone_web_api.register_routes()
-            from .agenda_web_api import NativeAgendaWebApi
-            self._native_agenda_web_api = NativeAgendaWebApi(self)
-            self._native_agenda_web_api.register_routes()
-            from .important_dates_web_api import NativeImportantDatesWebApi
-            self._native_important_dates_web_api = NativeImportantDatesWebApi(self)
-            self._native_important_dates_web_api.register_routes()
-            from .personal_goals_web_api import NativePersonalGoalsWebApi
-            self._native_personal_goals_web_api = NativePersonalGoalsWebApi(self)
-            self._native_personal_goals_web_api.register_routes()
-            from .scoped_daily_plan_web_api import NativeScopedDailyPlanWebApi
-            self._native_scoped_daily_plan_web_api = NativeScopedDailyPlanWebApi(self)
-            self._native_scoped_daily_plan_web_api.register_routes()
-            from .autonomous_life_web_api import NativeAutonomousLifeWebApi
-            self._autonomous_life_web_api = NativeAutonomousLifeWebApi(self)
-            self._autonomous_life_web_api.register_routes()
-            from .profile_candidates_web_api import NativeProfileCandidatesWebApi
-            self._native_profile_candidates_web_api=NativeProfileCandidatesWebApi(self)
-            self._native_profile_candidates_web_api.register_routes()
-            from .daily_brief_web_api import NativeDailyBriefWebApi
-            self._native_daily_brief_web_api = NativeDailyBriefWebApi(self)
-            self._native_daily_brief_web_api.register_routes()
-            from .music_library_web_api import NativeMusicLibraryWebApi
-            self._native_music_library_web_api = NativeMusicLibraryWebApi(self)
-            self._native_music_library_web_api.register_routes()
-            from .memo_notes_web_api import NativeMemoNotesWebApi
-            self._native_memo_notes_web_api = NativeMemoNotesWebApi(self)
-            self._native_memo_notes_web_api.register_routes()
-            from .memo_tools_web_api import NativeMemoToolsWebApi
-            self._native_memo_tools_web_api = NativeMemoToolsWebApi(self)
-            self._native_memo_tools_web_api.register_routes()
-            from .rule_center_web_api import NativeRuleCenterWebApi
-            self._native_rule_center_web_api = NativeRuleCenterWebApi(self)
-            self._native_rule_center_web_api.register_routes()
-            from .shared_timeline_web_api import NativeSharedTimelineWebApi
-            self._native_shared_timeline_web_api = NativeSharedTimelineWebApi(self)
-            self._native_shared_timeline_web_api.register_routes()
-            from .interaction_preferences_web_api import NativeInteractionPreferencesWebApi
-            self._native_interaction_preferences_web_api = NativeInteractionPreferencesWebApi(self)
-            self._native_interaction_preferences_web_api.register_routes()
-            from .narrative_web_api import NativeNarrativeWebApi
-            self._native_narrative_web_api = NativeNarrativeWebApi(self)
-            self._native_narrative_web_api.register_routes()
-            from .assets_web_api import NativeAssetsWebApi
-            self._native_assets_web_api = NativeAssetsWebApi(self)
-            self._native_assets_web_api.register_routes()
-            self._native_assets_web_api.register_admin_routes()
-            from .workbench_web_api import NativeWorkbenchWebApi
-            self._native_workbench_web_api = NativeWorkbenchWebApi(self)
-            self._native_workbench_web_api.register_routes()
-            from .app_rules_web_api import NativeAppRulesWebApi
-            self._native_app_rules_web_api = NativeAppRulesWebApi(self)
-            self._native_app_rules_web_api.register_routes()
-            from .expression_policy_web_api import NativeExpressionPolicyWebApi
-            self._native_expression_policy_web_api = NativeExpressionPolicyWebApi(self)
-            self._native_expression_policy_web_api.register_routes()
-            from .chat_web_api import NativeChatWebApi
-            self._native_chat_web_api = NativeChatWebApi(self)
-            self._native_chat_web_api.register_routes()
-            from .model_routing_web_api import TaskModelRoutingWebApi
-            self._task_model_routing_api=TaskModelRoutingWebApi(self)
-            self._task_model_routing_api.register_routes()
-            from .memory_strategy_web_api import NativeMemoryStrategyWebApi
-            self._memory_strategy_api=NativeMemoryStrategyWebApi(self)
-            self._memory_strategy_api.register_routes()
-        except Exception as exc:
-            logger.warning(f"[Asteria] WebUI API 注册失败: {exc}")
-        finally:
+        def register_group(name, register):
+            before = list(registry) if isinstance(registry, list) else None
             try:
-                register_canonical_aliases(self)
+                register()
             except Exception as exc:
-                logger.warning('[Asteria] 兼容路由注册未完成: %s', type(exc).__name__)
+                # AstrBot replaces a matching route/method in place. Restore
+                # both entries inserted by this group and prior entries it replaced.
+                if before is not None:
+                    registry[:] = before
+                readiness['failed'][name] = type(exc).__name__
+                logger.warning(f'[Asteria] WebUI {name} 注册失败: {type(exc).__name__}')
+
+        def register_api(module_name, class_name, attribute, admin):
+            api = getattr(import_module('.' + module_name, __package__), class_name)(self)
+            api.register_routes()
+            if admin:
+                api.register_admin_routes()
+            setattr(self, attribute, api)
+
+        features = (
+            ('special_occasions_web_api', 'SpecialOccasionsWebApi', '_special_occasions_web_api'),
+            ('web_api', 'VirtualBodyWebApi', '_web_api'),
+            ('memory_web_api', 'NativeMemoryWebApi', '_memory_web_api'),
+            ('memory_transfer_web_api', 'NativeMemoryTransferWebApi', '_native_memory_transfer_web_api'),
+            ('material_maintenance_web_api', 'NativeMaterialMaintenanceWebApi', '_native_material_maintenance_web_api'),
+            ('personal_materials_web_api', 'NativePersonalMaterialsWebApi', '_native_personal_materials_web_api'),
+            ('core_tools_web_api', 'NativeCoreToolsWebApi', '_native_core_tools_web_api'),
+            ('console_web_api', 'NativeConsoleWebApi', '_native_console_web_api'),
+            ('history_web_api', 'NativeHistoryWebApi', '_native_history_web_api'),
+            ('history_adoption_web_api', 'NativeHistoryAdoptionWebApi', '_native_history_adoption_web_api'),
+            ('expression_web_api', 'NativeExpressionWebApi', '_native_expression_web_api'),
+            ('phone_web_api', 'NativePhoneWebApi', '_native_phone_web_api'),
+            ('agenda_web_api', 'NativeAgendaWebApi', '_native_agenda_web_api'),
+            ('important_dates_web_api', 'NativeImportantDatesWebApi', '_native_important_dates_web_api'),
+            ('personal_goals_web_api', 'NativePersonalGoalsWebApi', '_native_personal_goals_web_api'),
+            ('scoped_daily_plan_web_api', 'NativeScopedDailyPlanWebApi', '_native_scoped_daily_plan_web_api'),
+            ('autonomous_life_web_api', 'NativeAutonomousLifeWebApi', '_autonomous_life_web_api'),
+            ('profile_candidates_web_api', 'NativeProfileCandidatesWebApi', '_native_profile_candidates_web_api'),
+            ('daily_brief_web_api', 'NativeDailyBriefWebApi', '_native_daily_brief_web_api'),
+            ('music_library_web_api', 'NativeMusicLibraryWebApi', '_native_music_library_web_api'),
+            ('memo_notes_web_api', 'NativeMemoNotesWebApi', '_native_memo_notes_web_api'),
+            ('memo_tools_web_api', 'NativeMemoToolsWebApi', '_native_memo_tools_web_api'),
+            ('rule_center_web_api', 'NativeRuleCenterWebApi', '_native_rule_center_web_api'),
+            ('shared_timeline_web_api', 'NativeSharedTimelineWebApi', '_native_shared_timeline_web_api'),
+            ('interaction_preferences_web_api', 'NativeInteractionPreferencesWebApi', '_native_interaction_preferences_web_api'),
+            ('narrative_web_api', 'NativeNarrativeWebApi', '_native_narrative_web_api'),
+            ('assets_web_api', 'NativeAssetsWebApi', '_native_assets_web_api'),
+            ('workbench_web_api', 'NativeWorkbenchWebApi', '_native_workbench_web_api'),
+            ('app_rules_web_api', 'NativeAppRulesWebApi', '_native_app_rules_web_api'),
+            ('expression_policy_web_api', 'NativeExpressionPolicyWebApi', '_native_expression_policy_web_api'),
+            ('chat_web_api', 'NativeChatWebApi', '_native_chat_web_api'),
+            ('model_routing_web_api', 'TaskModelRoutingWebApi', '_task_model_routing_api'),
+            ('memory_strategy_web_api', 'NativeMemoryStrategyWebApi', '_memory_strategy_api'),
+        )
+        admin_groups = {'memory_transfer_web_api', 'expression_web_api', 'assets_web_api'}
+        integrations = getattr(self, '_native_server_integrations', None)
+        for module_name, class_name, attribute in features:
+            register_group(module_name, lambda: register_api(module_name, class_name, attribute, module_name in admin_groups))
+            if module_name == 'web_api' and integrations is not None:
+                register_group('native_server_integrations', integrations.register_routes)
+        register_group('route_aliases', lambda: register_canonical_aliases(self))
+
+        required = {
+            ('/page/overview', 'GET'): '_web_api',
+            ('/page/console/overview', 'GET'): '_native_console_web_api',
+            ('/page/chat/sessions', 'GET'): '_native_chat_web_api',
+            ('/page/chat/history', 'GET'): '_native_chat_web_api',
+            ('/page/chat/send', 'POST'): '_native_chat_web_api',
+        }
+        registered = {(route, method): getattr(getattr(handler, '__wrapped__', handler), '__self__', None)
+                      for route, handler, methods, _desc in registry or () for method in methods}
+        missing = [
+            (prefix + path, method)
+            for prefix in ('/' + PLUGIN_NAME, '/' + LEGACY_PLUGIN_NAME)
+            for (path, method), attribute in required.items()
+            if (prefix + path, method) not in registered
+            or registered[prefix + path, method] is not getattr(self, attribute, None)
+        ]
+        core_errors = readiness['failed'].keys() & {'web_api', 'console_web_api', 'chat_web_api', 'route_aliases'}
+        core_ready = not (missing or core_errors)
+        readiness.update(state='degraded' if missing or readiness['failed'] else 'ready',
+                         core_ready=core_ready, missing_core=missing)
+        if not core_ready:
+            logger.warning(f'[Asteria] WebUI 核心路由未就绪: {len(missing)} 个入口')
 
     async def terminate(self):
         async with self._lifecycle_lock:
